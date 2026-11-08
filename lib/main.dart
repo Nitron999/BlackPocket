@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 void main() {
   runApp(const BlackPocketApp());
@@ -34,7 +37,8 @@ class BlackPocketApp extends StatelessWidget {
 class ChatMessage {
   final String text;
   final bool isUser;
-  ChatMessage({required this.text, required this.isUser});
+  final File? imageFile;
+  ChatMessage({required this.text, required this.isUser, this.imageFile});
 }
 
 class ChatScreen extends StatefulWidget {
@@ -48,18 +52,28 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
-  
-  bool _isLoading = false;
+  final ImagePicker _picker = ImagePicker();
+  final stt.SpeechToText _speech = stt.SpeechToText();
 
+  bool _isLoading = false;
+  bool _isListening = false;
+  File? _selectedImage;
+
+  // Настройки по умолчанию
   String _apiUrl = "https://openrouter.ai/api/v1/chat/completions";
   String _apiKey = "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";
-  String _modelName = "meta-llama/llama-3.1-8b-instruct:free";
-  String _systemPrompt = "Ты — умный, точный и технически подкованный ассистент. Отвечай кратко и по делу.";
+  String _modelName = "meta-llama/llama-3.2-11b-vision-instruct:free";
+  String _systemPrompt = "Ты — умный ассистент BlackPocket. Ты умеешь анализировать изображения и отвечать четко, по делу и без лишней воды.";
 
   @override
   void initState() {
     super.initState();
     _loadSettings();
+    _initSpeech();
+  }
+
+  Future<void> _initSpeech() async {
+    await _speech.initialize();
   }
 
   Future<void> _loadSettings() async {
@@ -92,18 +106,63 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _pickImage(ImageSource source) async {
+    final pickedFile = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1024);
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImage = File(pickedFile.path);
+      });
+    }
+  }
+
+  void _toggleListening() async {
+    if (!_isListening) {
+      bool available = await _speech.initialize();
+      if (available) {
+        setState(() => _isListening = true);
+        _speech.listen(
+          onResult: (val) => setState(() {
+            _controller.text = val.recognizedWords;
+          }),
+        );
+      }
+    } else {
+      setState(() => _isListening = false);
+      _speech.stop();
+    }
+  }
+
   Future<void> _sendMessage() async {
     final text = _controller.text.trim();
-    if (text.isEmpty || _isLoading) return;
+    if ((text.isEmpty && _selectedImage == null) || _isLoading) return;
 
+    final imageToSend = _selectedImage;
     _controller.clear();
     setState(() {
-      _messages.add(ChatMessage(text: text, isUser: true));
+      _messages.add(ChatMessage(text: text.isEmpty ? "Что на этой картинке?" : text, isUser: true, imageFile: imageToSend));
+      _selectedImage = null;
       _isLoading = true;
     });
     _scrollToBottom();
 
     try {
+      // Собираем запрос с поддержкой Vision (OpenAI / OpenRouter multimodal)
+      List<dynamic> contentPayload = [];
+      if (text.isNotEmpty) {
+        contentPayload.add({"type": "text", "text": text});
+      } else if (imageToSend != null) {
+        contentPayload.add({"type": "text", "text": "Опиши подробно, что изображено на этом фото."});
+      }
+
+      if (imageToSend != null) {
+        final bytes = await imageToSend.readAsBytes();
+        final base64Image = base64Encode(bytes);
+        contentPayload.add({
+          "type": "image_url",
+          "image_url": {"url": "data:image/jpeg;base64,$base64Image"}
+        });
+      }
+
       final response = await http.post(
         Uri.parse(_apiUrl),
         headers: {
@@ -116,8 +175,12 @@ class _ChatScreenState extends State<ChatScreen> {
           "model": _modelName,
           "messages": [
             {"role": "system", "content": _systemPrompt},
-            for (var msg in _messages)
-              {"role": msg.isUser ? "user" : "assistant", "content": msg.text}
+            {
+              "role": "user",
+              "content": contentPayload.length == 1 && contentPayload[0]['type'] == 'text'
+                  ? contentPayload[0]['text']
+                  : contentPayload
+            }
           ],
         }),
       );
@@ -161,16 +224,13 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               TextField(controller: urlController, decoration: const InputDecoration(labelText: 'API Endpoint URL')),
               TextField(controller: keyController, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
-              TextField(controller: modelController, decoration: const InputDecoration(labelText: 'Model Name')),
+              TextField(controller: modelController, decoration: const InputDecoration(labelText: 'Model Name (Vision)')),
               TextField(controller: systemController, decoration: const InputDecoration(labelText: 'System Prompt'), maxLines: 3),
             ],
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
               setState(() {
@@ -196,10 +256,7 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('BlackPocket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: _openSettingsDialog,
-          ),
+          IconButton(icon: const Icon(Icons.settings_outlined), onPressed: _openSettingsDialog),
         ],
       ),
       body: Column(
@@ -210,9 +267,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.auto_awesome, size: 48, color: Colors.deepPurple.shade300),
+                        Icon(Icons.remove_red_eye_outlined, size: 48, color: Colors.deepPurple.shade300),
                         const SizedBox(height: 12),
-                        const Text('BlackPocket готов к работе.', style: TextStyle(color: Colors.grey)),
+                        const Text('BlackPocket готов: текст, фото и голос.', style: TextStyle(color: Colors.grey)),
                       ],
                     ),
                   )
@@ -233,42 +290,80 @@ class _ChatScreenState extends State<ChatScreen> {
                             borderRadius: BorderRadius.circular(16),
                             border: msg.isUser ? null : Border.all(color: Colors.white10),
                           ),
-                          child: msg.isUser
-                              ? Text(msg.text, style: const TextStyle(color: Colors.white))
-                              : MarkdownBody(data: msg.text),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (msg.imageFile != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8.0),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Image.file(msg.imageFile!, height: 180, width: double.infinity, fit: BoxFit.cover),
+                                  ),
+                                ),
+                              msg.isUser
+                                  ? Text(msg.text, style: const TextStyle(color: Colors.white))
+                                  : MarkdownBody(data: msg.text),
+                            ],
+                          ),
                         ),
                       );
                     },
                   ),
           ),
           if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: LinearProgressIndicator(minHeight: 2),
+            const Padding(padding: EdgeInsets.all(8.0), child: LinearProgressIndicator(minHeight: 2)),
+          if (_selectedImage != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.black26,
+              child: Row(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(_selectedImage!, width: 45, height: 45, fit: BoxFit.cover),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text('Фото прикреплено', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                  const Spacer(),
+                  IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => setState(() => _selectedImage = null)),
+                ],
+              ),
             ),
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(10),
             color: const Color(0xFF0F0F0F),
             child: Row(
               children: [
+                IconButton(
+                  icon: const Icon(Icons.camera_alt_outlined),
+                  onPressed: () => _pickImage(ImageSource.camera),
+                  tooltip: 'Сделать фото',
+                ),
+                IconButton(
+                  icon: const Icon(Icons.image_outlined),
+                  onPressed: () => _pickImage(ImageSource.gallery),
+                  tooltip: 'Выбрать из галереи',
+                ),
                 Expanded(
                   child: TextField(
                     controller: _controller,
                     textCapitalization: TextCapitalization.sentences,
                     decoration: InputDecoration(
-                      hintText: 'Сообщение в BlackPocket...',
+                      hintText: _isListening ? 'Слушаю...' : 'Сообщение...',
                       filled: true,
                       fillColor: const Color(0xFF1E1E1E),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
-                const SizedBox(width: 8),
+                IconButton(
+                  icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: _isListening ? Colors.redAccent : null),
+                  onPressed: _toggleListening,
+                  tooltip: 'Голосовой ввод',
+                ),
                 IconButton.filled(
                   onPressed: _isLoading ? null : _sendMessage,
                   icon: const Icon(Icons.arrow_upward),
