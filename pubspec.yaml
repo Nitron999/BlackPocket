@@ -1,5 +1,5 @@
 name: black_pocket
-description: Stylish custom AI client for Android.
+description: Stylish custom AI client with Vision and Voice.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -12,6 +12,8 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.2.2
   flutter_markdown: ^0.6.18
+  image_picker: ^1.1.0
+  speech_to_text: ^6.6.1
 
 dev_dependencies:
   flutter_test:
