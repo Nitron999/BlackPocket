@@ -29,6 +29,11 @@ jobs:
       - name: Generate Android project scaffolding
         run: flutter create . --platforms=android --org com.blackpocket --project-name black_pocket
 
+      - name: Set minSdkVersion to 21
+        run: |
+          sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle
+          sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 21/' android/app/build.gradle
+
       - name: Add Camera and Mic Permissions to AndroidManifest
         run: |
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' android/app/src/main/AndroidManifest.xml
