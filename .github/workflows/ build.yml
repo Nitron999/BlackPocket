@@ -27,7 +27,7 @@ jobs:
           cache: true
 
       - name: Generate Android project scaffolding
-        run: flutter create . --platforms=android --org com.blackpocket
+        run: flutter create . --platforms=android --org com.blackpocket --project-name black_pocket
 
       - name: Install dependencies
         run: flutter pub get
