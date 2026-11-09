@@ -257,7 +257,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       await _cameraController!.initialize();
       if (mounted) setState(() {});
     } catch (e) {
-      debugPrint("Ошибка камеры: $e");
+      debugPrint("Камера не найдена или ошибка: $e");
     }
   }
 
@@ -339,9 +339,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v14_bcp47_enforced') {
+    if (migrationTag != 'v15_syntax_fixed') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v14_bcp47_enforced');
+      await prefs.setString('bp_clean_migration', 'v15_syntax_fixed');
     }
 
     setState(() {
@@ -1416,7 +1416,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   Widget _buildWelcomeCenter() {
     return Center(
       child: Column(
-        mainAxisAlignment: dynamic,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           ShaderMask(
             shaderCallback: (bounds) => const LinearGradient(
