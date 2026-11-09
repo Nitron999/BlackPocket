@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -96,6 +97,7 @@ class LiveAssistantScreen extends StatefulWidget {
 
 class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
   CameraController? _cameraController;
+  final ImagePicker _picker = ImagePicker();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
   final ScrollController _scrollController = ScrollController();
@@ -110,6 +112,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
   bool _isLoading = false;
   bool _liveContinuousMode = false;
   double _speechRate = 0.45;
+  String? _attachedImageBase64;
 
   String _apiUrl = "https://openrouter.ai/api/v1/chat/completions";
   String _apiKey = "";
@@ -117,9 +120,9 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
   String _systemPrompt =
       "Ты — BlackPocket, личный живой партнер и собеседник. "
       "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! Ни слова на английском! "
-      "Ты видишь то, что показывает пользователь через камеру в реальном времени. "
-      "Отвечай кратко, ёмко, живо и по существу, как опытный знающий напарник. "
-      "Не трать время на пустые приветствия — сразу комментируй суть увиденного или вопрос.";
+      "Ты видишь то, что показывает пользователь через камеру или присылает фото. "
+      "Отвечай кратко, емко, живо и по существу, как надежный знающий друг. "
+      "Не трать время на шаблонные приветствия — сразу переходи к делу.";
 
   @override
   void initState() {
@@ -252,12 +255,15 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     });
   }
 
-  Future<void> _speakText(String text) async {
-    if (_isSpeaking) {
-      await _tts.stop();
+  Future<void> _stopSpeakingImmediately() async {
+    await _tts.stop();
+    if (mounted) {
       setState(() => _isSpeaking = false);
-      return;
     }
+  }
+
+  Future<void> _speakText(String text) async {
+    await _stopSpeakingImmediately();
     final cleanText = text.replaceAll(RegExp(r'[\*\_#`>]'), '');
     setState(() => _isSpeaking = true);
     await _tts.setSpeechRate(_speechRate);
@@ -266,8 +272,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
 
   void _startSpeechListening() async {
     if (_isSpeaking) {
-      await _tts.stop();
-      setState(() => _isSpeaking = false);
+      await _stopSpeakingImmediately();
     }
 
     bool available = await _speech.initialize();
@@ -279,9 +284,23 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
         pauseFor: const Duration(seconds: 2),
         listenFor: const Duration(seconds: 30),
         onResult: (val) {
-          _textController.text = val.recognizedWords;
-          if (val.finalResult && val.recognizedWords.trim().isNotEmpty) {
-            _processLiveInput(val.recognizedWords.trim());
+          final words = val.recognizedWords.trim();
+          _textController.text = words;
+
+          // Обработка голосовой команды СТОП прямо во время распознавания
+          final lower = words.toLowerCase();
+          if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower == 'молчать') {
+            _stopSpeakingImmediately();
+            _speech.stop();
+            setState(() {
+              _isListening = false;
+              _textController.clear();
+            });
+            return;
+          }
+
+          if (val.finalResult && words.isNotEmpty) {
+            _processLiveInput(words);
           }
         },
       );
@@ -301,31 +320,52 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
       _startSpeechListening();
     } else {
       _stopSpeechListening();
-      _tts.stop();
+      _stopSpeakingImmediately();
+    }
+  }
+
+  Future<void> _pickImageFromGallery() async {
+    final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1024);
+    if (picked != null) {
+      final bytes = await picked.readAsBytes();
+      setState(() {
+        _attachedImageBase64 = base64Encode(bytes);
+      });
     }
   }
 
   Future<void> _processLiveInput(String userText) async {
     if (_isLoading) return;
+
+    final lower = userText.toLowerCase().trim();
+    if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower == 'молчать') {
+      await _stopSpeakingImmediately();
+      _textController.clear();
+      return;
+    }
+
     _stopSpeechListening();
 
-    String? capturedBase64;
-    if (_isCameraActive && _cameraController != null && _cameraController!.value.isInitialized) {
+    String? finalImageBase64 = _attachedImageBase64;
+    _attachedImageBase64 = null;
+
+    // Если фото из галереи не выбрано, захватываем кадр из живой камеры
+    if (finalImageBase64 == null && _isCameraActive && _cameraController != null && _cameraController!.value.isInitialized) {
       try {
         final XFile file = await _cameraController!.takePicture();
         final bytes = await file.readAsBytes();
-        capturedBase64 = base64Encode(bytes);
+        finalImageBase64 = base64Encode(bytes);
       } catch (e) {
-        debugPrint("Ошибка захвата кадра с камеры: $e");
+        debugPrint("Ошибка захвата кадра: $e");
       }
     }
 
     final activeSession = _currentSession;
     setState(() {
       activeSession.messages.add(ChatMessage(
-        text: userText,
+        text: userText.isEmpty ? "Посмотри на это изображение" : userText,
         isUser: true,
-        imageBase64: capturedBase64,
+        imageBase64: finalImageBase64,
       ));
       if (activeSession.title == "Живой диалог" && userText.isNotEmpty) {
         activeSession.title = userText.length > 25 ? "${userText.substring(0, 25)}..." : userText;
@@ -340,13 +380,13 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
       List<dynamic> contentPayload = [];
       contentPayload.add({
         "type": "text",
-        "text": "$userText\n\n(ВАЖНО: Отвечай строго на русском языке, разговорно, четко и без канцелярита!)"
+        "text": "${userText.isEmpty ? 'Что здесь изображено?' : userText}\n\n(ВАЖНО: Отвечай строго на русском языке, разговорно, кратко и четко!)"
       });
 
-      if (capturedBase64 != null) {
+      if (finalImageBase64 != null) {
         contentPayload.add({
           "type": "image_url",
-          "image_url": {"url": "data:image/jpeg;base64,$capturedBase64"}
+          "image_url": {"url": "data:image/jpeg;base64,$finalImageBase64"}
         });
       }
 
@@ -570,7 +610,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
           IconButton(
             icon: Icon(_isCameraActive ? Icons.videocam : Icons.videocam_off,
                 color: _isCameraActive ? Colors.deepPurpleAccent : Colors.grey),
-            tooltip: 'Вкл/Выкл видеокамеру',
+            tooltip: 'Вкл/Выкл видоискатель',
             onPressed: () => setState(() => _isCameraActive = !_isCameraActive),
           ),
           IconButton(
@@ -579,217 +619,264 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Видоискатель камеры Live View
-          if (_isCameraActive && _cameraController != null && _cameraController!.value.isInitialized)
-            Container(
-              height: 210,
-              width: double.infinity,
-              margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: _liveContinuousMode ? Colors.redAccent : Colors.deepPurpleAccent.withOpacity(0.5),
-                  width: 2,
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    CameraPreview(_cameraController!),
-                    Positioned(
-                      top: 10,
-                      left: 10,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(8),
+          Column(
+            children: [
+              // Видоискатель камеры Live View
+              if (_isCameraActive && _cameraController != null && _cameraController!.value.isInitialized)
+                Container(
+                  height: 200,
+                  width: double.infinity,
+                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _liveContinuousMode ? Colors.redAccent : Colors.deepPurpleAccent.withOpacity(0.5),
+                      width: 2,
+                    ),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CameraPreview(_cameraController!),
+                        Positioned(
+                          top: 10,
+                          left: 10,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: _liveContinuousMode ? Colors.redAccent : Colors.greenAccent,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  _liveContinuousMode ? "LIVE VISION" : "CAMERA ACTIVE",
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                      ],
+                    ),
+                  ),
+                ),
+
+              if (_liveContinuousMode)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  color: Colors.redAccent.withOpacity(0.12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.graphic_eq, color: Colors.redAccent, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        _isSpeaking
+                            ? "BlackPocket отвечает (скажи «Стоп» для сброса)"
+                            : (_isListening ? "Слушаю твой голос..." : "Обработка..."),
+                        style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Превью прикрепленного фото из галереи
+              if (_attachedImageBase64 != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  color: Colors.white10,
+                  child: Row(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: Image.memory(base64Decode(_attachedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text('Фото из галереи прикреплено', style: TextStyle(fontSize: 13, color: Colors.white70)),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () => setState(() => _attachedImageBase64 = null),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Список сообщений
+              Expanded(
+                child: ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final msg = messages[index];
+                    return Align(
+                      alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 6),
+                        padding: const EdgeInsets.all(12),
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
+                        decoration: BoxDecoration(
+                          color: msg.isUser ? Colors.deepPurple.shade800 : const Color(0xFF1E1E20),
+                          borderRadius: BorderRadius.circular(16),
+                          border: msg.isUser ? null : Border.all(color: Colors.white10),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: _liveContinuousMode ? Colors.redAccent : Colors.greenAccent,
+                            if (msg.imageBase64 != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.memory(
+                                    base64Decode(msg.imageBase64!),
+                                    height: 140,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _liveContinuousMode ? "LIVE VISION" : "CAMERA ACTIVE",
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                            ),
+                            msg.isUser
+                                ? Text(msg.text, style: const TextStyle(fontSize: 16, color: Colors.white))
+                                : MarkdownBody(
+                                    data: msg.text,
+                                    styleSheet: MarkdownStyleSheet(
+                                      p: const TextStyle(fontSize: 16, color: Color(0xFFEEEEEE), height: 1.4),
+                                    ),
+                                  ),
+                            if (!msg.isUser)
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
+                                    onPressed: () {
+                                      Clipboard.setData(ClipboardData(text: msg.text));
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(content: Text('Скопировано')),
+                                      );
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: Icon(
+                                      _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                                      size: 18,
+                                      color: _isSpeaking ? Colors.redAccent : Colors.grey,
+                                    ),
+                                    onPressed: () => _isSpeaking ? _stopSpeakingImmediately() : _speakText(msg.text),
+                                  ),
+                                ],
+                              ),
                           ],
                         ),
                       ),
+                    );
+                  },
+                ),
+              ),
+
+              if (_isLoading)
+                const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: LinearProgressIndicator(minHeight: 2)),
+
+              // Нижняя панель
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                color: const Color(0xFF0F0F10),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.photo_library_outlined, color: Colors.white70),
+                      tooltip: 'Прикрепить фото из галереи',
+                      onPressed: _pickImageFromGallery,
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _liveContinuousMode ? Icons.headset : Icons.headset_off_outlined,
+                        color: _liveContinuousMode ? Colors.redAccent : Colors.grey,
+                      ),
+                      tooltip: 'Live режим диалога',
+                      onPressed: _toggleContinuousLive,
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: _textController,
+                        textCapitalization: TextCapitalization.sentences,
+                        style: const TextStyle(fontSize: 15),
+                        decoration: InputDecoration(
+                          hintText: _liveContinuousMode
+                              ? 'Скажи «Стоп» чтобы прервать...'
+                              : (_isListening ? 'Слушаю...' : 'Сообщение...'),
+                          filled: true,
+                          fillColor: const Color(0xFF1B1B1E),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        ),
+                        onSubmitted: (txt) {
+                          if (txt.trim().isNotEmpty || _attachedImageBase64 != null) {
+                            _processLiveInput(txt.trim());
+                          }
+                        },
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        _isListening ? Icons.mic : Icons.mic_none,
+                        color: _isListening ? Colors.redAccent : Colors.white70,
+                      ),
+                      onPressed: () {
+                        if (_isListening) {
+                          _stopSpeechListening();
+                        } else {
+                          _startSpeechListening();
+                        }
+                      },
+                    ),
+                    IconButton.filled(
+                      onPressed: _isLoading
+                          ? null
+                          : () {
+                              final txt = _textController.text.trim();
+                              if (txt.isNotEmpty || _attachedImageBase64 != null) {
+                                _processLiveInput(txt);
+                              }
+                            },
+                      icon: const Icon(Icons.arrow_upward),
                     ),
                   ],
                 ),
               ),
-            ),
+            ],
+          ),
 
-          if (_liveContinuousMode)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              color: Colors.redAccent.withOpacity(0.12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.graphic_eq, color: Colors.redAccent, size: 20),
-                  const SizedBox(width: 8),
-                  Text(
-                    _isSpeaking
-                        ? "BlackPocket отвечает..."
-                        : (_isListening ? "Слушаю твой голос..." : "Идёт обработка кадра..."),
-                    style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
-                  ),
-                ],
+          // Плавающая кнопка мгновенной остановки речи (СТОП)
+          if (_isSpeaking)
+            Positioned(
+              bottom: 80,
+              right: 20,
+              child: FloatingActionButton.extended(
+                backgroundColor: Colors.redAccent,
+                icon: const Icon(Icons.stop, color: Colors.white),
+                label: const Text('СТОП', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                onPressed: _stopSpeakingImmediately,
               ),
             ),
-
-          // Список сообщений
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: messages.length,
-              itemBuilder: (context, index) {
-                final msg = messages[index];
-                return Align(
-                  alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    padding: const EdgeInsets.all(12),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-                    decoration: BoxDecoration(
-                      color: msg.isUser ? Colors.deepPurple.shade800 : const Color(0xFF1E1E20),
-                      borderRadius: BorderRadius.circular(16),
-                      border: msg.isUser ? null : Border.all(color: Colors.white10),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (msg.imageBase64 != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: Image.memory(
-                                base64Decode(msg.imageBase64!),
-                                height: 140,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                        msg.isUser
-                            ? Text(msg.text, style: const TextStyle(fontSize: 16, color: Colors.white))
-                            : MarkdownBody(
-                                data: msg.text,
-                                styleSheet: MarkdownStyleSheet(
-                                  p: const TextStyle(fontSize: 16, color: Color(0xFFEEEEEE), height: 1.4),
-                                ),
-                              ),
-                        if (!msg.isUser)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
-                                onPressed: () {
-                                  Clipboard.setData(ClipboardData(text: msg.text));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Скопировано')),
-                                  );
-                                },
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
-                                  size: 18,
-                                  color: _isSpeaking ? Colors.redAccent : Colors.grey,
-                                ),
-                                onPressed: () => _speakText(msg.text),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-
-          if (_isLoading)
-            const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: LinearProgressIndicator(minHeight: 2)),
-
-          // Нижняя панель ввода
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            color: const Color(0xFF0F0F10),
-            child: Row(
-              children: [
-                // Кнопка непрерывного режима Live
-                IconButton(
-                  icon: Icon(
-                    _liveContinuousMode ? Icons.headset : Icons.headset_off_outlined,
-                    color: _liveContinuousMode ? Colors.redAccent : Colors.grey,
-                  ),
-                  tooltip: 'Live режим (Камера + Голос)',
-                  onPressed: _toggleContinuousLive,
-                ),
-                Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    textCapitalization: TextCapitalization.sentences,
-                    style: const TextStyle(fontSize: 15),
-                    decoration: InputDecoration(
-                      hintText: _liveContinuousMode
-                          ? 'Live-диалог активен...'
-                          : (_isListening ? 'Говори по-русски...' : 'Напиши или скажи...'),
-                      filled: true,
-                      fillColor: const Color(0xFF1B1B1E),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    ),
-                    onSubmitted: (txt) {
-                      if (txt.trim().isNotEmpty) _processLiveInput(txt.trim());
-                    },
-                  ),
-                ),
-                IconButton(
-                  icon: Icon(
-                    _isListening ? Icons.mic : Icons.mic_none,
-                    color: _isListening ? Colors.redAccent : Colors.white70,
-                  ),
-                  onPressed: () {
-                    if (_isListening) {
-                      _stopSpeechListening();
-                    } else {
-                      _startSpeechListening();
-                    }
-                  },
-                ),
-                IconButton.filled(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                          final txt = _textController.text.trim();
-                          if (txt.isNotEmpty) _processLiveInput(txt);
-                        },
-                  icon: const Icon(Icons.arrow_upward),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
