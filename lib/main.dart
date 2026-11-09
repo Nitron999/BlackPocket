@@ -216,7 +216,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Очистка старых кэшированных битых ключей из памяти смартфона
     final migrationTag = prefs.getString('bp_clean_migration');
     if (migrationTag != 'v4_clean_storage') {
       await prefs.remove('apiKey');
@@ -446,8 +445,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
-      
-      // Передача ключа и в URL, и в заголовок для максимальной совместимости
       final targetUri = Uri.parse("$endpointBase/$_modelName:generateContent?key=$cleanKey");
 
       http.Response? response;
@@ -511,7 +508,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         final errMsg = errData['error']?['message'] ?? response.body;
         setState(() {
           session.messages.add(ChatMessage(
-            text: "Ошибка Gemini API (${response.statusCode}):$errMsg",
+            text: "Ошибка Gemini API (${response?.statusCode ?? 0}): $errMsg",
             isUser: false,
           ));
         });
@@ -565,4 +562,326 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
   void _showAttachmentBottomSheet() {
     showModalBottomSheet(
-      context:
+      context: context,
+      backgroundColor: const Color(0xFF1E2128),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined, color: Colors.blueAccent),
+              title: const Text('Сделать фото'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: Colors.purpleAccent),
+              title: const Text('Выбрать из галереи'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.description_outlined, color: Colors.greenAccent),
+              title: const Text('Загрузить документ (.txt, .log, .json, .py, .dart)'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickDocumentFile();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showMemoryDialog() {
+    final memCtrl = TextEditingController(text: _memoryFacts);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.psychology, color: Colors.blueAccent),
+            SizedBox(width: 8),
+            Text('Память ассистента'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Факты и предпочтения, которые ИИ помнит во всех чатах:',
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: memCtrl,
+              maxLines: 6,
+              style: const TextStyle(fontSize: 14),
+              decoration: const InputDecoration(
+                filled: true,
+                fillColor: Color(0xFF1E2128),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          FilledButton(
+            onPressed: () {
+              setState(() => _memoryFacts = memCtrl.text.trim());
+              _saveData();
+              Navigator.pop(context);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSettingsModal() {
+    final keyCtrl = TextEditingController(text: _apiKey);
+    final modelCtrl = TextEditingController(text: _modelName);
+    final endpointCtrl = TextEditingController(text: _apiEndpoint);
+    double rate = _speechRate;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF131316),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModal) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('Настройки BlackPocket AI', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: keyCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Google Gemini API Key (AQ...)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: modelCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Имя модели (gemini-3.8-flash)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: endpointCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Endpoint URL',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text('Скорость голоса: ${rate.toStringAsFixed(2)}x'),
+                Slider(
+                  value: rate,
+                  min: 0.25,
+                  max: 0.75,
+                  divisions: 10,
+                  onChanged: (v) {
+                    setModal(() => rate = v);
+                    _tts.setSpeechRate(v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          keyCtrl.text = _defaultApiKey;
+                          modelCtrl.text = _defaultModel;
+                          endpointCtrl.text = _defaultEndpoint;
+                        },
+                        child: const Text('По умолчанию'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          setState(() {
+                            _apiKey = keyCtrl.text.trim();
+                            _modelName = modelCtrl.text.trim();
+                            _apiEndpoint = endpointCtrl.text.trim();
+                            _speechRate = rate;
+                          });
+                          _saveData();
+                          Navigator.pop(context);
+                        },
+                        child: const Text('Сохранить', style: TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = _activeSession;
+    final messages = session.messages;
+
+    return Scaffold(
+      key: _scaffoldKey,
+      drawer: _buildGeminiDrawer(),
+      body: Stack(
+        children: [
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF030508),
+                  Color(0xFF070B14),
+                  Color(0xFF0A142B),
+                ],
+              ),
+            ),
+          ),
+
+          SafeArea(
+            child: Column(
+              children: [
+                _buildTopAppBar(),
+
+                Expanded(
+                  child: messages.isEmpty
+                      ? _buildWelcomeCenter()
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.only(left: 16, right: 16, top: 10, bottom: 90),
+                          itemCount: messages.length,
+                          itemBuilder: (context, idx) {
+                            final m = messages[idx];
+                            return Align(
+                              alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(vertical: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
+                                decoration: BoxDecoration(
+                                  color: m.isUser ? const Color(0xFF1E293B) : const Color(0xFF111827),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: m.isUser ? null : Border.all(color: Colors.white12),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (m.fileName != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        margin: const EdgeInsets.only(bottom: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.greenAccent.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.attach_file, size: 16, color: Colors.greenAccent),
+                                            const SizedBox(width: 4),
+                                            Text(m.fileName!, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
+                                          ],
+                                        ),
+                                      ),
+                                    if (m.imageBase64 != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Image.memory(
+                                            base64Decode(m.imageBase64!),
+                                            height: 180,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+                                    m.isUser
+                                        ? Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
+                                        : MarkdownBody(
+                                            data: m.text,
+                                            styleSheet: MarkdownStyleSheet(
+                                              p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
+                                            ),
+                                          ),
+                                    if (!m.isUser)
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.end,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
+                                            onPressed: () {
+                                              Clipboard.setData(ClipboardData(text: m.text));
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Скопировано')),
+                                              );
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: Icon(
+                                              _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                                              size: 18,
+                                              color: Colors.blueAccent,
+                                            ),
+                                            onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+
+          if (_selectedImageBase64 != null || _attachedFileName != null)
+            Positioned(
+              bottom: 95,
+              left: 20,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12
