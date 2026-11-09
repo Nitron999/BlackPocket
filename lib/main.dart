@@ -104,11 +104,11 @@ final List<AgentPreset> _availableAgents = [
 ];
 
 class ChatMessage {
-  final String text;
+  String text;
   final bool isUser;
   final String? imageBase64;
   final String? fileName;
-  final String? modelUsed;
+  String? modelUsed;
 
   ChatMessage({
     required this.text,
@@ -276,9 +276,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v5_agents_storage') {
+    if (migrationTag != 'v6_stream_storage') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v5_agents_storage');
+      await prefs.setString('bp_clean_migration', 'v6_stream_storage');
     }
 
     setState(() {
@@ -328,7 +328,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
+          duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
         );
       }
@@ -431,6 +431,30 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     }
   }
 
+  void _checkAndAutoSaveMemory(String text) {
+    final lower = text.toLowerCase().trim();
+    if (lower.startsWith('запомни:') || lower.startsWith('запомни, что') || lower.startsWith('запомни ')) {
+      String fact = text;
+      final match = RegExp(r'запомни[,:]?\s*(что\s*)?', caseSensitive: false).firstMatch(text);
+      if (match != null) {
+        fact = text.substring(match.end).trim();
+      }
+      if (fact.isNotEmpty) {
+        if (!_memoryFacts.contains(fact)) {
+          _memoryFacts = "$_memoryFacts\n- $fact";
+          _saveData();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: const Color(0xFF1E293B),
+              content: Text('🧠 Запомнил в памяти: $fact', style: const TextStyle(color: Colors.greenAccent)),
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
     if (text.isEmpty && _selectedImageBase64 == null && _attachedFileContent == null && !_isLiveActive) return;
@@ -444,6 +468,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     }
 
     _stopListening();
+    _checkAndAutoSaveMemory(text);
 
     String? imageToSend = _selectedImageBase64;
     String? fileContentToSend = _attachedFileContent;
@@ -464,6 +489,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     }
 
     final session = _activeSession;
+    final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
+
     setState(() {
       session.messages.add(ChatMessage(
         text: text.isEmpty ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение") : text,
@@ -471,6 +498,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         imageBase64: imageToSend,
         fileName: fileNameToSend,
       ));
+      session.messages.add(botMessage);
+
       if (session.title == "Новый чат" && text.isNotEmpty) {
         session.title = text.length > 26 ? "${text.substring(0, 26)}..." : text;
       }
@@ -514,110 +543,99 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         modelsQueue.add("gemini-3.6-flash");
       }
 
-      http.Response? finalResponse;
-      String usedModelName = _modelName;
+      bool success = false;
 
       for (String modelToTry in modelsQueue) {
-        usedModelName = modelToTry;
-        final targetUri = Uri.parse("$endpointBase/$modelToTry:generateContent?key=$cleanKey");
+        botMessage.modelUsed = modelToTry;
+        final streamUri = Uri.parse("$endpointBase/$modelToTry:streamGenerateContent?alt=sse&key=$cleanKey");
 
         for (int attempt = 0; attempt < 2; attempt++) {
           try {
-            finalResponse = await http.post(
-              targetUri,
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': cleanKey,
-              },
-              body: jsonEncode({
-                "contents": [
-                  {
-                    "role": "user",
-                    "parts": userParts,
-                  }
-                ],
-                "systemInstruction": {
-                  "parts": [
-                    {"text": combinedSystemPrompt}
-                  ]
+            final request = http.Request('POST', streamUri);
+            request.headers.addAll({
+              'Content-Type': 'application/json',
+              'x-goog-api-key': cleanKey,
+            });
+            request.body = jsonEncode({
+              "contents": [
+                {
+                  "role": "user",
+                  "parts": userParts,
                 }
-              }),
-            ).timeout(const Duration(seconds: 25));
+              ],
+              "systemInstruction": {
+                "parts": [
+                  {"text": combinedSystemPrompt}
+                ]
+              }
+            });
 
-            if (finalResponse.statusCode == 200) {
-              break;
-            }
+            final client = http.Client();
+            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 25));
 
-            if (finalResponse.statusCode == 503) {
+            if (streamedResponse.statusCode == 200) {
+              final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
+              String accumulated = '';
+
+              await for (final line in stream) {
+                if (line.startsWith('data: ')) {
+                  final jsonStr = line.substring(6).trim();
+                  if (jsonStr == '[DONE]') continue;
+                  try {
+                    final data = jsonDecode(jsonStr);
+                    if (data['candidates'] != null &&
+                        (data['candidates'] as List).isNotEmpty &&
+                        data['candidates'][0]['content'] != null &&
+                        data['candidates'][0]['content']['parts'] != null &&
+                        (data['candidates'][0]['content']['parts'] as List).isNotEmpty) {
+                      final chunk = data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                      accumulated += chunk;
+                      setState(() {
+                        botMessage.text = accumulated;
+                      });
+                      _scrollToBottom();
+                    }
+                  } catch (_) {}
+                }
+              }
+
+              if (accumulated.isNotEmpty) {
+                success = true;
+                _saveData();
+                _speakText(accumulated);
+                break;
+              }
+            } else if (streamedResponse.statusCode == 503) {
               await Future.delayed(const Duration(seconds: 2));
               continue;
-            }
-
-            if (finalResponse.statusCode == 429) {
+            } else if (streamedResponse.statusCode == 429) {
+              break;
+            } else {
+              final errBody = await streamedResponse.stream.bytesToString();
+              setState(() {
+                botMessage.text = "Ошибка Gemini API (${streamedResponse.statusCode}): $errBody";
+              });
               break;
             }
           } on TimeoutException {
             if (attempt == 1) break;
             await Future.delayed(const Duration(seconds: 1));
+          } catch (_) {
+            if (attempt == 1) break;
           }
         }
 
-        if (finalResponse != null && finalResponse.statusCode == 200) {
-          break;
-        }
+        if (success) break;
       }
 
-      if (finalResponse != null && finalResponse.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(finalResponse.bodyBytes));
-        String reply = 'Пустой ответ от Gemini';
-
-        if (data['candidates'] != null &&
-            (data['candidates'] as List).isNotEmpty &&
-            data['candidates'][0]['content'] != null &&
-            data['candidates'][0]['content']['parts'] != null &&
-            (data['candidates'][0]['content']['parts'] as List).isNotEmpty) {
-          reply = data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-        }
-
+      if (!success && botMessage.text.isEmpty) {
         setState(() {
-          session.messages.add(ChatMessage(
-            text: reply,
-            isUser: false,
-            modelUsed: usedModelName,
-          ));
-        });
-        _saveData();
-        _speakText(reply);
-      } else if (finalResponse != null) {
-        final errData = jsonDecode(utf8.decode(finalResponse.bodyBytes));
-        final errMsg = errData['error']?['message'] ?? finalResponse.body;
-        setState(() {
-          session.messages.add(ChatMessage(
-            text: "Ошибка Gemini API (${finalResponse?.statusCode ?? 0}): $errMsg",
-            isUser: false,
-          ));
-        });
-      } else {
-        setState(() {
-          session.messages.add(ChatMessage(
-            text: "Сервер не вернул ответ. Проверьте сеть или VPN.",
-            isUser: false,
-          ));
+          botMessage.text = "Не удалось получить ответ. Проверь VPN или доступность Google API.";
         });
       }
-    } on TimeoutException {
-      setState(() {
-        session.messages.add(ChatMessage(
-          text: "Таймаут соединения (25 сек). Сервер не ответил. Проверь VPN-соединение.",
-          isUser: false,
-        ));
-      });
     } catch (e) {
       setState(() {
-        session.messages.add(ChatMessage(
-          text: "Сбой сети: $e. Убедись, что подключен VPN для доступа к Google API.",
-          isUser: false,
-        ));
+        botMessage.text = "Сбой сети: $e. Убедись, что подключен VPN.";
       });
     } finally {
       setState(() => _isLoading = false);
@@ -643,6 +661,55 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
       Navigator.pop(context);
     }
+  }
+
+  void _deleteSession(String id) {
+    setState(() {
+      _sessions.removeWhere((s) => s.id == id);
+      if (_sessions.isEmpty) {
+        final first = ChatSession(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          title: "Новый чат",
+          messages: [],
+        );
+        _sessions.add(first);
+        _currentSessionId = first.id;
+      } else if (_currentSessionId == id) {
+        _currentSessionId = _sessions.first.id;
+      }
+    });
+    _saveData();
+  }
+
+  void _clearAllSessions() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Очистить всю историю?'),
+        content: const Text('Все предыдущие диалоги будут удалены безвозвратно.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _sessions.clear();
+                final first = ChatSession(
+                  id: DateTime.now().millisecondsSinceEpoch.toString(),
+                  title: "Новый чат",
+                  messages: [],
+                );
+                _sessions.add(first);
+                _currentSessionId = first.id;
+              });
+              _saveData();
+            },
+            child: const Text('Очистить'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAgentPicker() {
@@ -748,7 +815,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Факты и предпочтения, которые ИИ помнит во всех диалогах:',
+              'Факты и предпочтения, которые ИИ помнит во всех диалогах (можно сказать в чате «Запомни: ...»):',
               style: TextStyle(fontSize: 13, color: Colors.white70),
             ),
             const SizedBox(height: 10),
@@ -972,12 +1039,25 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                     m.isUser
                                         ? Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
                                         : MarkdownBody(
-                                            data: m.text,
+                                            data: m.text.isEmpty && _isLoading ? '...' : m.text,
+                                            selectable: true,
                                             styleSheet: MarkdownStyleSheet(
                                               p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
+                                              code: const TextStyle(
+                                                backgroundColor: Color(0xFF1E293B),
+                                                color: Color(0xFF38BDF8),
+                                                fontFamily: 'monospace',
+                                                fontSize: 14,
+                                              ),
+                                              codeblockPadding: const EdgeInsets.all(12),
+                                              codeblockDecoration: BoxDecoration(
+                                                color: const Color(0xFF0F172A),
+                                                borderRadius: BorderRadius.circular(10),
+                                                border: Border.all(color: Colors.white12),
+                                              ),
                                             ),
                                           ),
-                                    if (!m.isUser)
+                                    if (!m.isUser && m.text.isNotEmpty)
                                       Row(
                                         mainAxisAlignment: MainAxisAlignment.end,
                                         children: [
@@ -1362,9 +1442,20 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
             const Divider(color: Colors.white12, height: 24),
 
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: Text('История чатов', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Row(
+                children: [
+                  const Text('История чатов', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  if (_sessions.length > 1 || (_sessions.isNotEmpty && _sessions[0].messages.isNotEmpty))
+                    IconButton(
+                      icon: const Icon(Icons.delete_sweep_outlined, color: Colors.white38, size: 20),
+                      tooltip: 'Очистить всю историю',
+                      onPressed: _clearAllSessions,
+                    ),
+                ],
+              ),
             ),
 
             Expanded(
@@ -1390,6 +1481,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                         color: isCurrent ? Colors.white : Colors.white70,
                         fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                       ),
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close, size: 16, color: Colors.white38),
+                      tooltip: 'Удалить чат',
+                      onPressed: () => _deleteSession(s.id),
                     ),
                     onTap: () {
                       setState(() => _currentSessionId = s.id);
