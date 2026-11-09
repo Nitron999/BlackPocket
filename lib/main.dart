@@ -15,7 +15,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 List<CameraDescription> _availableCameras = [];
 
 const String _defaultApiKey = "AQ.Ab8RN6INDiAIoK2cYOusWKutVqD0XFZpPLDOyYAriMWojxlNyQ";
-const String _defaultModel = "gemini-3.8-flash";
+const String _defaultModel = "gemini-3.5-flash-lite";
 const String _defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
 
 Future<void> main() async {
@@ -51,19 +51,79 @@ class GeminiBlackPocketApp extends StatelessWidget {
   }
 }
 
+class AgentPreset {
+  final String id;
+  final String name;
+  final String description;
+  final IconData icon;
+  final String systemInstruction;
+
+  const AgentPreset({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.icon,
+    required this.systemInstruction,
+  });
+}
+
+final List<AgentPreset> _availableAgents = [
+  const AgentPreset(
+    id: "companion",
+    name: "Живой напарник",
+    description: "Разговорный стиль, кратко, без воды, оптимизирован под голос",
+    icon: Icons.chat_bubble_outline,
+    systemInstruction:
+        "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
+        "Отвечай кратко, емко, по-живому, дружелюбно и без шаблонной вежливости. "
+        "Идеально подходи для голосового режима и быстрых ответов.",
+  ),
+  const AgentPreset(
+    id: "engineer",
+    name: "Инженер / Кодер",
+    description: "Глубокая архитектура, чистый код, багфикс и разбор электроники",
+    icon: Icons.code,
+    systemInstruction:
+        "Ты — ведущий инженер-архитектор и разработчик систем. "
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
+        "Давай точный технический анализ, проектируй надежные решения, "
+        "пиши готовый к продакшену программный код в Markdown без лишних предисловий.",
+  ),
+  const AgentPreset(
+    id: "analyst",
+    name: "Аналитик документов",
+    description: "Тщательный аудит логов, конфигов, таблиц и текстовых файлов",
+    icon: Icons.analytics_outlined,
+    systemInstruction:
+        "Ты — технический аналитик данных и системной документации. "
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
+        "Глубоко вникай в содержимое прикрепленных файлов, логов, скриптов и отчетов. "
+        "Выявляй ошибки, структурируй суть и давай четкие практические выводы.",
+  ),
+];
+
 class ChatMessage {
   final String text;
   final bool isUser;
   final String? imageBase64;
   final String? fileName;
+  final String? modelUsed;
 
-  ChatMessage({required this.text, required this.isUser, this.imageBase64, this.fileName});
+  ChatMessage({
+    required this.text,
+    required this.isUser,
+    this.imageBase64,
+    this.fileName,
+    this.modelUsed,
+  });
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'isUser': isUser,
         'imageBase64': imageBase64,
         'fileName': fileName,
+        'modelUsed': modelUsed,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -71,6 +131,7 @@ class ChatMessage {
         isUser: json['isUser'] ?? false,
         imageBase64: json['imageBase64'],
         fileName: json['fileName'],
+        modelUsed: json['modelUsed'],
       );
 }
 
@@ -129,17 +190,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   String _apiKey = _defaultApiKey;
   String _modelName = _defaultModel;
   String _apiEndpoint = _defaultEndpoint;
+  String _selectedAgentId = "companion";
 
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
       "Отвечай кратко, емко, по-живому, на чистом русском языке. "
       "Он ценит техническую грамотность, конструктив, отсутствие шаблонных вежливых вступлений.";
 
-  final String _systemPrompt =
-      "Ты — BlackPocket, персональный ИИ-напарник Александра. "
-      "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! Ни слова на английском! "
-      "Отвечай кратко, разговорно, по делу, с техническим пониманием. "
-      "Если передано фото или кадр камеры — сразу без вступлений говори по сути увиденного.";
+  AgentPreset get _currentAgent =>
+      _availableAgents.firstWhere((a) => a.id == _selectedAgentId, orElse: () => _availableAgents.first);
 
   @override
   void initState() {
@@ -161,7 +220,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         await _cameraController!.initialize();
         if (mounted) setState(() {});
       } catch (e) {
-        debugPrint("Камера не найдена или ошибка: $e");
+        debugPrint("Ошибка камеры: $e");
       }
     }
   }
@@ -217,17 +276,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v4_clean_storage') {
-      await prefs.remove('apiKey');
+    if (migrationTag != 'v5_agents_storage') {
       await prefs.remove('modelName');
-      await prefs.remove('apiEndpoint');
-      await prefs.setString('bp_clean_migration', 'v4_clean_storage');
+      await prefs.setString('bp_clean_migration', 'v5_agents_storage');
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
+      _selectedAgentId = prefs.getString('selectedAgentId') ?? "companion";
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
       _speechRate = prefs.getDouble('speechRate') ?? 0.45;
 
@@ -260,6 +318,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     await prefs.setString('apiKey', _apiKey);
     await prefs.setString('modelName', _modelName);
     await prefs.setString('apiEndpoint', _apiEndpoint);
+    await prefs.setString('selectedAgentId', _selectedAgentId);
     await prefs.setString('memoryFacts', _memoryFacts);
     await prefs.setDouble('speechRate', _speechRate);
   }
@@ -427,9 +486,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         userFullPrompt += "\n\n[СОДЕРЖИМОЕ ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
       }
 
-      final combinedSystemPrompt = "$_systemPrompt\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
+      final combinedSystemPrompt =
+          "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      final userParts = [];
+      final userParts = >[];
       userParts.add({
         "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
@@ -445,49 +505,74 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
-      final targetUri = Uri.parse("$endpointBase/$_modelName:generateContent?key=$cleanKey");
 
-      http.Response? response;
-      const int maxRetries = 3;
+      // Список моделей для умного каскадного авто-роутинга
+      List<String> modelsQueue = [_modelName];
+      if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
+        modelsQueue.add("gemini-3.5-flash-lite");
+      }
+      if (!modelsQueue.contains("gemini-3.6-flash")) {
+        modelsQueue.add("gemini-3.6-flash");
+      }
 
-      for (int attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-          response = await http.post(
-            targetUri,
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': cleanKey,
-            },
-            body: jsonEncode({
-              "contents": [
-                {
-                  "role": "user",
-                  "parts": userParts,
+      http.Response? finalResponse;
+      String usedModelName = _modelName;
+
+      for (String modelToTry in modelsQueue) {
+        usedModelName = modelToTry;
+        final targetUri = Uri.parse("$endpointBase/$modelToTry:generateContent?key=$cleanKey");
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+          try {
+            finalResponse = await http.post(
+              targetUri,
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': cleanKey,
+              },
+              body: jsonEncode({
+                "contents": [
+                  {
+                    "role": "user",
+                    "parts": userParts,
+                  }
+                ],
+                "systemInstruction": {
+                  "parts": [
+                    {"text": combinedSystemPrompt}
+                  ]
                 }
-              ],
-              "systemInstruction": {
-                "parts": [
-                  {"text": combinedSystemPrompt}
-                ]
-              }
-            }),
-          ).timeout(const Duration(seconds: 30));
+              }),
+            ).timeout(const Duration(seconds: 25));
 
-          if (response.statusCode != 503) {
-            break;
-          }
+            // Если успех — выходим
+            if (finalResponse.statusCode == 200) {
+              break;
+            }
 
-          if (attempt < maxRetries - 1) {
-            await Future.delayed(Duration(seconds: 2 * (attempt + 1)));
+            // Если перегрузка 503 — делаем короткую паузу и повторяем попытку
+            if (finalResponse.statusCode == 503) {
+              await Future.delayed(const Duration(seconds: 2));
+              continue;
+            }
+
+            // Если квота 429 — не ждем, сразу идем к следующей модели в очереди
+            if (finalResponse.statusCode == 429) {
+              break;
+            }
+          } on TimeoutException {
+            if (attempt == 1) break;
+            await Future.delayed(const Duration(seconds: 1));
           }
-        } on TimeoutException {
-          if (attempt == maxRetries - 1) rethrow;
-          await Future.delayed(const Duration(seconds: 2));
+        }
+
+        if (finalResponse != null && finalResponse.statusCode == 200) {
+          break;
         }
       }
 
-      if (response != null && response.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (finalResponse != null && finalResponse.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(finalResponse.bodyBytes));
         String reply = 'Пустой ответ от Gemini';
 
         if (data['candidates'] != null &&
@@ -499,16 +584,20 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         }
 
         setState(() {
-          session.messages.add(ChatMessage(text: reply, isUser: false));
+          session.messages.add(ChatMessage(
+            text: reply,
+            isUser: false,
+            modelUsed: usedModelName,
+          ));
         });
         _saveData();
         _speakText(reply);
-      } else if (response != null) {
-        final errData = jsonDecode(utf8.decode(response.bodyBytes));
-        final errMsg = errData['error']?['message'] ?? response.body;
+      } else if (finalResponse != null) {
+        final errData = jsonDecode(utf8.decode(finalResponse.bodyBytes));
+        final errMsg = errData['error']?['message'] ?? finalResponse.body;
         setState(() {
           session.messages.add(ChatMessage(
-            text: "Ошибка Gemini API (${response?.statusCode ?? 0}): $errMsg",
+            text: "Ошибка Gemini API (${finalResponse?.statusCode ?? 0}): $errMsg",
             isUser: false,
           ));
         });
@@ -523,7 +612,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     } on TimeoutException {
       setState(() {
         session.messages.add(ChatMessage(
-          text: "Таймаут соединения (30 сек). Сервер не ответил. Проверь VPN или смени локацию сервера.",
+          text: "Таймаут соединения (25 сек). Сервер не ответил. Проверь VPN-соединение.",
           isUser: false,
         ));
       });
@@ -558,6 +647,54 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
       Navigator.pop(context);
     }
+  }
+
+  void _showAgentPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF131316),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text('Выбор роли ассистента', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 12),
+              ..._availableAgents.map((agent) {
+                final isSelected = agent.id == _selectedAgentId;
+                return ListTile(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  tileColor: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
+                  leading: Icon(agent.icon, color: isSelected ? Colors.blueAccent : Colors.white70),
+                  title: Text(agent.name, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500)),
+                  subtitle: Text(agent.description, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                  trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blueAccent) : null,
+                  onTap: () {
+                    setState(() => _selectedAgentId = agent.id);
+                    _saveData();
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showAttachmentBottomSheet() {
@@ -615,13 +752,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Факты и предпочтения, которые ИИ помнит во всех чатах:',
+              'Факты и предпочтения, которые ИИ помнит во всех диалогах:',
               style: TextStyle(fontSize: 13, color: Colors.white70),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: memCtrl,
-              maxLines: 6,
+              maxLines: 7,
               style: const TextStyle(fontSize: 14),
               decoration: const InputDecoration(
                 filled: true,
@@ -691,7 +828,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                 TextField(
                   controller: modelCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Имя модели (gemini-3.8-flash)',
+                    labelText: 'Основная модель (gemini-3.5-flash-lite / 3.8-flash)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -848,6 +985,14 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                       Row(
                                         mainAxisAlignment: MainAxisAlignment.end,
                                         children: [
+                                          if (m.modelUsed != null)
+                                            Padding(
+                                              padding: const EdgeInsets.only(right: 8),
+                                              child: Text(
+                                                m.modelUsed!,
+                                                style: const TextStyle(fontSize: 10, color: Colors.white38),
+                                              ),
+                                            ),
                                           IconButton(
                                             icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
                                             onPressed: () {
@@ -943,13 +1088,22 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             icon: const Icon(Icons.menu, size: 26, color: Colors.white70),
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
           ),
-          const SizedBox(width: 6),
-          Row(
-            children: [
-              Text(_modelName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
-              const SizedBox(width: 4),
-              const Icon(Icons.check_circle, color: Colors.blueAccent, size: 16),
-            ],
+          const SizedBox(width: 4),
+          InkWell(
+            onTap: _showAgentPicker,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Row(
+                children: [
+                  Icon(_currentAgent.icon, size: 18, color: Colors.blueAccent),
+                  const SizedBox(width: 6),
+                  Text(_currentAgent.name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 18),
+                ],
+              ),
+            ),
           ),
           const Spacer(),
           IconButton(
