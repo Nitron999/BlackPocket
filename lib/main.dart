@@ -76,7 +76,7 @@ final List<AgentPreset> _availableAgents = [
     systemInstruction:
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Отвечай кратко, емко, по-живому, дружелюбно и без шаблонной вежливости. "
+        "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости. "
         "Идеально подходи для голосового режима и быстрых ответов.",
   ),
   const AgentPreset(
@@ -189,7 +189,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   bool _isLoading = false;
   bool _isLiveActive = false;
   bool _showLiveCamera = true;
-  double _speechRate = 0.45;
+  double _speechRate = 0.48;
 
   String? _selectedImageBase64;
   String? _attachedFileName;
@@ -248,7 +248,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _currentCameraIndex = cameraIndex % _availableCameras.length;
     _cameraController = CameraController(
       _availableCameras[_currentCameraIndex],
-      ResolutionPreset.medium,
+      ResolutionPreset.low, // Низкое разрешение для моментального отклика без задержек
       enableAudio: false,
     );
 
@@ -277,7 +277,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       if (mounted) {
         setState(() => _isSpeaking = false);
         if (_isLiveActive && !_isLoading) {
-          Future.delayed(const Duration(milliseconds: 300), () {
+          // Пауза перед возвратом к микрофону, чтобы динамик полностью затих
+          Future.delayed(const Duration(milliseconds: 400), () {
             if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
               _startSpeechListening();
             }
@@ -323,9 +324,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v9_fix_syntax') {
+    if (migrationTag != 'v10_live_optimized') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v9_fix_syntax');
+      await prefs.setString('bp_clean_migration', 'v10_live_optimized');
     }
 
     setState(() {
@@ -334,7 +335,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
       _selectedAgentId = prefs.getString('selectedAgentId') ?? "companion";
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
-      _speechRate = prefs.getDouble('speechRate') ?? 0.45;
+      _speechRate = prefs.getDouble('speechRate') ?? 0.48;
 
       final historyJson = prefs.getString('gemini_sessions_list');
       if (historyJson != null && historyJson.isNotEmpty) {
@@ -391,8 +392,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   Future<void> _speakText(String text) async {
+    // Освобождаем микрофон перед тем как включить динамик
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
+    }
     await _stopSpeaking();
-    final clean = text.replaceAll(RegExp(r'[\*\_#`>]'), '');
+    // Аппаратная пауза 200мс для переключения звукового тракта в Android
+    await Future.delayed(const Duration(milliseconds: 200));
+
+    final clean = text.replaceAll(RegExp(r'[\*\_#`>]'), '').trim();
+    if (clean.isEmpty) return;
+
     setState(() => _isSpeaking = true);
     await _tts.setSpeechRate(_speechRate);
     await _tts.speak(clean);
@@ -409,7 +420,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         localeId: "ru_RU",
         listenMode: stt.ListenMode.confirmation,
         pauseFor: const Duration(seconds: 2),
-        listenFor: const Duration(seconds: 30),
+        listenFor: const Duration(seconds: 25),
         onResult: (val) {
           final words = val.recognizedWords.trim();
           _inputController.text = words;
@@ -554,6 +565,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     return resultList;
   }
 
+  bool _phraseRequestsVision(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('посмотри') ||
+        lower.contains('что это') ||
+        lower.contains('видишь') ||
+        lower.contains('глянь') ||
+        lower.contains('проверь') ||
+        lower.contains('разбери') ||
+        lower.contains('в кадре') ||
+        lower.contains('на фото');
+  }
+
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
     if (text.isEmpty && _selectedImageBase64 == null && _attachedFileContent == null && !_isLiveActive) return;
@@ -578,7 +601,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _attachedFileContent = null;
     _attachedFileName = null;
 
-    if (imageToSend == null && _isLiveActive && _cameraController != null && _cameraController!.value.isInitialized) {
+    // Снимок камеры делается ТОЛЬКО если пользователь спрашивает про визуал
+    if (imageToSend == null &&
+        _isLiveActive &&
+        _cameraController != null &&
+        _cameraController!.value.isInitialized &&
+        (_phraseRequestsVision(text) || text.isEmpty)) {
       try {
         final XFile file = await _cameraController!.takePicture();
         final bytes = await file.readAsBytes();
@@ -593,7 +621,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final previousHistory = session.messages.toList();
 
     final displayPrompt = text.isEmpty
-        ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение")
+        ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри в кадр")
         : text;
 
     setState(() {
@@ -625,7 +653,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       final currentParts = [];
       currentParts.add({
-        "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
+        "text": userFullPrompt.isEmpty ? "Что в кадре? Ответь кратко на русском." : userFullPrompt
       });
 
       if (imageToSend != null) {
@@ -673,7 +701,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             });
 
             final client = http.Client();
-            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 25));
+            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 20));
 
             if (streamedResponse.statusCode == 200) {
               final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
@@ -735,14 +763,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       if (!success && botMessage.text.isEmpty) {
+        final errText = "Связь с сервером прервалась. Проверь VPN.";
         setState(() {
-          botMessage.text = "Не удалось получить ответ. Проверь VPN или доступность Google API.";
+          botMessage.text = errText;
         });
+        if (_isLiveActive) _speakText("Связь оборвалась, повтори.");
       }
     } catch (e) {
+      final errText = "Сбой сети: $e";
       setState(() {
-        botMessage.text = "Сбой сети: $e. Убедись, что подключен VPN.";
+        botMessage.text = errText;
       });
+      if (_isLiveActive) _speakText("Сбой соединения.");
     } finally {
       setState(() => _isLoading = false);
       _scrollToBottom();
