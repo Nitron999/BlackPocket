@@ -84,7 +84,7 @@ final List<AgentPreset> _availableAgents = [
         "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
         "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
         "В начале давай краткую сводку: сколько позиций обработано и общее количество. "
-        "Если пользователь только загрузил файл без команды — ничего не анализируй и жди его прямого указания.",
+        "Если пользователь только загрузил файл(ы) без команды — ничего не анализируй и жди его прямого указания.",
   ),
   const AgentPreset(
     id: "companion",
@@ -121,11 +121,22 @@ final List<AgentPreset> _availableAgents = [
   ),
 ];
 
+class AttachedDoc {
+  final String fileName;
+  final String content;
+
+  AttachedDoc({required this.fileName, required this.content});
+
+  Map<String, dynamic> toJson() => {'fileName': fileName, 'content': content};
+  factory AttachedDoc.fromJson(Map<String, dynamic> json) =>
+      AttachedDoc(fileName: json['fileName'] ?? '', content: json['content'] ?? '');
+}
+
 class ChatMessage {
   String text;
   final bool isUser;
   final String? imageBase64;
-  final String? fileName;
+  final List<String> fileNames;
   String? modelUsed;
   final DateTime timestamp;
 
@@ -133,16 +144,17 @@ class ChatMessage {
     required this.text,
     required this.isUser,
     this.imageBase64,
-    this.fileName,
+    List<String>? fileNames,
     this.modelUsed,
     DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+  })  : fileNames = fileNames ?? [],
+        timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'isUser': isUser,
         'imageBase64': imageBase64,
-        'fileName': fileName,
+        'fileNames': fileNames,
         'modelUsed': modelUsed,
         'timestamp': timestamp.toIso8601String(),
       };
@@ -151,7 +163,7 @@ class ChatMessage {
         text: json['text'] ?? '',
         isUser: json['isUser'] ?? false,
         imageBase64: json['imageBase64'],
-        fileName: json['fileName'],
+        fileNames: (json['fileNames'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
         modelUsed: json['modelUsed'],
         timestamp: json['timestamp'] != null
             ? DateTime.tryParse(json['timestamp']) ?? DateTime.now()
@@ -212,8 +224,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   bool _russianLocaleConfirmed = false;
 
   String? _selectedImageBase64;
-  String? _attachedFileName;
-  String? _attachedFileContent;
+  final List<AttachedDoc> _attachedDocs = [];
 
   String _apiKey = _defaultApiKey;
   String _modelName = _defaultModel;
@@ -359,8 +370,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v21_clean_prompt_added') {
-      await prefs.setString('bp_clean_migration', 'v21_clean_prompt_added');
+    if (migrationTag != 'v22_multi_file_and_null_safe') {
+      await prefs.setString('bp_clean_migration', 'v22_multi_file_and_null_safe');
     }
 
     setState(() {
@@ -524,84 +535,99 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final bytes = await picked.readAsBytes();
       setState(() {
         _selectedImageBase64 = base64Encode(bytes);
-        _attachedFileName = null;
-        _attachedFileContent = null;
       });
     }
   }
 
+  // Безопасный парсинг Excel без крашей на пустых ячейках
   String _parseExcelFile(List<int> bytes) {
-    final excel = xl.Excel.decodeBytes(bytes);
-    final buffer = StringBuffer();
+    try {
+      final excel = xl.Excel.decodeBytes(bytes);
+      final buffer = StringBuffer();
 
-    for (final table in excel.tables.keys) {
-      final currentSheet = excel.tables[table];
-      if (currentSheet == null || currentSheet.rows.isEmpty) continue;
+      for (final table in excel.tables.keys) {
+        final currentSheet = excel.tables[table];
+        if (currentSheet == null) continue;
 
-      buffer.writeln("[ЛИСТ: $table]");
-      int rowCount = 0;
-      for (final row in currentSheet.rows) {
-        final rowValues = row.map((cell) => cell?.value?.toString().trim() ?? '').toList();
-        if (rowValues.every((val) => val.isEmpty)) continue;
+        buffer.writeln("[ЛИСТ: $table]");
+        int rowCount = 0;
 
-        buffer.writeln(rowValues.join(" | "));
-        rowCount++;
-        if (rowCount > 400) {
-          buffer.writeln("... (показаны первые 400 строк листа для сохранения памяти)");
-          break;
+        for (final row in currentSheet.rows) {
+          final List<String> rowValues = [];
+          for (final cell in row) {
+            if (cell == null || cell.value == null) {
+              rowValues.add('');
+            } else {
+              rowValues.add(cell.value.toString().trim());
+            }
+          }
+
+          // Пропускаем полностью пустые строки
+          if (rowValues.every((val) => val.isEmpty)) continue;
+
+          buffer.writeln(rowValues.join(" | "));
+          rowCount++;
+          if (rowCount > 400) {
+            buffer.writeln("... (показаны первые 400 строк листа для сохранения лимита памяти)");
+            break;
+          }
         }
+        buffer.writeln();
       }
-      buffer.writeln();
-    }
 
-    return buffer.toString().trim();
+      final result = buffer.toString().trim();
+      return result.isEmpty ? "(Таблица пустая или не содержит данных)" : result;
+    } catch (e) {
+      debugPrint("Сбой декодирования Excel: $e");
+      return "(Не удалось разобрать Excel-файл: $e)";
+    }
   }
 
-  Future<void> _pickDocumentFile() async {
+  // Выбор сразу нескольких файлов одновременно
+  Future<void> _pickMultipleFiles() async {
     try {
       final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
         type: FileType.custom,
         allowedExtensions: ['xlsx', 'xls', 'csv', 'tsv', 'txt', 'log', 'json', 'py', 'dart', 'yaml', 'md'],
       );
 
-      if (result != null && result.files.single.path != null) {
+      if (result != null && result.files.isNotEmpty) {
         HapticFeedback.selectionClick();
-        final filePath = result.files.single.path!;
-        final fileName = result.files.single.name;
-        final ext = fileName.split('.').last.toLowerCase();
+        int addedCount = 0;
 
-        String parsedContent = '';
+        for (final f in result.files) {
+          if (f.path == null) continue;
+          final fileName = f.name;
+          final ext = fileName.split('.').last.toLowerCase();
+          String parsedContent = '';
 
-        if (ext == 'xlsx' || ext == 'xls') {
-          final bytes = await File(filePath).readAsBytes();
-          parsedContent = _parseExcelFile(bytes);
-        } else {
-          parsedContent = await File(filePath).readAsString();
+          if (ext == 'xlsx' || ext == 'xls') {
+            final bytes = await File(f.path!).readAsBytes();
+            parsedContent = _parseExcelFile(bytes);
+          } else {
+            parsedContent = await File(f.path!).readAsString();
+          }
+
+          _attachedDocs.add(AttachedDoc(fileName: fileName, content: parsedContent));
+          addedCount++;
         }
 
-        if (parsedContent.isEmpty) {
-          parsedContent = "(Таблица пустая или не содержит распознаваемого текста)";
-        }
-
-        setState(() {
-          _attachedFileName = fileName;
-          _attachedFileContent = parsedContent;
-          _selectedImageBase64 = null;
-        });
+        setState(() {});
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('📊 Таблица загружена: $fileName'),
+            content: Text('📊 Добавлено файлов: $addedCount'),
             backgroundColor: const Color(0xFF1E293B),
             duration: const Duration(seconds: 2),
           ),
         );
       }
     } catch (e) {
-      debugPrint("Ошибка чтения файла: $e");
+      debugPrint("Ошибка чтения файлов: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ошибка обработки таблицы: $e'),
+          content: Text('Ошибка обработки файлов: $e'),
           backgroundColor: Colors.red.shade900,
         ),
       );
@@ -631,7 +657,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('💾 Таблица сохранена в Загрузки: $fileName'),
+          content: Text('💾 Сохранено в Загрузки: $fileName'),
           backgroundColor: Colors.green.shade800,
           duration: const Duration(seconds: 4),
         ),
@@ -640,7 +666,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       Clipboard.setData(ClipboardData(text: codeSnippet));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Таблица скопирована в буфер (ошибка: $e)'),
+          content: Text('Скопировано в буфер (ошибка сохранения: $e)'),
           backgroundColor: const Color(0xFF1E293B),
         ),
       );
@@ -769,7 +795,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
-    if (text.isEmpty && _selectedImageBase64 == null && _attachedFileContent == null && !_isLiveActive) return;
+    if (text.isEmpty && _selectedImageBase64 == null && _attachedDocs.isEmpty && !_isLiveActive) return;
     if (_isLoading) return;
 
     final lower = text.toLowerCase();
@@ -784,12 +810,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _checkAndAutoSaveMemory(text);
 
     String? imageToSend = _selectedImageBase64;
-    String? fileContentToSend = _attachedFileContent;
-    String? fileNameToSend = _attachedFileName;
+    final List<AttachedDoc> docsToSend = List.from(_attachedDocs);
 
     _selectedImageBase64 = null;
-    _attachedFileContent = null;
-    _attachedFileName = null;
+    _attachedDocs.clear();
 
     if (imageToSend == null &&
         _isLiveActive &&
@@ -809,23 +833,24 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
     final previousHistory = session.messages.toList();
 
-    // В пузырь чата выводим ТОЛЬКО собственный текст пользователя (без авто-команд "Изучи таблицу...")
+    // В чате отображается СТРОГО набранный текст пользователя
     final displayPrompt = text;
+    final sentFileNames = docsToSend.map((d) => d.fileName).toList();
 
     setState(() {
       session.messages.add(ChatMessage(
         text: displayPrompt,
         isUser: true,
         imageBase64: imageToSend,
-        fileName: fileNameToSend,
+        fileNames: sentFileNames,
       ));
       session.messages.add(botMessage);
 
       if (session.title == "Новый чат") {
         if (displayPrompt.isNotEmpty) {
           session.title = displayPrompt.length > 26 ? "${displayPrompt.substring(0, 26)}..." : displayPrompt;
-        } else if (fileNameToSend != null) {
-          session.title = fileNameToSend.length > 26 ? "${fileNameToSend.substring(0, 26)}..." : fileNameToSend;
+        } else if (sentFileNames.isNotEmpty) {
+          session.title = "Файлы: ${sentFileNames.first}";
         }
       }
       _isLoading = true;
@@ -835,23 +860,32 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _scrollToBottom();
 
     try {
-      String userFullPrompt = text;
-      if (fileContentToSend != null) {
-        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ТАБЛИЦЫ/ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
+      final buffer = StringBuffer();
+      if (text.isNotEmpty) {
+        buffer.writeln(text);
+      }
+
+      if (docsToSend.isNotEmpty) {
+        buffer.writeln("\n[ПРИКРЕПЛЕННЫЕ ДОКУМЕНТЫ/ТАБЛИЦЫ]:");
+        for (final doc in docsToSend) {
+          buffer.writeln("\n--- ФАЙЛ: ${doc.fileName} ---");
+          buffer.writeln(doc.content);
+        }
       }
 
       final combinedSystemPrompt =
           "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      // Если пользователь не написал текст к файлу, даем ИИ четкое указание ничего не трогать и ждать команды
-      String finalInstruction = userFullPrompt;
-      if (text.isEmpty && fileContentToSend != null) {
+      // Если пользователь не написал текст к файлам — требуем от ИИ ждать прямой команды
+      String finalInstruction = buffer.toString().trim();
+      if (text.isEmpty && docsToSend.isNotEmpty) {
+        final fileListStr = sentFileNames.join(", ");
         finalInstruction =
-            "Файл '$fileNameToSend' успешно прикреплен пользователем.\n"
-            "СТРОГОЕ ПРАВИЛО: Пока ничего не делай, не анализируй файл и ничего не меняй. "
-            "Просто коротко подтверди, что файл получен, и скажи, что ждешь команды и задачи от Александра.\n\n"
-            "[СОДЕРЖИМОЕ ТАБЛИЦЫ/ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
-      } else if (userFullPrompt.isEmpty) {
+            "Пользователь прикрепил файлы: $fileListStr.\n"
+            "СТРОГОЕ ПРАВИЛО: Сейчас ничего не делай, не анализируй данные и ничего не меняй. "
+            "Просто коротко подтверди, что файлы ($fileListStr) получены, и скажи, что ждешь команды от Александра.\n\n"
+            "$finalInstruction";
+      } else if (finalInstruction.isEmpty) {
         finalInstruction = "Слушаю вас. Чем помочь?";
       }
 
@@ -994,8 +1028,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       _currentSessionId = s.id;
       _isLiveActive = false;
       _selectedImageBase64 = null;
-      _attachedFileName = null;
-      _attachedFileContent = null;
+      _attachedDocs.clear();
     });
     _saveData();
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
@@ -1061,7 +1094,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     for (final m in session.messages) {
       final sender = m.isUser ? "Пользователь (Александр)" : "BlackPocket (${m.modelUsed ?? 'AI'})";
       buffer.writeln("### $sender");
-      if (m.fileName != null) buffer.writeln("*Прикреплен файл: ${m.fileName}*");
+      if (m.fileNames.isNotEmpty) buffer.writeln("*Прикреплены файлы: ${m.fileNames.join(', ')}*");
       buffer.writeln("${m.text}\n");
     }
 
@@ -1173,10 +1206,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             ),
             ListTile(
               leading: const Icon(Icons.table_chart_outlined, color: Colors.greenAccent),
-              title: const Text('Загрузить таблицу / документ (.xlsx, .csv, .txt, .json)'),
+              title: const Text('Загрузить документы / таблицы (до нескольких штук)'),
               onTap: () {
                 Navigator.pop(context);
-                _pickDocumentFile();
+                _pickMultipleFiles();
               },
             ),
           ],
@@ -1382,7 +1415,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                       ? _buildWelcomeCenter()
                       : ListView.builder(
                           controller: _scrollController,
-                          padding: const EdgeInsets.only(left: 16, right: 16, top: 10, bottom: 90),
+                          padding: const EdgeInsets.only(left: 16, right: 16, top: 10, bottom: 100),
                           itemCount: messages.length,
                           itemBuilder: (context, idx) {
                             final m = messages[idx];
@@ -1402,21 +1435,29 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    if (m.fileName != null)
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        margin: EdgeInsets.only(bottom: m.text.isNotEmpty ? 6 : 0),
-                                        decoration: BoxDecoration(
-                                          color: Colors.greenAccent.withOpacity(0.15),
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            const Icon(Icons.table_chart_outlined, size: 16, color: Colors.greenAccent),
-                                            const SizedBox(width: 4),
-                                            Text(m.fileName!, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
-                                          ],
+                                    if (m.fileNames.isNotEmpty)
+                                      Padding(
+                                        padding: EdgeInsets.only(bottom: m.text.isNotEmpty ? 6 : 0),
+                                        child: Wrap(
+                                          spacing: 6,
+                                          runSpacing: 4,
+                                          children: m.fileNames.map((fName) {
+                                            return Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                color: Colors.greenAccent.withOpacity(0.15),
+                                                borderRadius: BorderRadius.circular(8),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const Icon(Icons.table_chart_outlined, size: 14, color: Colors.greenAccent),
+                                                  const SizedBox(width: 4),
+                                                  Text(fName, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
+                                                ],
+                                              ),
+                                            );
+                                          }).toList(),
                                         ),
                                       ),
                                     if (m.imageBase64 != null)
@@ -1523,33 +1564,71 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             ),
           ),
 
-          if (_selectedImageBase64 != null || _attachedFileName != null)
+          // Плашка предпросмотра прикрепленных файлов (мультизагрузка)
+          if (_selectedImageBase64 != null || _attachedDocs.isNotEmpty)
             Positioned(
               bottom: 95,
-              left: 20,
+              left: 18,
+              right: 18,
               child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-                child: Row(
-                  children: [
-                    if (_selectedImageBase64 != null)
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.memory(base64Decode(_selectedImageBase64!), width: 40, height: 40, fit: BoxFit.cover),
-                      )
-                    else
-                      const Icon(Icons.table_chart_outlined, color: Colors.greenAccent, size: 30),
-                    const SizedBox(width: 8),
-                    Text(_attachedFileName ?? 'Файл прикреплен', style: const TextStyle(fontSize: 13, color: Colors.white70)),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: () => setState(() {
-                        _selectedImageBase64 = null;
-                        _attachedFileName = null;
-                        _attachedFileContent = null;
-                      }),
-                    ),
-                  ],
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827).withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.white24),
+                ),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (_selectedImageBase64 != null)
+                        Stack(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(base64Decode(_selectedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
+                            ),
+                            Positioned(
+                              top: -4,
+                              right: -4,
+                              child: GestureDetector(
+                                onTap: () => setState(() => _selectedImageBase64 = null),
+                                child: Container(
+                                  decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle),
+                                  child: const Icon(Icons.close, size: 16, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ..._attachedDocs.asMap().entries.map((entry) {
+                        final idx = entry.key;
+                        final doc = entry.value;
+                        return Container(
+                          margin: const EdgeInsets.only(left: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.table_chart_outlined, size: 16, color: Colors.greenAccent),
+                              const SizedBox(width: 6),
+                              Text(doc.fileName, style: const TextStyle(fontSize: 12, color: Colors.white)),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () => setState(() => _attachedDocs.removeAt(idx)),
+                                child: const Icon(Icons.close, size: 16, color: Colors.white54),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1652,7 +1731,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   Widget _buildGeminiPillBar() {
     final bool hasContent = _inputController.text.trim().isNotEmpty ||
         _selectedImageBase64 != null ||
-        _attachedFileContent != null;
+        _attachedDocs.isNotEmpty;
 
     return Container(
       height: 58,
