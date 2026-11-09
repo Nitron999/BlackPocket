@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:excel/excel.dart' as xl;
 
 List<CameraDescription> _availableCameras = [];
 
@@ -69,6 +70,22 @@ class AgentPreset {
 
 final List<AgentPreset> _availableAgents = [
   const AgentPreset(
+    id: "excel_logist",
+    name: "Логист / Разбор счетов (Excel)",
+    description: "Парсинг выгрузок XLSX/CSV, сведение счетов, подсчёт количества и экспорт таблиц",
+    icon: Icons.table_chart_outlined,
+    systemInstruction:
+        "Ты — эксперт по логистике, учету поставок и обработке табличных данных Excel. "
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
+        "Твоя задача: обрабатывать присланные данные накладных, счетов и спецификаций (XLSX, CSV, TSV, списки, фрагменты таблиц). "
+        "АЛГОРИТМ РАБОТЫ: "
+        "1. Четко определяй номера счетов/заказов, артикулы, наименования товаров и количество. "
+        "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
+        "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
+        "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
+        "В начале давай краткую сводку: сколько позиций обработано и общее количество.",
+  ),
+  const AgentPreset(
     id: "companion",
     name: "Живой напарник",
     description: "Разговорный стиль, кратко, без воды, оптимизирован под голос",
@@ -78,22 +95,6 @@ final List<AgentPreset> _availableAgents = [
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
         "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости. "
         "Если пользователь просит собрать, поправить или выдать конфиг/файл, ВСЕГДА прикладывай ПОЛНЫЙ готовый текст файла внутри блока кода Markdown с указанием формата. Никогда не говори, что не умеешь скидывать файлы — отдавай их полностью в блоке кода!",
-  ),
-  const AgentPreset(
-    id: "excel_logist",
-    name: "Логист / Разбор счетов (Excel)",
-    description: "Парсинг выгрузок, сведение счетов, подсчёт количества и экспорт таблиц",
-    icon: Icons.table_chart_outlined,
-    systemInstruction:
-        "Ты — эксперт по логистике, учету поставок и обработке табличных данных Excel. "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Твоя задача: обрабатывать присланные данные накладных, счетов и спецификаций (CSV, TSV, списки, фрагменты таблиц). "
-        "АЛГОРИТМ РАБОТЫ: "
-        "1. Четко определяй номера счетов/заказов, артикулы, наименования товаров и количество. "
-        "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
-        "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
-        "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
-        "В начале давай краткую сводку: сколько позиций обработано и общее количество.",
   ),
   const AgentPreset(
     id: "engineer",
@@ -357,9 +358,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v18_excel_agent_added') {
+    if (migrationTag != 'v19_xlsx_parser_added') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v18_excel_agent_added');
+      await prefs.setString('bp_clean_migration', 'v19_xlsx_parser_added');
     }
 
     setState(() {
@@ -529,24 +530,81 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
+  String _parseExcelFile(List<int> bytes) {
+    final excel = xl.Excel.decodeBytes(bytes);
+    final buffer = StringBuffer();
+
+    for (final table in excel.tables.keys) {
+      final currentSheet = excel.tables[table];
+      if (currentSheet == null || currentSheet.rows.isEmpty) continue;
+
+      buffer.writeln("[ЛИСТ: $table]");
+      int rowCount = 0;
+      for (final row in currentSheet.rows) {
+        final rowValues = row.map((cell) => cell?.value?.toString().trim() ?? '').toList();
+        if (rowValues.every((val) => val.isEmpty)) continue;
+
+        buffer.writeln(rowValues.join(" | "));
+        rowCount++;
+        if (rowCount > 400) {
+          buffer.writeln("... (показаны первые 400 строк листа для сохранения лимита памяти)");
+          break;
+        }
+      }
+      buffer.writeln();
+    }
+
+    return buffer.toString().trim();
+  }
+
   Future<void> _pickDocumentFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['txt', 'log', 'json', 'py', 'dart', 'csv', 'tsv', 'yaml', 'md'],
+        allowedExtensions: ['xlsx', 'xls', 'csv', 'tsv', 'txt', 'log', 'json', 'py', 'dart', 'yaml', 'md'],
       );
+
       if (result != null && result.files.single.path != null) {
         HapticFeedback.selectionClick();
-        final file = File(result.files.single.path!);
-        final text = await file.readAsString();
+        final filePath = result.files.single.path!;
+        final fileName = result.files.single.name;
+        final ext = fileName.split('.').last.toLowerCase();
+
+        String parsedContent = '';
+
+        if (ext == 'xlsx' || ext == 'xls') {
+          final bytes = await File(filePath).readAsBytes();
+          parsedContent = _parseExcelFile(bytes);
+        } else {
+          parsedContent = await File(filePath).readAsString();
+        }
+
+        if (parsedContent.isEmpty) {
+          parsedContent = "(Таблица пустая или не содержит распознаваемого текста)";
+        }
+
         setState(() {
-          _attachedFileName = result.files.single.name;
-          _attachedFileContent = text;
+          _attachedFileName = fileName;
+          _attachedFileContent = parsedContent;
           _selectedImageBase64 = null;
         });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📊 Таблица загружена: $fileName'),
+            backgroundColor: const Color(0xFF1E293B),
+            duration: const Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
       debugPrint("Ошибка чтения файла: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ошибка обработки таблицы: $e'),
+          backgroundColor: Colors.red.shade900,
+        ),
+      );
     }
   }
 
@@ -712,7 +770,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final previousHistory = session.messages.toList();
 
     final displayPrompt = text.isEmpty
-        ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри в кадр")
+        ? (fileNameToSend != null ? "Изучи таблицу $fileNameToSend" : "Посмотри в кадр")
         : text;
 
     setState(() {
@@ -744,7 +802,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       final currentParts = [];
       currentParts.add({
-        "text": userFullPrompt.isEmpty ? "Обработай данные. Ответь на русском." : userFullPrompt
+        "text": userFullPrompt.isEmpty ? "Обработай данные таблицы. Ответь на русском." : userFullPrompt
       });
 
       if (imageToSend != null) {
@@ -1062,7 +1120,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             ),
             ListTile(
               leading: const Icon(Icons.table_chart_outlined, color: Colors.greenAccent),
-              title: const Text('Загрузить таблицу / документ (.csv, .tsv, .txt, .json)'),
+              title: const Text('Загрузить таблицу / документ (.xlsx, .csv, .txt, .json)'),
               onTap: () {
                 Navigator.pop(context);
                 _pickDocumentFile();
