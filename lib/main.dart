@@ -248,7 +248,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _currentCameraIndex = cameraIndex % _availableCameras.length;
     _cameraController = CameraController(
       _availableCameras[_currentCameraIndex],
-      ResolutionPreset.low, // Низкое разрешение для моментального отклика без задержек
+      ResolutionPreset.low,
       enableAudio: false,
     );
 
@@ -277,7 +277,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       if (mounted) {
         setState(() => _isSpeaking = false);
         if (_isLiveActive && !_isLoading) {
-          // Пауза перед возвратом к микрофону, чтобы динамик полностью затих
           Future.delayed(const Duration(milliseconds: 400), () {
             if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
               _startSpeechListening();
@@ -324,9 +323,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v10_live_optimized') {
+    if (migrationTag != 'v11_fix_syntax_clean') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v10_live_optimized');
+      await prefs.setString('bp_clean_migration', 'v11_fix_syntax_clean');
     }
 
     setState(() {
@@ -392,13 +391,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   Future<void> _speakText(String text) async {
-    // Освобождаем микрофон перед тем как включить динамик
     if (_isListening) {
       await _speech.stop();
       setState(() => _isListening = false);
     }
     await _stopSpeaking();
-    // Аппаратная пауза 200мс для переключения звукового тракта в Android
     await Future.delayed(const Duration(milliseconds: 200));
 
     final clean = text.replaceAll(RegExp(r'[\*\_#`>]'), '').trim();
@@ -523,11 +520,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   dynamic _buildContentsHistory(dynamic historyList, dynamic currentParts) {
-    final List> resultList = [];
-    final List history = historyList is List ? historyList : [];
+    final resultList = [];
+    final dynamic history = (historyList is List) ? historyList : [];
 
     final int startIdx = history.length > 8 ? history.length - 8 : 0;
-    final recent = history.sublist(startIdx);
+    final dynamic recent = history.sublist(startIdx);
 
     for (final item in recent) {
       if (item is ChatMessage && item.text.trim().isNotEmpty) {
@@ -601,7 +598,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _attachedFileContent = null;
     _attachedFileName = null;
 
-    // Снимок камеры делается ТОЛЬКО если пользователь спрашивает про визуал
     if (imageToSend == null &&
         _isLiveActive &&
         _cameraController != null &&
@@ -670,7 +666,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      final modelsQueue = <String>[_modelName];
+      final modelsQueue = [_modelName];
       if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
         modelsQueue.add("gemini-3.5-flash-lite");
       }
