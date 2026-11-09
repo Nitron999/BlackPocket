@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -29,7 +30,7 @@ class GeminiBlackPocketApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Gemini',
+      title: 'Gemini BlackPocket',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -50,19 +51,22 @@ class ChatMessage {
   final String text;
   final bool isUser;
   final String? imageBase64;
+  final String? fileName;
 
-  ChatMessage({required this.text, required this.isUser, this.imageBase64});
+  ChatMessage({required this.text, required this.isUser, this.imageBase64, this.fileName});
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'isUser': isUser,
         'imageBase64': imageBase64,
+        'fileName': fileName,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         text: json['text'] ?? '',
         isUser: json['isUser'] ?? false,
         imageBase64: json['imageBase64'],
+        fileName: json['fileName'],
       );
 }
 
@@ -114,15 +118,19 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   bool _showLiveCamera = true;
   double _speechRate = 0.45;
   String? _selectedImageBase64;
+  String? _attachedFileName;
+  String? _attachedFileContent;
 
-  String _apiUrl = "https://api.groq.com/openai/v1/chat/completions";
+  String _apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   String _apiKey = "";
-  String _modelName = "qwen/qwen3.8-27b";
+  String _modelName = "gemini-2.0-flash";
+  String _memoryFacts = "Пользователя зовут Александр (Шурик). Он ценит краткость, техническую точность, живой диалог без шаблонных фраз.";
   String _systemPrompt =
-      "Ты — Gemini, персональный живой интеллектуальный ассистент Александра. "
+      "Ты — персональный интеллектуальный напарник BlackPocket. "
       "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! Ни слова на английском! "
       "Отвечай емко, по-живому, точно, с пониманием дела, без роботизированных штампов. "
-      "Если передано фото или кадр камеры — сразу анализируй суть увиденного.";
+      "Если передано фото или кадр камеры — сразу анализируй суть увиденного. "
+      "Если передан документ — изучай его содержимое и отвечай конкретно.";
 
   @override
   void initState() {
@@ -203,6 +211,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       _apiKey = prefs.getString('apiKey') ?? _apiKey;
       _modelName = prefs.getString('modelName') ?? _modelName;
       _systemPrompt = prefs.getString('systemPrompt') ?? _systemPrompt;
+      _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
       _speechRate = prefs.getDouble('speechRate') ?? 0.45;
 
       final historyJson = prefs.getString('gemini_sessions_list');
@@ -235,6 +244,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     await prefs.setString('apiKey', _apiKey);
     await prefs.setString('modelName', _modelName);
     await prefs.setString('systemPrompt', _systemPrompt);
+    await prefs.setString('memoryFacts', _memoryFacts);
     await prefs.setDouble('speechRate', _speechRate);
   }
 
@@ -320,13 +330,35 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       final bytes = await picked.readAsBytes();
       setState(() {
         _selectedImageBase64 = base64Encode(bytes);
+        _attachedFileName = null;
+        _attachedFileContent = null;
       });
+    }
+  }
+
+  Future<void> _pickDocumentFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'log', 'json', 'py', 'dart', 'csv', 'yaml', 'md'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final text = await file.readAsString();
+        setState(() {
+          _attachedFileName = result.files.single.name;
+          _attachedFileContent = text;
+          _selectedImageBase64 = null;
+        });
+      }
+    } catch (e) {
+      debugPrint("Ошибка чтения файла: $e");
     }
   }
 
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
-    if (text.isEmpty && _selectedImageBase64 == null && !_isLiveActive) return;
+    if (text.isEmpty && _selectedImageBase64 == null && _attachedFileContent == null && !_isLiveActive) return;
     if (_isLoading) return;
 
     final lower = text.toLowerCase();
@@ -339,7 +371,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _stopListening();
 
     String? imageToSend = _selectedImageBase64;
+    String? fileContentToSend = _attachedFileContent;
+    String? fileNameToSend = _attachedFileName;
+
     _selectedImageBase64 = null;
+    _attachedFileContent = null;
+    _attachedFileName = null;
 
     if (imageToSend == null && _isLiveActive && _cameraController != null && _cameraController!.value.isInitialized) {
       try {
@@ -354,9 +391,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final session = _activeSession;
     setState(() {
       session.messages.add(ChatMessage(
-        text: text.isEmpty ? "Посмотри на изображение" : text,
+        text: text.isEmpty ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение") : text,
         isUser: true,
         imageBase64: imageToSend,
+        fileName: fileNameToSend,
       ));
       if (session.title == "Новый чат" && text.isNotEmpty) {
         session.title = text.length > 26 ? "${text.substring(0, 26)}..." : text;
@@ -368,10 +406,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _scrollToBottom();
 
     try {
+      String userFullPrompt = text;
+      if (fileContentToSend != null) {
+        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ПРИКРЕПЛЕННОГО ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
+      }
+
       List<dynamic> content = [];
       content.add({
         "type": "text",
-        "text": "${text.isEmpty ? 'Что здесь изображено?' : text}\n\n(ВАЖНО: Отвечай строго на русском языке, живо, кратко и четко!)"
+        "text": "${userFullPrompt.isEmpty ? 'Что здесь изображено?' : userFullPrompt}\n\n(ВАЖНО: Отвечай строго на русском языке, живо, кратко и четко!)"
       });
 
       if (imageToSend != null) {
@@ -380,6 +423,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           "image_url": {"url": "data:image/jpeg;base64,$imageToSend"}
         });
       }
+
+      // Собираем системный промпт вместе с долговременной памятью
+      final combinedSystemPrompt = "$_systemPrompt\n\n[БЛОК ДОЛГОВРЕМЕННОЙ ПАМЯТИ О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
       final response = await http.post(
         Uri.parse(_apiUrl),
@@ -390,11 +436,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         body: jsonEncode({
           "model": _modelName,
           "messages": [
-            {"role": "system", "content": _systemPrompt},
+            {"role": "system", "content": combinedSystemPrompt},
             {"role": "user", "content": content}
           ],
         }),
-      );
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
@@ -412,9 +458,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           ));
         });
       }
+    } on TimeoutException {
+      setState(() {
+        session.messages.add(ChatMessage(
+          text: "Таймаут соединения (15 сек). Сервер не ответил. Проверьте подключение к сети или VPN.",
+          isUser: false,
+        ));
+      });
     } catch (e) {
       setState(() {
-        session.messages.add(ChatMessage(text: "Сбой сети: $e", isUser: false));
+        session.messages.add(ChatMessage(text: "Сбой сети: $e. Убедитесь, что включен VPN или проверьте URL шлюза.", isUser: false));
       });
     } finally {
       setState(() => _isLoading = false);
@@ -433,6 +486,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       _currentSessionId = s.id;
       _isLiveActive = false;
       _selectedImageBase64 = null;
+      _attachedFileName = null;
+      _attachedFileContent = null;
     });
     _saveData();
     if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
@@ -443,7 +498,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   void _showAttachmentBottomSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1E1F24),
+      backgroundColor: const Color(0xFF1E2128),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => SafeArea(
         child: Wrap(
@@ -464,8 +519,64 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                 _pickImage(ImageSource.gallery);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.description_outlined, color: Colors.greenAccent),
+              title: const Text('Загрузить документ (.txt, .log, .json, .py, .dart)'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickDocumentFile();
+              },
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showMemoryDialog() {
+    final memCtrl = TextEditingController(text: _memoryFacts);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: const [
+            Icon(Icons.psychology, color: Colors.blueAccent),
+            SizedBox(width: 8),
+            Text('Память ассистента'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Факты и предпочтения, которые ИИ помнит во всех чатах:',
+              style: TextStyle(fontSize: 13, color: Colors.white70),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: memCtrl,
+              maxLines: 6,
+              style: const TextStyle(fontSize: 14),
+              decoration: const InputDecoration(
+                filled: true,
+                fillColor: Color(0xFF1E2128),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
+          FilledButton(
+            onPressed: () {
+              setState(() => _memoryFacts = memCtrl.text.trim());
+              _saveData();
+              Navigator.pop(context);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
       ),
     );
   }
@@ -503,7 +614,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text('Настройки Gemini BlackPocket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Text('Настройки BlackPocket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: 'API Endpoint URL')),
                 TextField(controller: keyCtrl, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
@@ -558,7 +669,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       drawer: _buildGeminiDrawer(),
       body: Stack(
         children: [
-          // Основной фон: глубокий синий градиент Gemini снизу вверх
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -601,6 +711,23 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
+                                    if (m.fileName != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        margin: const EdgeInsets.only(bottom: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.greenAccent.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.attach_file, size: 16, color: Colors.greenAccent),
+                                            const SizedBox(width: 4),
+                                            Text(m.fileName!, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
+                                          ],
+                                        ),
+                                      ),
                                     if (m.imageBase64 != null)
                                       Padding(
                                         padding: const EdgeInsets.only(bottom: 8.0),
@@ -656,32 +783,38 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             ),
           ),
 
-          // Превью прикрепленного изображения
-          if (_selectedImageBase64 != null)
+          // Превью прикрепленного документа или фото
+          if (_selectedImageBase64 != null || _attachedFileName != null)
             Positioned(
               bottom: 95,
               left: 20,
               child: Container(
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
                 child: Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.memory(base64Decode(_selectedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
-                    ),
+                    if (_selectedImageBase64 != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(base64Decode(_selectedImageBase64!), width: 40, height: 40, fit: BoxFit.cover),
+                      )
+                    else
+                      const Icon(Icons.description, color: Colors.greenAccent, size: 30),
                     const SizedBox(width: 8),
-                    const Text('Фото прикреплено', style: TextStyle(fontSize: 13, color: Colors.white70)),
+                    Text(_attachedFileName ?? 'Фото прикреплено', style: const TextStyle(fontSize: 13, color: Colors.white70)),
                     IconButton(
                       icon: const Icon(Icons.close, size: 18),
-                      onPressed: () => setState(() => _selectedImageBase64 = null),
+                      onPressed: () => setState(() {
+                        _selectedImageBase64 = null;
+                        _attachedFileName = null;
+                        _attachedFileContent = null;
+                      }),
                     ),
                   ],
                 ),
               ),
             ),
 
-          // Нижняя плавающая капсула ввода (Gemini Pill Bar)
           Positioned(
             left: 18,
             right: 18,
@@ -689,10 +822,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             child: _buildGeminiPillBar(),
           ),
 
-          // Полноэкранный живой режим Live Mode (с видоискателем камеры и волной)
           if (_isLiveActive) _buildLiveOverlay(),
 
-          // Кнопка быстрой остановки речи "Стоп"
           if (_isSpeaking && !_isLiveActive)
             Positioned(
               bottom: 95,
@@ -709,7 +840,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  // Верхняя панель Gemini
   Widget _buildTopAppBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -729,8 +859,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.auto_awesome_outlined, color: Colors.white70),
-            onPressed: () {},
+            icon: const Icon(Icons.psychology_outlined, color: Colors.blueAccent),
+            tooltip: 'Память ассистента',
+            onPressed: _showMemoryDialog,
           ),
           GestureDetector(
             onTap: _showSettingsModal,
@@ -752,13 +883,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  // Центральный блок "ALEKSANDR, что дальше?" со звёздочкой Gemini
   Widget _buildWelcomeCenter() {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Звезда-кристалл Gemini (градиент)
           ShaderMask(
             shaderCallback: (bounds) => const LinearGradient(
               colors: [Color(0xFF4285F4), Color(0xFF9B72CF), Color(0xFFD96570), Color(0xFFF4B400)],
@@ -784,7 +913,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  // Нижняя капсула входа (Gemini Pill Bar)
   Widget _buildGeminiPillBar() {
     return Container(
       height: 58,
@@ -836,7 +964,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             },
           ),
           const SizedBox(width: 4),
-          // Синяя круглая кнопка Live со звуковой волной
           GestureDetector(
             onTap: _toggleLiveModal,
             child: Container(
@@ -854,7 +981,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  // Окно живого диалога Gemini Live
   Widget _buildLiveOverlay() {
     return Container(
       color: const Color(0xFF070B14).withOpacity(0.96),
@@ -895,7 +1021,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
             const Spacer(),
 
-            // Анимированная звезда Live
             ShaderMask(
               shaderCallback: (bounds) => const LinearGradient(
                 colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
@@ -937,7 +1062,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  // Боковое меню (Drawer) в точности как на скриншоте Gemini
   Widget _buildGeminiDrawer() {
     return Drawer(
       backgroundColor: const Color(0xFF0B0F17),
@@ -951,13 +1075,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                 children: [
                   const Text('Gemini', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
                   const Spacer(),
-                  IconButton(icon: const Icon(Icons.search, color: Colors.white70), onPressed: () {}),
                   IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
                 ],
               ),
             ),
 
-            // Кнопка "Новый чат"
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               child: InkWell(
@@ -983,27 +1105,24 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
             const SizedBox(height: 8),
 
-            // Пункты меню
-            _drawerTile(Icons.grid_view, 'Библиотека'),
-            _drawerTile(Icons.schedule, 'Запланировано'),
-            _drawerTile(Icons.school_outlined, 'Учащиеся'),
-            _drawerTile(Icons.more_horiz, 'Ещё'),
-
-            const SizedBox(height: 12),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-              child: Text('Блокноты', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.psychology, color: Colors.blueAccent, size: 22),
+              title: const Text('Память ассистента', style: TextStyle(color: Colors.white, fontSize: 15)),
+              onTap: () {
+                Navigator.pop(context);
+                _showMemoryDialog();
+              },
             ),
-            _drawerTile(Icons.add, 'Новый блокнот'),
 
             const Divider(color: Colors.white12, height: 24),
 
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: Text('Все', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+              child: Text('История чатов', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
             ),
 
-            // Список чатов пользователя
             Expanded(
               child: ListView.builder(
                 padding: EdgeInsets.zero,
@@ -1028,7 +1147,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                         fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
-                    trailing: const Icon(Icons.push_pin_outlined, size: 16, color: Colors.white30),
                     onTap: () {
                       setState(() => _currentSessionId = s.id);
                       _saveData();
@@ -1040,7 +1158,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               ),
             ),
 
-            // Подвал профиля "ALEKSANDR Ku81 PRO"
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: const BoxDecoration(
@@ -1083,16 +1200,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _drawerTile(IconData icon, String title) {
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-      leading: Icon(icon, color: Colors.white70, size: 22),
-      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 15)),
-      onTap: () {},
     );
   }
 }
