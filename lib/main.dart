@@ -220,7 +220,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         await _cameraController!.initialize();
         if (mounted) setState(() {});
       } catch (e) {
-        debugPrint("Ошибка камеры: $e");
+        debugPrint("Камера не найдена или ошибка: $e");
       }
     }
   }
@@ -489,7 +489,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       final combinedSystemPrompt =
           "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      final userParts = >[];
+      final List userParts = [];
       userParts.add({
         "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
@@ -506,7 +506,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      // Список моделей для умного каскадного авто-роутинга
       List<String> modelsQueue = [_modelName];
       if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
         modelsQueue.add("gemini-3.5-flash-lite");
@@ -545,18 +544,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               }),
             ).timeout(const Duration(seconds: 25));
 
-            // Если успех — выходим
             if (finalResponse.statusCode == 200) {
               break;
             }
 
-            // Если перегрузка 503 — делаем короткую паузу и повторяем попытку
             if (finalResponse.statusCode == 503) {
               await Future.delayed(const Duration(seconds: 2));
               continue;
             }
 
-            // Если квота 429 — не ждем, сразу идем к следующей модели в очереди
             if (finalResponse.statusCode == 429) {
               break;
             }
