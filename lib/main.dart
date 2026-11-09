@@ -277,7 +277,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       if (mounted) {
         setState(() => _isSpeaking = false);
         if (_isLiveActive && !_isLoading) {
-          Future.delayed(const Duration(milliseconds: 400), () {
+          Future.delayed(const Duration(milliseconds: 350), () {
             if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
               _startSpeechListening();
             }
@@ -323,9 +323,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v11_fix_syntax_clean') {
+    if (migrationTag != 'v12_no_stop_btn_fix') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v11_fix_syntax_clean');
+      await prefs.setString('bp_clean_migration', 'v12_no_stop_btn_fix');
     }
 
     setState(() {
@@ -396,7 +396,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       setState(() => _isListening = false);
     }
     await _stopSpeaking();
-    await Future.delayed(const Duration(milliseconds: 200));
+    await Future.delayed(const Duration(milliseconds: 150));
 
     final clean = text.replaceAll(RegExp(r'[\*\_#`>]'), '').trim();
     if (clean.isEmpty) return;
@@ -414,7 +414,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       HapticFeedback.lightImpact();
       setState(() => _isListening = true);
       _speech.listen(
-        localeId: "ru_RU",
+        localeId: "ru_RU", // Принудительный русский словарь распознавания
         listenMode: stt.ListenMode.confirmation,
         pauseFor: const Duration(seconds: 2),
         listenFor: const Duration(seconds: 25),
@@ -423,7 +423,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           _inputController.text = words;
 
           final lower = words.toLowerCase();
-          if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower == 'молчать') {
+          // Мгновенная голосовая остановка без всяких кнопок
+          if (lower == 'стоп' ||
+              lower == 'хватит' ||
+              lower == 'замолчи' ||
+              lower == 'молчать' ||
+              lower.contains('стоп')) {
             _stopSpeaking();
             _speech.stop();
             setState(() {
@@ -580,7 +585,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     if (_isLoading) return;
 
     final lower = text.toLowerCase();
-    if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи') {
+    if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower.contains('стоп')) {
       await _stopSpeaking();
       _inputController.clear();
       return;
@@ -1322,18 +1327,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           ),
 
           if (_isLiveActive) _buildLiveOverlay(),
-
-          if (_isSpeaking && !_isLiveActive)
-            Positioned(
-              bottom: 95,
-              right: 20,
-              child: FloatingActionButton.extended(
-                backgroundColor: const Color(0xFF2563EB),
-                icon: const Icon(Icons.stop, color: Colors.white),
-                label: const Text('СТОП', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                onPressed: _stopSpeaking,
-              ),
-            ),
         ],
       ),
     );
