@@ -1,5 +1,5 @@
 name: black_pocket
-description: Real-time Live AI assistant with Camera, Voice and Gallery.
+description: Real-time Live AI assistant with Camera, Voice, Files and Memory.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -16,6 +16,7 @@ dependencies:
   flutter_tts: ^3.8.5
   camera: ^0.10.5+9
   image_picker: ^1.1.0
+  file_picker: ^8.0.0
 
 dev_dependencies:
   flutter_test:
