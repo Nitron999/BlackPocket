@@ -109,6 +109,7 @@ class ChatMessage {
   final String? imageBase64;
   final String? fileName;
   String? modelUsed;
+  final DateTime timestamp;
 
   ChatMessage({
     required this.text,
@@ -116,7 +117,8 @@ class ChatMessage {
     this.imageBase64,
     this.fileName,
     this.modelUsed,
-  });
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
         'text': text,
@@ -124,6 +126,7 @@ class ChatMessage {
         'imageBase64': imageBase64,
         'fileName': fileName,
         'modelUsed': modelUsed,
+        'timestamp': timestamp.toIso8601String(),
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
@@ -132,6 +135,9 @@ class ChatMessage {
         imageBase64: json['imageBase64'],
         fileName: json['fileName'],
         modelUsed: json['modelUsed'],
+        timestamp: json['timestamp'] != null
+            ? DateTime.tryParse(json['timestamp']) ?? DateTime.now()
+            : DateTime.now(),
       );
 }
 
@@ -164,14 +170,16 @@ class GeminiMainScreen extends StatefulWidget {
   State<GeminiMainScreen> createState() => _GeminiMainScreenState();
 }
 
-class _GeminiMainScreenState extends State<GeminiMainScreen> {
+class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
+  
   CameraController? _cameraController;
+  int _currentCameraIndex = 0;
 
   List<ChatSession> _sessions = [];
   String _currentSessionId = "";
@@ -197,31 +205,58 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       "Отвечай кратко, емко, по-живому, на чистом русском языке. "
       "Он ценит техническую грамотность, конструктив, отсутствие шаблонных вежливых вступлений.";
 
+  late AnimationController _pulseController;
+
   AgentPreset get _currentAgent =>
       _availableAgents.firstWhere((a) => a.id == _selectedAgentId, orElse: () => _availableAgents.first);
 
   @override
   void initState() {
     super.initState();
-    _initCamera();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+
+    _initCamera(_currentCameraIndex);
     _initTts();
     _initSpeechRecognizer();
     _loadData();
   }
 
-  Future<void> _initCamera() async {
-    if (_availableCameras.isNotEmpty) {
-      _cameraController = CameraController(
-        _availableCameras[0],
-        ResolutionPreset.medium,
-        enableAudio: false,
-      );
-      try {
-        await _cameraController!.initialize();
-        if (mounted) setState(() {});
-      } catch (e) {
-        debugPrint("Камера не найдена или ошибка: $e");
-      }
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initCamera(int cameraIndex) async {
+    if (_availableCameras.isEmpty) return;
+    if (_cameraController != null) {
+      await _cameraController!.dispose();
+    }
+
+    _currentCameraIndex = cameraIndex % _availableCameras.length;
+    _cameraController = CameraController(
+      _availableCameras[_currentCameraIndex],
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+
+    try {
+      await _cameraController!.initialize();
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint("Ошибка камеры: $e");
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_availableCameras.length > 1) {
+      HapticFeedback.selectionClick();
+      final nextIndex = (_currentCameraIndex + 1) % _availableCameras.length;
+      await _initCamera(nextIndex);
     }
   }
 
@@ -233,8 +268,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _tts.setCompletionHandler(() {
       if (mounted) {
         setState(() => _isSpeaking = false);
+        // Hands-Free цикл: когда бот закончил речь в Live-режиме, слушаем ответ
         if (_isLiveActive && !_isLoading) {
-          _startSpeechListening();
+          Future.delayed(const Duration(milliseconds: 300), () {
+            if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
+              _startSpeechListening();
+            }
+          });
         }
       }
     });
@@ -276,9 +316,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v6_stream_storage') {
+    if (migrationTag != 'v7_pro_features') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v6_stream_storage');
+      await prefs.setString('bp_clean_migration', 'v7_pro_features');
     }
 
     setState(() {
@@ -337,6 +377,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
   Future<void> _stopSpeaking() async {
     await _tts.stop();
+    HapticFeedback.lightImpact();
     if (mounted) setState(() => _isSpeaking = false);
   }
 
@@ -353,6 +394,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
     bool available = await _speech.initialize();
     if (available && mounted) {
+      HapticFeedback.lightImpact();
       setState(() => _isListening = true);
       _speech.listen(
         localeId: "ru_RU",
@@ -384,10 +426,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
   void _stopListening() async {
     await _speech.stop();
+    HapticFeedback.lightImpact();
     if (mounted) setState(() => _isListening = false);
   }
 
   void _toggleLiveModal() {
+    HapticFeedback.mediumImpact();
     setState(() {
       _isLiveActive = !_isLiveActive;
     });
@@ -402,6 +446,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   Future<void> _pickImage(ImageSource source) async {
     final picked = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1024);
     if (picked != null) {
+      HapticFeedback.selectionClick();
       final bytes = await picked.readAsBytes();
       setState(() {
         _selectedImageBase64 = base64Encode(bytes);
@@ -418,6 +463,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         allowedExtensions: ['txt', 'log', 'json', 'py', 'dart', 'csv', 'yaml', 'md'],
       );
       if (result != null && result.files.single.path != null) {
+        HapticFeedback.selectionClick();
         final file = File(result.files.single.path!);
         final text = await file.readAsString();
         setState(() {
@@ -443,6 +489,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         if (!_memoryFacts.contains(fact)) {
           _memoryFacts = "$_memoryFacts\n- $fact";
           _saveData();
+          HapticFeedback.mediumImpact();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               backgroundColor: const Color(0xFF1E293B),
@@ -467,6 +514,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       return;
     }
 
+    HapticFeedback.lightImpact();
     _stopListening();
     _checkAndAutoSaveMemory(text);
 
@@ -478,6 +526,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _attachedFileContent = null;
     _attachedFileName = null;
 
+    // В Live-режиме автоматически захватываем свежий кадр
     if (imageToSend == null && _isLiveActive && _cameraController != null && _cameraController!.value.isInitialized) {
       try {
         final XFile file = await _cameraController!.takePicture();
@@ -601,6 +650,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
               if (accumulated.isNotEmpty) {
                 success = true;
+                HapticFeedback.selectionClick();
                 _saveData();
                 _speakText(accumulated);
                 break;
@@ -712,6 +762,52 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
+  void _exportCurrentChat() {
+    final session = _activeSession;
+    final buffer = StringBuffer();
+    buffer.writeln("# Экспорт диалога: ${session.title}");
+    buffer.writeln("Дата: ${DateTime.now().toLocal().toString().split('.')[0]}\n");
+
+    for (final m in session.messages) {
+      final sender = m.isUser ? "Пользователь (Александр)" : "BlackPocket (${m.modelUsed ?? 'AI'})";
+      buffer.writeln("### $sender");
+      if (m.fileName != null) buffer.writeln("*Прикреплен файл: ${m.fileName}*");
+      buffer.writeln("${m.text}\n");
+    }
+
+    final fullExport = buffer.toString();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Экспорт диалога (.md)'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Text(
+              fullExport,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Закрыть')),
+          FilledButton.icon(
+            icon: const Icon(Icons.copy, size: 18),
+            label: const Text('Скопировать всё'),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: fullExport));
+              HapticFeedback.mediumImpact();
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Диалог скопирован в буфер в формате Markdown')),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showAgentPicker() {
     showModalBottomSheet(
       context: context,
@@ -747,6 +843,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                   subtitle: Text(agent.description, style: const TextStyle(fontSize: 12, color: Colors.white54)),
                   trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blueAccent) : null,
                   onTap: () {
+                    HapticFeedback.selectionClick();
                     setState(() => _selectedAgentId = agent.id);
                     _saveData();
                     Navigator.pop(context);
@@ -835,6 +932,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
+              HapticFeedback.selectionClick();
               setState(() => _memoryFacts = memCtrl.text.trim());
               _saveData();
               Navigator.pop(context);
@@ -932,6 +1030,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                     Expanded(
                       child: FilledButton(
                         onPressed: () {
+                          HapticFeedback.selectionClick();
                           setState(() {
                             _apiKey = keyCtrl.text.trim();
                             _modelName = modelCtrl.text.trim();
@@ -1073,6 +1172,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                             icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
                                             onPressed: () {
                                               Clipboard.setData(ClipboardData(text: m.text));
+                                              HapticFeedback.lightImpact();
                                               ScaffoldMessenger.of(context).showSnackBar(
                                                 const SnackBar(content: Text('Скопировано')),
                                               );
@@ -1320,6 +1420,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                     onPressed: _toggleLiveModal,
                   ),
                   const Spacer(),
+                  // Переворот камеры
+                  IconButton(
+                    icon: const Icon(Icons.flip_camera_ios, color: Colors.white70),
+                    tooltip: 'Переключить камеру',
+                    onPressed: _switchCamera,
+                  ),
                   IconButton(
                     icon: Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: Colors.white70),
                     onPressed: () => setState(() => _showLiveCamera = !_showLiveCamera),
@@ -1345,17 +1451,26 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
             const Spacer(),
 
-            ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(
-                colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
-              ).createShader(bounds),
-              child: const Icon(Icons.auto_awesome, size: 80, color: Colors.white),
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (context, child) {
+                final scale = _isSpeaking || _isListening ? 1.0 + (_pulseController.value * 0.18) : 1.0;
+                return Transform.scale(
+                  scale: scale,
+                  child: ShaderMask(
+                    shaderCallback: (bounds) => const LinearGradient(
+                      colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
+                    ).createShader(bounds),
+                    child: const Icon(Icons.auto_awesome, size: 84, color: Colors.white),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 22),
             Text(
               _isSpeaking
-                  ? "Gemini говорит..."
-                  : (_isListening ? "Слушаю вас..." : "Обработка запроса..."),
+                  ? "BlackPocket говорит..."
+                  : (_isListening ? "Слушаю вас (Hands-Free)..." : "Обработка запроса..."),
               style: const TextStyle(fontSize: 18, color: Colors.white70, fontWeight: FontWeight.w500),
             ),
 
@@ -1405,7 +1520,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             ),
 
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               child: InkWell(
                 onTap: _createNewChat,
                 borderRadius: BorderRadius.circular(24),
@@ -1427,7 +1542,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               ),
             ),
 
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
+
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.file_download_outlined, color: Colors.greenAccent, size: 22),
+              title: const Text('Экспорт чата (.md)', style: TextStyle(color: Colors.white, fontSize: 15)),
+              onTap: () {
+                Navigator.pop(context);
+                _exportCurrentChat();
+              },
+            ),
 
             ListTile(
               dense: true,
@@ -1440,7 +1566,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               },
             ),
 
-            const Divider(color: Colors.white12, height: 24),
+            const Divider(color: Colors.white12, height: 20),
 
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
