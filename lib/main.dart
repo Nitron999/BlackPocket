@@ -190,6 +190,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   bool _isLiveActive = false;
   bool _showLiveCamera = true;
   double _speechRate = 0.48;
+  String _targetRussianLocaleId = "ru-RU";
 
   String? _selectedImageBase64;
   String? _attachedFileName;
@@ -292,7 +293,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   Future<void> _initSpeechRecognizer() async {
-    await _speech.initialize(
+    bool available = await _speech.initialize(
       onError: (val) => debugPrint("Ошибка STT: $val"),
       onStatus: (status) {
         if (status == 'notListening' && _isListening) {
@@ -300,6 +301,21 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         }
       },
     );
+
+    if (available) {
+      try {
+        final locales = await _speech.locales();
+        for (final loc in locales) {
+          final normalized = loc.localeId.toLowerCase().replaceAll('_', '-');
+          if (normalized == 'ru-ru' || normalized.startsWith('ru')) {
+            _targetRussianLocaleId = loc.localeId;
+            break;
+          }
+        }
+      } catch (_) {
+        _targetRussianLocaleId = "ru-RU";
+      }
+    }
   }
 
   ChatSession get _activeSession {
@@ -323,9 +339,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v12_no_stop_btn_fix') {
+    if (migrationTag != 'v14_bcp47_enforced') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v12_no_stop_btn_fix');
+      await prefs.setString('bp_clean_migration', 'v14_bcp47_enforced');
     }
 
     setState(() {
@@ -409,21 +425,34 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   void _startSpeechListening() async {
     if (_isSpeaking) await _stopSpeaking();
 
-    bool available = await _speech.initialize();
-    if (available && mounted) {
+    if (!_speech.isAvailable) {
+      await _initSpeechRecognizer();
+    }
+
+    if (mounted) {
       HapticFeedback.lightImpact();
       setState(() => _isListening = true);
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('🎤 Слушаю (Русский)...'),
+          duration: Duration(milliseconds: 1200),
+          backgroundColor: Color(0xFF1E293B),
+        ),
+      );
+
       _speech.listen(
-        localeId: "ru_RU", // Принудительный русский словарь распознавания
-        listenMode: stt.ListenMode.confirmation,
+        localeId: _targetRussianLocaleId,
+        listenMode: stt.ListenMode.dictation,
+        partialResults: true,
         pauseFor: const Duration(seconds: 2),
-        listenFor: const Duration(seconds: 25),
+        listenFor: const Duration(seconds: 30),
         onResult: (val) {
           final words = val.recognizedWords.trim();
           _inputController.text = words;
 
           final lower = words.toLowerCase();
-          // Мгновенная голосовая остановка без всяких кнопок
           if (lower == 'стоп' ||
               lower == 'хватит' ||
               lower == 'замолчи' ||
@@ -1387,7 +1416,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   Widget _buildWelcomeCenter() {
     return Center(
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: dynamic,
         children: [
           ShaderMask(
             shaderCallback: (bounds) => const LinearGradient(
