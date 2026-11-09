@@ -14,12 +14,17 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 List<CameraDescription> _availableCameras = [];
 
+// Жестко зашитые параметры Google Gemini API
+const String _hardcodedApiKey = "AQ.Ab8RN6INDiAIoK2cYOusWKutVqD0XFZpPLDOyYAriMWojxlNyQ";
+const String _hardcodedModel = "gemini-3.8-flash";
+const String _hardcodedEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     _availableCameras = await availableCameras();
   } catch (e) {
-    debugPrint("Ошибка камеры: $e");
+    debugPrint("Камера не найдена или ошибка: $e");
   }
   runApp(const GeminiBlackPocketApp());
 }
@@ -30,7 +35,7 @@ class GeminiBlackPocketApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Gemini BlackPocket',
+      title: 'BlackPocket AI',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -117,20 +122,21 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   bool _isLiveActive = false;
   bool _showLiveCamera = true;
   double _speechRate = 0.45;
+
   String? _selectedImageBase64;
   String? _attachedFileName;
   String? _attachedFileContent;
 
-  String _apiUrl = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-  String _apiKey = "";
-  String _modelName = "gemini-2.0-flash";
-  String _memoryFacts = "Пользователя зовут Александр (Шурик). Он ценит краткость, техническую точность, живой диалог без шаблонных фраз.";
-  String _systemPrompt =
-      "Ты — персональный интеллектуальный напарник BlackPocket. "
+  String _memoryFacts =
+      "Пользователя зовут Александр (Шурик). "
+      "Отвечай кратко, емко, по-живому, на чистом русском языке. "
+      "Он ценит техническую грамотность, конструктив, отсутствие шаблонных вежливых вступлений.";
+
+  final String _systemPrompt =
+      "Ты — BlackPocket, персональный ИИ-напарник Александра. "
       "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! Ни слова на английском! "
-      "Отвечай емко, по-живому, точно, с пониманием дела, без роботизированных штампов. "
-      "Если передано фото или кадр камеры — сразу анализируй суть увиденного. "
-      "Если передан документ — изучай его содержимое и отвечай конкретно.";
+      "Отвечай кратко, разговорно, по делу, с техническим пониманием. "
+      "Если передано фото или кадр камеры — сразу без вступлений говори по сути увиденного.";
 
   @override
   void initState() {
@@ -152,7 +158,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         await _cameraController!.initialize();
         if (mounted) setState(() {});
       } catch (e) {
-        debugPrint("Камера init error: $e");
+        debugPrint("Ошибка камеры: $e");
       }
     }
   }
@@ -178,7 +184,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
   Future<void> _initSpeechRecognizer() async {
     await _speech.initialize(
-      onError: (val) => debugPrint("STT error: $val"),
+      onError: (val) => debugPrint("Ошибка STT: $val"),
       onStatus: (status) {
         if (status == 'notListening' && _isListening) {
           if (mounted) setState(() => _isListening = false);
@@ -206,11 +212,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Сброс старых битых сохраненных URL и ключей
+    if (prefs.getString('bp_engine_version') != 'v3_native_gemini') {
+      await prefs.setString('bp_engine_version', 'v3_native_gemini');
+    }
+
     setState(() {
-      _apiUrl = prefs.getString('apiUrl') ?? _apiUrl;
-      _apiKey = prefs.getString('apiKey') ?? _apiKey;
-      _modelName = prefs.getString('modelName') ?? _modelName;
-      _systemPrompt = prefs.getString('systemPrompt') ?? _systemPrompt;
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
       _speechRate = prefs.getDouble('speechRate') ?? 0.45;
 
@@ -240,10 +248,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final encoded = jsonEncode(_sessions.map((e) => e.toJson()).toList());
     await prefs.setString('gemini_sessions_list', encoded);
     await prefs.setString('active_session_id', _currentSessionId);
-    await prefs.setString('apiUrl', _apiUrl);
-    await prefs.setString('apiKey', _apiKey);
-    await prefs.setString('modelName', _modelName);
-    await prefs.setString('systemPrompt', _systemPrompt);
     await prefs.setString('memoryFacts', _memoryFacts);
     await prefs.setDouble('speechRate', _speechRate);
   }
@@ -408,52 +412,72 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     try {
       String userFullPrompt = text;
       if (fileContentToSend != null) {
-        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ПРИКРЕПЛЕННОГО ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
+        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
       }
 
-      List<dynamic> content = [];
-      content.add({
-        "type": "text",
-        "text": "${userFullPrompt.isEmpty ? 'Что здесь изображено?' : userFullPrompt}\n\n(ВАЖНО: Отвечай строго на русском языке, живо, кратко и четко!)"
+      final combinedSystemPrompt = "$_systemPrompt\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
+
+      List> userParts = [];
+      userParts.add({
+        "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
 
       if (imageToSend != null) {
-        content.add({
-          "type": "image_url",
-          "image_url": {"url": "data:image/jpeg;base64,$imageToSend"}
+        userParts.add({
+          "inlineData": {
+            "mimeType": "image/jpeg",
+            "data": imageToSend,
+          }
         });
       }
 
-      // Собираем системный промпт вместе с долговременной памятью
-      final combinedSystemPrompt = "$_systemPrompt\n\n[БЛОК ДОЛГОВРЕМЕННОЙ ПАМЯТИ О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
+      // Прямой официальный вызов Gemini API v1beta
+      final targetUri = Uri.parse("$_hardcodedEndpoint/$_hardcodedModel:generateContent?key=$_hardcodedApiKey");
 
       final response = await http.post(
-        Uri.parse(_apiUrl),
+        targetUri,
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_apiKey',
+          'x-goog-api-key': _hardcodedApiKey,
         },
         body: jsonEncode({
-          "model": _modelName,
-          "messages": [
-            {"role": "system", "content": combinedSystemPrompt},
-            {"role": "user", "content": content}
+          "contents": [
+            {
+              "role": "user",
+              "parts": userParts,
+            }
           ],
+          "systemInstruction": {
+            "parts": [
+              {"text": combinedSystemPrompt}
+            ]
+          }
         }),
       ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final reply = data['choices'][0]['message']['content'] ?? 'Пустой ответ';
+        String reply = 'Пустой ответ от Gemini';
+
+        if (data['candidates'] != null &&
+            (data['candidates'] as List).isNotEmpty &&
+            data['candidates'][0]['content'] != null &&
+            data['candidates'][0]['content']['parts'] != null &&
+            (data['candidates'][0]['content']['parts'] as List).isNotEmpty) {
+          reply = data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+        }
+
         setState(() {
           session.messages.add(ChatMessage(text: reply, isUser: false));
         });
         _saveData();
         _speakText(reply);
       } else {
+        final errData = jsonDecode(utf8.decode(response.bodyBytes));
+        final errMsg = errData['error']?['message'] ?? response.body;
         setState(() {
           session.messages.add(ChatMessage(
-            text: "Ошибка API (${response.statusCode}): ${response.body}",
+            text: "Ошибка Gemini API (${response.statusCode}): $errMsg",
             isUser: false,
           ));
         });
@@ -461,13 +485,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     } on TimeoutException {
       setState(() {
         session.messages.add(ChatMessage(
-          text: "Таймаут соединения (15 сек). Сервер не ответил. Проверьте подключение к сети или VPN.",
+          text: "Таймаут соединения (15 сек). Сервер не ответил. Проверь, включен ли VPN на телефоне.",
           isUser: false,
         ));
       });
     } catch (e) {
       setState(() {
-        session.messages.add(ChatMessage(text: "Сбой сети: $e. Убедитесь, что включен VPN или проверьте URL шлюза.", isUser: false));
+        session.messages.add(ChatMessage(
+          text: "Сбой сети: $e. Убедись, что подключен VPN для доступа к Google API.",
+          isUser: false,
+        ));
       });
     } finally {
       setState(() => _isLoading = false);
@@ -581,79 +608,39 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     );
   }
 
-  void _showSettingsModal() {
-    final urlCtrl = TextEditingController(text: _apiUrl);
-    final keyCtrl = TextEditingController(text: _apiKey);
-    final modelCtrl = TextEditingController(text: _modelName);
-    final promptCtrl = TextEditingController(text: _systemPrompt);
-    double rate = _speechRate;
-
-    showModalBottomSheet(
+  void _showSpeedDialog() {
+    double tempRate = _speechRate;
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF131316),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (context) => StatefulBuilder(
-        builder: (context, setModal) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        builder: (context, setDState) => AlertDialog(
+          title: const Text('Скорость озвучки'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${tempRate.toStringAsFixed(2)}x'),
+              Slider(
+                value: tempRate,
+                min: 0.25,
+                max: 0.75,
+                divisions: 10,
+                onChanged: (v) {
+                  setDState(() => tempRate = v);
+                  _tts.setSpeechRate(v);
+                },
+              ),
+            ],
           ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text('Настройки BlackPocket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: 'API Endpoint URL')),
-                TextField(controller: keyCtrl, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
-                TextField(controller: modelCtrl, decoration: const InputDecoration(labelText: 'Model Name')),
-                TextField(controller: promptCtrl, decoration: const InputDecoration(labelText: 'System Prompt'), maxLines: 2),
-                const SizedBox(height: 12),
-                Text('Скорость голоса: ${rate.toStringAsFixed(2)}'),
-                Slider(
-                  value: rate,
-                  min: 0.25,
-                  max: 0.75,
-                  divisions: 10,
-                  onChanged: (v) {
-                    setModal(() => rate = v);
-                    _tts.setSpeechRate(v);
-                  },
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: FilledButton(
-                    onPressed: () {
-                      setState(() {
-                        _apiUrl = urlCtrl.text.trim();
-                        _apiKey = keyCtrl.text.trim();
-                        _modelName = modelCtrl.text.trim();
-                        _systemPrompt = promptCtrl.text.trim();
-                        _speechRate = rate;
-                      });
-                      _saveData();
-                      Navigator.pop(context);
-                    },
-                    child: const Text('Сохранить', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ],
+          actions: [
+            FilledButton(
+              onPressed: () {
+                setState(() => _speechRate = tempRate);
+                _saveData();
+                Navigator.pop(context);
+              },
+              child: const Text('Готово'),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -783,7 +770,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             ),
           ),
 
-          // Превью прикрепленного документа или фото
           if (_selectedImageBase64 != null || _attachedFileName != null)
             Positioned(
               bottom: 95,
@@ -852,9 +838,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
           const SizedBox(width: 6),
           Row(
             children: const [
-              Text('Gemini Flash', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+              Text('Gemini 3.8 Flash', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
               SizedBox(width: 4),
-              Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 20),
+              Icon(Icons.check_circle, color: Colors.blueAccent, size: 16),
             ],
           ),
           const Spacer(),
@@ -864,7 +850,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             onPressed: _showMemoryDialog,
           ),
           GestureDetector(
-            onTap: _showSettingsModal,
+            onTap: _showSpeedDialog,
             child: Container(
               width: 34,
               height: 34,
@@ -1073,7 +1059,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
               child: Row(
                 children: [
-                  const Text('Gemini', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const Text('BlackPocket', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
                   const Spacer(),
                   IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
                 ],
@@ -1188,11 +1174,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                   ),
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _showSettingsModal();
-                    },
+                    icon: const Icon(Icons.speed, color: Colors.white70),
+                    tooltip: 'Скорость речи',
+                    onPressed: _showSpeedDialog,
                   ),
                 ],
               ),
