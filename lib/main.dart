@@ -213,6 +213,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   @override
   void initState() {
     super.initState();
+    _inputController.addListener(_onInputChanged);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -224,8 +225,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _loadData();
   }
 
+  void _onInputChanged() {
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    _inputController.removeListener(_onInputChanged);
+    _inputController.dispose();
+    _scrollController.dispose();
     _pulseController.dispose();
     _cameraController?.dispose();
     super.dispose();
@@ -268,7 +276,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _tts.setCompletionHandler(() {
       if (mounted) {
         setState(() => _isSpeaking = false);
-        // Hands-Free цикл: когда бот закончил речь в Live-режиме, слушаем ответ
         if (_isLiveActive && !_isLoading) {
           Future.delayed(const Duration(milliseconds: 300), () {
             if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
@@ -316,9 +323,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v7_pro_features') {
+    if (migrationTag != 'v8_chat_history_fix') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v7_pro_features');
+      await prefs.setString('bp_clean_migration', 'v8_chat_history_fix');
     }
 
     setState(() {
@@ -493,13 +500,53 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               backgroundColor: const Color(0xFF1E293B),
-              content: Text('🧠 Запомнил в памяти: $fact', style: const TextStyle(color: Colors.greenAccent)),
+              content: Text('🧠 Запомнил: $fact', style: const TextStyle(color: Colors.greenAccent)),
               duration: const Duration(seconds: 3),
             ),
           );
         }
       }
     }
+  }
+
+  List> _buildContentsHistory(List<ChatMessage> history, List currentParts) {
+    final List> list = [];
+
+    // Берем последние 8 сообщений из истории диалога для сохранения контекста
+    final recent = history.length > 8 ? history.sublist(history.length - 8) : history;
+
+    for (final m in recent) {
+      if (m.text.trim().isEmpty) continue;
+      final role = m.isUser ? "user" : "model";
+      if (list.isNotEmpty && list.last["role"] == role) {
+        final prevText = (list.last["parts"] as List)[0]["text"] as String;
+        (list.last["parts"] as List)[0]["text"] = "$prevText\n\n${m.text}";
+      } else {
+        list.add({
+          "role": role,
+          "parts": [
+            {"text": m.text}
+          ],
+        });
+      }
+    }
+
+    // Первым в contents всегда должен идти user
+    while (list.isNotEmpty && list.first["role"] == "model") {
+      list.removeAt(0);
+    }
+
+    // Если последнее в истории было от user, удаляем, так как сейчас добавим актуальное
+    if (list.isNotEmpty && list.last["role"] == "user") {
+      list.removeLast();
+    }
+
+    list.add({
+      "role": "user",
+      "parts": currentParts,
+    });
+
+    return list;
   }
 
   Future<void> _handleSend([String? forcedText]) async {
@@ -526,7 +573,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _attachedFileContent = null;
     _attachedFileName = null;
 
-    // В Live-режиме автоматически захватываем свежий кадр
     if (imageToSend == null && _isLiveActive && _cameraController != null && _cameraController!.value.isInitialized) {
       try {
         final XFile file = await _cameraController!.takePicture();
@@ -540,17 +586,24 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final session = _activeSession;
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
 
+    // Сохраняем предыдущую историю перед добавлением нового сообщения
+    final previousHistory = List<ChatMessage>.from(session.messages);
+
+    final displayPrompt = text.isEmpty
+        ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение")
+        : text;
+
     setState(() {
       session.messages.add(ChatMessage(
-        text: text.isEmpty ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение") : text,
+        text: displayPrompt,
         isUser: true,
         imageBase64: imageToSend,
         fileName: fileNameToSend,
       ));
       session.messages.add(botMessage);
 
-      if (session.title == "Новый чат" && text.isNotEmpty) {
-        session.title = text.length > 26 ? "${text.substring(0, 26)}..." : text;
+      if (session.title == "Новый чат" && displayPrompt.isNotEmpty) {
+        session.title = displayPrompt.length > 26 ? "${displayPrompt.substring(0, 26)}..." : displayPrompt;
       }
       _isLoading = true;
       _inputController.clear();
@@ -581,6 +634,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         });
       }
 
+      final payloadContents = _buildContentsHistory(previousHistory, userParts);
+
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
@@ -606,12 +661,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               'x-goog-api-key': cleanKey,
             });
             request.body = jsonEncode({
-              "contents": [
-                {
-                  "role": "user",
-                  "parts": userParts,
-                }
-              ],
+              "contents": payloadContents,
               "systemInstruction": {
                 "parts": [
                   {"text": combinedSystemPrompt}
@@ -1338,6 +1388,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   Widget _buildGeminiPillBar() {
+    final bool hasContent = _inputController.text.trim().isNotEmpty ||
+        _selectedImageBase64 != null ||
+        _attachedFileContent != null;
+
     return Container(
       height: 58,
       padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1373,23 +1427,31 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               onSubmitted: (txt) => _handleSend(txt),
             ),
           ),
-          IconButton(
-            icon: Icon(
-              _isListening ? Icons.mic : Icons.mic_none,
-              color: _isListening ? Colors.redAccent : Colors.white70,
-              size: 24,
+          if (!hasContent)
+            IconButton(
+              icon: Icon(
+                _isListening ? Icons.mic : Icons.mic_none,
+                color: _isListening ? Colors.redAccent : Colors.white70,
+                size: 24,
+              ),
+              onPressed: () {
+                if (_isListening) {
+                  _stopListening();
+                } else {
+                  _startSpeechListening();
+                }
+              },
             ),
-            onPressed: () {
-              if (_isListening) {
-                _stopListening();
+          const SizedBox(width: 4),
+          // Динамическая кнопка: если есть текст или файл — стрелка отправки, если пусто — Live режим
+          GestureDetector(
+            onTap: () {
+              if (hasContent) {
+                _handleSend();
               } else {
-                _startSpeechListening();
+                _toggleLiveModal();
               }
             },
-          ),
-          const SizedBox(width: 4),
-          GestureDetector(
-            onTap: _toggleLiveModal,
             child: Container(
               width: 42,
               height: 42,
@@ -1397,7 +1459,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 color: Color(0xFF1D4ED8),
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.graphic_eq, color: Colors.white, size: 22),
+              child: Icon(
+                hasContent ? Icons.arrow_upward : Icons.graphic_eq,
+                color: Colors.white,
+                size: 22,
+              ),
             ),
           ),
         ],
@@ -1420,7 +1486,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                     onPressed: _toggleLiveModal,
                   ),
                   const Spacer(),
-                  // Переворот камеры
                   IconButton(
                     icon: const Icon(Icons.flip_camera_ios, color: Colors.white70),
                     tooltip: 'Переключить камеру',
