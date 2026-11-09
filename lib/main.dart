@@ -884,4 +884,417 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
               left: 20,
               child: Container(
                 padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+                child: Row(
+                  children: [
+                    if (_selectedImageBase64 != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(base64Decode(_selectedImageBase64!), width: 40, height: 40, fit: BoxFit.cover),
+                      )
+                    else
+                      const Icon(Icons.description, color: Colors.greenAccent, size: 30),
+                    const SizedBox(width: 8),
+                    Text(_attachedFileName ?? 'Фото прикреплено', style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () => setState(() {
+                        _selectedImageBase64 = null;
+                        _attachedFileName = null;
+                        _attachedFileContent = null;
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          Positioned(
+            left: 18,
+            right: 18,
+            bottom: 20,
+            child: _buildGeminiPillBar(),
+          ),
+
+          if (_isLiveActive) _buildLiveOverlay(),
+
+          if (_isSpeaking && !_isLiveActive)
+            Positioned(
+              bottom: 95,
+              right: 20,
+              child: FloatingActionButton.extended(
+                backgroundColor: const Color(0xFF2563EB),
+                icon: const Icon(Icons.stop, color: Colors.white),
+                label: const Text('СТОП', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                onPressed: _stopSpeaking,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.menu, size: 26, color: Colors.white70),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+          const SizedBox(width: 6),
+          Row(
+            children: [
+              Text(_modelName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+              const SizedBox(width: 4),
+              const Icon(Icons.check_circle, color: Colors.blueAccent, size: 16),
+            ],
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.psychology_outlined, color: Colors.blueAccent),
+            tooltip: 'Память ассистента',
+            onPressed: _showMemoryDialog,
+          ),
+          GestureDetector(
+            onTap: _showSettingsModal,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.blueAccent, width: 2),
+                color: Colors.redAccent.shade700,
+              ),
+              child: const Center(
+                child: Text('A', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeCenter() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              colors: [Color(0xFF4285F4), Color(0xFF9B72CF), Color(0xFFD96570), Color(0xFFF4B400)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ).createShader(bounds),
+            child: const Icon(Icons.auto_awesome, size: 64, color: Colors.white),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'ALEKSANDR, что\nдальше?',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+              letterSpacing: 0.5,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGeminiPillBar() {
+    return Container(
+      height: 58,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E2128),
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.add, color: Colors.white70, size: 26),
+            onPressed: _showAttachmentBottomSheet,
+          ),
+          Expanded(
+            child: TextField(
+              controller: _inputController,
+              textCapitalization: TextCapitalization.sentences,
+              style: const TextStyle(fontSize: 16, color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Спросить ...',
+                hintStyle: TextStyle(color: Colors.white54, fontSize: 16),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+              ),
+              onSubmitted: (txt) => _handleSend(txt),
+            ),
+          ),
+          IconButton(
+            icon: Icon(
+              _isListening ? Icons.mic : Icons.mic_none,
+              color: _isListening ? Colors.redAccent : Colors.white70,
+              size: 24,
+            ),
+            onPressed: () {
+              if (_isListening) {
+                _stopListening();
+              } else {
+                _startSpeechListening();
+              }
+            },
+          ),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: _toggleLiveModal,
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                color: Color(0xFF1D4ED8),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.graphic_eq, color: Colors.white, size: 22),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLiveOverlay() {
+    return Container(
+      color: const Color(0xFF070B14).withOpacity(0.96),
+      child: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                    onPressed: _toggleLiveModal,
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: Colors.white70),
+                    onPressed: () => setState(() => _showLiveCamera = !_showLiveCamera),
+                  ),
+                ],
+              ),
+            ),
+
+            if (_showLiveCamera && _cameraController != null && _cameraController!.value.isInitialized)
+              Container(
+                height: 230,
+                width: double.infinity,
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 2),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
+
+            const Spacer(),
+
+            ShaderMask(
+              shaderCallback: (bounds) => const LinearGradient(
+                colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
+              ).createShader(bounds),
+              child: const Icon(Icons.auto_awesome, size: 80, color: Colors.white),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              _isSpeaking
+                  ? "Gemini говорит..."
+                  : (_isListening ? "Слушаю вас..." : "Обработка запроса..."),
+              style: const TextStyle(fontSize: 18, color: Colors.white70, fontWeight: FontWeight.w500),
+            ),
+
+            const Spacer(),
+
+            Padding(
+              padding: const EdgeInsets.only(bottom: 30),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  FloatingActionButton.large(
+                    backgroundColor: _isSpeaking ? Colors.redAccent : const Color(0xFF1D4ED8),
+                    onPressed: () {
+                      if (_isSpeaking) {
+                        _stopSpeaking();
+                      } else if (!_isListening) {
+                        _startSpeechListening();
+                      }
+                    },
+                    child: Icon(_isSpeaking ? Icons.stop : Icons.mic, size: 36, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGeminiDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF0B0F17),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              child: Row(
+                children: [
+                  const Text('BlackPocket', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const Spacer(),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: InkWell(
+                onTap: _createNewChat,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E2128),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                      SizedBox(width: 14),
+                      Text('Новый чат', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            ListTile(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              leading: const Icon(Icons.psychology, color: Colors.blueAccent, size: 22),
+              title: const Text('Память ассистента', style: TextStyle(color: Colors.white, fontSize: 15)),
+              onTap: () {
+                Navigator.pop(context);
+                _showMemoryDialog();
+              },
+            ),
+
+            const Divider(color: Colors.white12, height: 24),
+
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Text('История чатов', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+
+            Expanded(
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: _sessions.length,
+                itemBuilder: (context, idx) {
+                  final s = _sessions[idx];
+                  final isCurrent = s.id == _currentSessionId;
+                  return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                    leading: Icon(
+                      Icons.chat_bubble_outline,
+                      size: 18,
+                      color: isCurrent ? Colors.blueAccent : Colors.white60,
+                    ),
+                    title: Text(
+                      s.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: isCurrent ? Colors.white : Colors.white70,
+                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                      ),
+                    ),
+                    onTap: () {
+                      setState(() => _currentSessionId = s.id);
+                      _saveData();
+                      Navigator.pop(context);
+                      _scrollToBottom();
+                    },
+                  );
+                },
+              ),
+            ),
+
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Colors.white12)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.blueAccent, width: 2),
+                      color: Colors.redAccent.shade700,
+                    ),
+                    child: const Center(
+                      child: Text('A', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Text('ALEKSANDR Ku81', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text('PRO', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    ],
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+                    tooltip: 'Настройки',
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showSettingsModal();
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
