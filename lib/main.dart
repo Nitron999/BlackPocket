@@ -177,7 +177,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   final ImagePicker _picker = ImagePicker();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
-  
+
   CameraController? _cameraController;
   int _currentCameraIndex = 0;
 
@@ -323,9 +323,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v8_chat_history_fix') {
+    if (migrationTag != 'v9_fix_syntax') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v8_chat_history_fix');
+      await prefs.setString('bp_clean_migration', 'v9_fix_syntax');
     }
 
     setState(() {
@@ -338,8 +338,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       final historyJson = prefs.getString('gemini_sessions_list');
       if (historyJson != null && historyJson.isNotEmpty) {
-        final List<dynamic> decoded = jsonDecode(historyJson);
-        _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
+        final dynamic decoded = jsonDecode(historyJson);
+        if (decoded is List) {
+          _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
+        }
       }
 
       if (_sessions.isEmpty) {
@@ -509,44 +511,47 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  List> _buildContentsHistory(List<ChatMessage> history, List currentParts) {
-    final List> list = [];
+  dynamic _buildContentsHistory(dynamic historyList, dynamic currentParts) {
+    final List> resultList = [];
+    final List history = historyList is List ? historyList : [];
 
-    // Берем последние 8 сообщений из истории диалога для сохранения контекста
-    final recent = history.length > 8 ? history.sublist(history.length - 8) : history;
+    final int startIdx = history.length > 8 ? history.length - 8 : 0;
+    final recent = history.sublist(startIdx);
 
-    for (final m in recent) {
-      if (m.text.trim().isEmpty) continue;
-      final role = m.isUser ? "user" : "model";
-      if (list.isNotEmpty && list.last["role"] == role) {
-        final prevText = (list.last["parts"] as List)[0]["text"] as String;
-        (list.last["parts"] as List)[0]["text"] = "$prevText\n\n${m.text}";
-      } else {
-        list.add({
-          "role": role,
-          "parts": [
-            {"text": m.text}
-          ],
-        });
+    for (final item in recent) {
+      if (item is ChatMessage && item.text.trim().isNotEmpty) {
+        final role = item.isUser ? "user" : "model";
+        if (resultList.isNotEmpty && resultList.last["role"] == role) {
+          final parts = resultList.last["parts"];
+          if (parts is List && parts.isNotEmpty) {
+            final prevText = parts[0]["text"].toString();
+            parts[0]["text"] = "$prevText\n\n${item.text}";
+          }
+        } else {
+          resultList.add({
+            "role": role,
+            "parts": [
+              {"text": item.text}
+            ],
+          });
+        }
       }
     }
 
-    // Первым в contents всегда должен идти user
-    while (list.isNotEmpty && list.first["role"] == "model") {
-      list.removeAt(0);
+    while (resultList.isNotEmpty && resultList.first["role"] == "model") {
+      resultList.removeAt(0);
     }
 
-    // Если последнее в истории было от user, удаляем, так как сейчас добавим актуальное
-    if (list.isNotEmpty && list.last["role"] == "user") {
-      list.removeLast();
+    if (resultList.isNotEmpty && resultList.last["role"] == "user") {
+      resultList.removeLast();
     }
 
-    list.add({
+    resultList.add({
       "role": "user",
       "parts": currentParts,
     });
 
-    return list;
+    return resultList;
   }
 
   Future<void> _handleSend([String? forcedText]) async {
@@ -585,9 +590,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
     final session = _activeSession;
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
-
-    // Сохраняем предыдущую историю перед добавлением нового сообщения
-    final previousHistory = List<ChatMessage>.from(session.messages);
+    final previousHistory = session.messages.toList();
 
     final displayPrompt = text.isEmpty
         ? (fileNameToSend != null ? "Изучи файл $fileNameToSend" : "Посмотри на изображение")
@@ -620,13 +623,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final combinedSystemPrompt =
           "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      final List userParts = [];
-      userParts.add({
+      final currentParts = [];
+      currentParts.add({
         "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
 
       if (imageToSend != null) {
-        userParts.add({
+        currentParts.add({
           "inlineData": {
             "mimeType": "image/jpeg",
             "data": imageToSend,
@@ -634,12 +637,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         });
       }
 
-      final payloadContents = _buildContentsHistory(previousHistory, userParts);
+      final payloadContents = _buildContentsHistory(previousHistory, currentParts);
 
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      List<String> modelsQueue = [_modelName];
+      final modelsQueue = <String>[_modelName];
       if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
         modelsQueue.add("gemini-3.5-flash-lite");
       }
@@ -649,7 +652,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       bool success = false;
 
-      for (String modelToTry in modelsQueue) {
+      for (final modelToTry in modelsQueue) {
         botMessage.modelUsed = modelToTry;
         final streamUri = Uri.parse("$endpointBase/$modelToTry:streamGenerateContent?alt=sse&key=$cleanKey");
 
@@ -681,18 +684,21 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                   final jsonStr = line.substring(6).trim();
                   if (jsonStr == '[DONE]') continue;
                   try {
-                    final data = jsonDecode(jsonStr);
-                    if (data['candidates'] != null &&
-                        (data['candidates'] as List).isNotEmpty &&
-                        data['candidates'][0]['content'] != null &&
-                        data['candidates'][0]['content']['parts'] != null &&
-                        (data['candidates'][0]['content']['parts'] as List).isNotEmpty) {
-                      final chunk = data['candidates'][0]['content']['parts'][0]['text'] ?? '';
-                      accumulated += chunk;
-                      setState(() {
-                        botMessage.text = accumulated;
-                      });
-                      _scrollToBottom();
+                    final dynamic data = jsonDecode(jsonStr);
+                    if (data != null &&
+                        data['candidates'] is List &&
+                        (data['candidates'] as List).isNotEmpty) {
+                      final candidate = data['candidates'][0];
+                      if (candidate['content'] != null &&
+                          candidate['content']['parts'] is List &&
+                          (candidate['content']['parts'] as List).isNotEmpty) {
+                        final chunk = candidate['content']['parts'][0]['text'] ?? '';
+                        accumulated += chunk.toString();
+                        setState(() {
+                          botMessage.text = accumulated;
+                        });
+                        _scrollToBottom();
+                      }
                     }
                   } catch (_) {}
                 }
@@ -899,7 +905,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                     Navigator.pop(context);
                   },
                 );
-              }).toList(),
+              }),
             ],
           ),
         ),
@@ -1443,7 +1449,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               },
             ),
           const SizedBox(width: 4),
-          // Динамическая кнопка: если есть текст или файл — стрелка отправки, если пусто — Live режим
           GestureDetector(
             onTap: () {
               if (hasContent) {
