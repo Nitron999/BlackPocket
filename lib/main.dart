@@ -15,7 +15,7 @@ import 'package:excel/excel.dart' as xl;
 
 List<CameraDescription> _availableCameras = [];
 
-const String _defaultApiKey = "AQ.Ab8RN6INDiAIoK2cYOusWKutVqD0XFZpPLDOyYAriMWojxlNyQ";
+const String _defaultApiKey = "";
 const String _defaultModel = "gemini-3.6-flash";
 const String _defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -358,9 +358,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v19_xlsx_parser_added') {
-      await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v19_xlsx_parser_added');
+    if (migrationTag != 'v20_chat_renaming_added') {
+      await prefs.setString('bp_clean_migration', 'v20_chat_renaming_added');
     }
 
     setState(() {
@@ -547,7 +546,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         buffer.writeln(rowValues.join(" | "));
         rowCount++;
         if (rowCount > 400) {
-          buffer.writeln("... (показаны первые 400 строк листа для сохранения лимита памяти)");
+          buffer.writeln("... (показаны первые 400 строк листа для сохранения памяти)");
           break;
         }
       }
@@ -645,6 +644,46 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         ),
       );
     }
+  }
+
+  void _renameSession(String id, String currentTitle) {
+    final titleController = TextEditingController(text: currentTitle);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E2128),
+        title: const Text('Переименовать тему'),
+        content: TextField(
+          controller: titleController,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Название диалога',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final newName = titleController.text.trim();
+              if (newName.isNotEmpty) {
+                HapticFeedback.selectionClick();
+                setState(() {
+                  final s = _sessions.firstWhere((sess) => sess.id == id);
+                  s.title = newName;
+                });
+                _saveData();
+              }
+              Navigator.pop(context);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _checkAndAutoSaveMemory(String text) {
@@ -1862,7 +1901,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                   final isCurrent = s.id == _currentSessionId;
                   return ListTile(
                     dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                    contentPadding: const EdgeInsets.only(left: 16, right: 8),
                     leading: Icon(
                       Icons.chat_bubble_outline,
                       size: 18,
@@ -1877,11 +1916,22 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                         fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.close, size: 16, color: Colors.white38),
-                      tooltip: 'Удалить чат',
-                      onPressed: () => _deleteSession(s.id),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 16, color: Colors.white54),
+                          tooltip: 'Переименовать',
+                          onPressed: () => _renameSession(s.id, s.title),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close, size: 16, color: Colors.white38),
+                          tooltip: 'Удалить чат',
+                          onPressed: () => _deleteSession(s.id),
+                        ),
+                      ],
                     ),
+                    onLongPress: () => _renameSession(s.id, s.title),
                     onTap: () {
                       setState(() => _currentSessionId = s.id);
                       _saveData();
