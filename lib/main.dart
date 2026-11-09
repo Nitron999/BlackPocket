@@ -158,7 +158,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         await _cameraController!.initialize();
         if (mounted) setState(() {});
       } catch (e) {
-        debugPrint("Ошибка камеры: $e");
+        debugPrint("Камера не найдена или ошибка: $e");
       }
     }
   }
@@ -416,7 +416,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
       final combinedSystemPrompt = "$_systemPrompt\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      final userParts = >[];
+      final List userParts = [];
       userParts.add({
         "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
