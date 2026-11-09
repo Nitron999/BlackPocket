@@ -18,30 +18,30 @@ Future<void> main() async {
   try {
     _availableCameras = await availableCameras();
   } catch (e) {
-    debugPrint("Ошибка инициализации камеры: $e");
+    debugPrint("Ошибка камеры: $e");
   }
-  runApp(const BlackPocketApp());
+  runApp(const GeminiBlackPocketApp());
 }
 
-class BlackPocketApp extends StatelessWidget {
-  const BlackPocketApp({super.key});
+class GeminiBlackPocketApp extends StatelessWidget {
+  const GeminiBlackPocketApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BlackPocket Live',
+      title: 'Gemini',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.dark,
-          surface: const Color(0xFF141414),
+        scaffoldBackgroundColor: const Color(0xFF030712),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF2563EB),
+          surface: Color(0xFF111827),
+          background: Color(0xFF030712),
         ),
-        scaffoldBackgroundColor: const Color(0xFF0A0A0A),
       ),
-      home: const LiveAssistantScreen(),
+      home: const GeminiMainScreen(),
     );
   }
 }
@@ -81,48 +81,48 @@ class ChatSession {
 
   factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
         id: json['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
-        title: json['title'] ?? 'Новый диалог',
+        title: json['title'] ?? 'Новый чат',
         messages: (json['messages'] as List<dynamic>? ?? [])
             .map((m) => ChatMessage.fromJson(m))
             .toList(),
       );
 }
 
-class LiveAssistantScreen extends StatefulWidget {
-  const LiveAssistantScreen({super.key});
+class GeminiMainScreen extends StatefulWidget {
+  const GeminiMainScreen({super.key});
 
   @override
-  State<LiveAssistantScreen> createState() => _LiveAssistantScreenState();
+  State<GeminiMainScreen> createState() => _GeminiMainScreenState();
 }
 
-class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
-  CameraController? _cameraController;
+class _GeminiMainScreenState extends State<GeminiMainScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final TextEditingController _inputController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   final ImagePicker _picker = ImagePicker();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
-  final ScrollController _scrollController = ScrollController();
-  final TextEditingController _textController = TextEditingController();
+  CameraController? _cameraController;
 
   List<ChatSession> _sessions = [];
   String _currentSessionId = "";
 
-  bool _isCameraActive = true;
   bool _isListening = false;
   bool _isSpeaking = false;
   bool _isLoading = false;
-  bool _liveContinuousMode = false;
+  bool _isLiveActive = false;
+  bool _showLiveCamera = true;
   double _speechRate = 0.45;
-  String? _attachedImageBase64;
+  String? _selectedImageBase64;
 
-  String _apiUrl = "https://openrouter.ai/api/v1/chat/completions";
+  String _apiUrl = "https://api.groq.com/openai/v1/chat/completions";
   String _apiKey = "";
-  String _modelName = "openrouter/free";
+  String _modelName = "qwen/qwen3.8-27b";
   String _systemPrompt =
-      "Ты — BlackPocket, личный живой партнер и собеседник. "
+      "Ты — Gemini, персональный живой интеллектуальный ассистент Александра. "
       "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! Ни слова на английском! "
-      "Ты видишь то, что показывает пользователь через камеру или присылает фото. "
-      "Отвечай кратко, емко, живо и по существу, как надежный знающий друг. "
-      "Не трать время на шаблонные приветствия — сразу переходи к делу.";
+      "Отвечай емко, по-живому, точно, с пониманием дела, без роботизированных штампов. "
+      "Если передано фото или кадр камеры — сразу анализируй суть увиденного.";
 
   @override
   void initState() {
@@ -130,7 +130,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     _initCamera();
     _initTts();
     _initSpeechRecognizer();
-    _loadAll();
+    _loadData();
   }
 
   Future<void> _initCamera() async {
@@ -144,7 +144,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
         await _cameraController!.initialize();
         if (mounted) setState(() {});
       } catch (e) {
-        debugPrint("Ошибка камеры: $e");
+        debugPrint("Камера init error: $e");
       }
     }
   }
@@ -157,7 +157,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     _tts.setCompletionHandler(() {
       if (mounted) {
         setState(() => _isSpeaking = false);
-        if (_liveContinuousMode && !_isLoading) {
+        if (_isLiveActive && !_isLoading) {
           _startSpeechListening();
         }
       }
@@ -170,7 +170,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
 
   Future<void> _initSpeechRecognizer() async {
     await _speech.initialize(
-      onError: (val) => debugPrint("Ошибка STT: $val"),
+      onError: (val) => debugPrint("STT error: $val"),
       onStatus: (status) {
         if (status == 'notListening' && _isListening) {
           if (mounted) setState(() => _isListening = false);
@@ -179,11 +179,11 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     );
   }
 
-  ChatSession get _currentSession {
+  ChatSession get _activeSession {
     if (_sessions.isEmpty) {
       final s = ChatSession(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: "Живой диалог",
+        title: "Новый чат",
         messages: [],
       );
       _sessions.add(s);
@@ -196,7 +196,7 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     );
   }
 
-  Future<void> _loadAll() async {
+  Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _apiUrl = prefs.getString('apiUrl') ?? _apiUrl;
@@ -205,20 +205,20 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
       _systemPrompt = prefs.getString('systemPrompt') ?? _systemPrompt;
       _speechRate = prefs.getDouble('speechRate') ?? 0.45;
 
-      final historyJson = prefs.getString('bp_sessions_live');
+      final historyJson = prefs.getString('gemini_sessions_list');
       if (historyJson != null && historyJson.isNotEmpty) {
         final List<dynamic> decoded = jsonDecode(historyJson);
         _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
       }
 
       if (_sessions.isEmpty) {
-        final firstSession = ChatSession(
+        final first = ChatSession(
           id: DateTime.now().millisecondsSinceEpoch.toString(),
-          title: "Живой диалог",
+          title: "Новый чат",
           messages: [],
         );
-        _sessions.add(firstSession);
-        _currentSessionId = firstSession.id;
+        _sessions.add(first);
+        _currentSessionId = first.id;
       } else {
         _currentSessionId = prefs.getString('active_session_id') ?? _sessions.first.id;
       }
@@ -226,21 +226,16 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     await _tts.setSpeechRate(_speechRate);
   }
 
-  Future<void> _saveSessions() async {
+  Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     final encoded = jsonEncode(_sessions.map((e) => e.toJson()).toList());
-    await prefs.setString('bp_sessions_live', encoded);
+    await prefs.setString('gemini_sessions_list', encoded);
     await prefs.setString('active_session_id', _currentSessionId);
-  }
-
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
     await prefs.setString('apiUrl', _apiUrl);
     await prefs.setString('apiKey', _apiKey);
     await prefs.setString('modelName', _modelName);
     await prefs.setString('systemPrompt', _systemPrompt);
     await prefs.setDouble('speechRate', _speechRate);
-    await _tts.setSpeechRate(_speechRate);
   }
 
   void _scrollToBottom() {
@@ -255,25 +250,21 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     });
   }
 
-  Future<void> _stopSpeakingImmediately() async {
+  Future<void> _stopSpeaking() async {
     await _tts.stop();
-    if (mounted) {
-      setState(() => _isSpeaking = false);
-    }
+    if (mounted) setState(() => _isSpeaking = false);
   }
 
   Future<void> _speakText(String text) async {
-    await _stopSpeakingImmediately();
-    final cleanText = text.replaceAll(RegExp(r'[\*\_#`>]'), '');
+    await _stopSpeaking();
+    final clean = text.replaceAll(RegExp(r'[\*\_#`>]'), '');
     setState(() => _isSpeaking = true);
     await _tts.setSpeechRate(_speechRate);
-    await _tts.speak(cleanText);
+    await _tts.speak(clean);
   }
 
   void _startSpeechListening() async {
-    if (_isSpeaking) {
-      await _stopSpeakingImmediately();
-    }
+    if (_isSpeaking) await _stopSpeaking();
 
     bool available = await _speech.initialize();
     if (available && mounted) {
@@ -285,108 +276,108 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
         listenFor: const Duration(seconds: 30),
         onResult: (val) {
           final words = val.recognizedWords.trim();
-          _textController.text = words;
+          _inputController.text = words;
 
-          // Обработка голосовой команды СТОП прямо во время распознавания
           final lower = words.toLowerCase();
           if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower == 'молчать') {
-            _stopSpeakingImmediately();
+            _stopSpeaking();
             _speech.stop();
             setState(() {
               _isListening = false;
-              _textController.clear();
+              _inputController.clear();
             });
             return;
           }
 
           if (val.finalResult && words.isNotEmpty) {
-            _processLiveInput(words);
+            _handleSend(words);
           }
         },
       );
     }
   }
 
-  void _stopSpeechListening() async {
+  void _stopListening() async {
     await _speech.stop();
-    setState(() => _isListening = false);
+    if (mounted) setState(() => _isListening = false);
   }
 
-  void _toggleContinuousLive() {
+  void _toggleLiveModal() {
     setState(() {
-      _liveContinuousMode = !_liveContinuousMode;
+      _isLiveActive = !_isLiveActive;
     });
-    if (_liveContinuousMode) {
+    if (_isLiveActive) {
       _startSpeechListening();
     } else {
-      _stopSpeechListening();
-      _stopSpeakingImmediately();
+      _stopListening();
+      _stopSpeaking();
     }
   }
 
-  Future<void> _pickImageFromGallery() async {
-    final picked = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 1024);
+  Future<void> _pickImage(ImageSource source) async {
+    final picked = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1024);
     if (picked != null) {
       final bytes = await picked.readAsBytes();
       setState(() {
-        _attachedImageBase64 = base64Encode(bytes);
+        _selectedImageBase64 = base64Encode(bytes);
       });
     }
   }
 
-  Future<void> _processLiveInput(String userText) async {
+  Future<void> _handleSend([String? forcedText]) async {
+    final text = (forcedText ?? _inputController.text).trim();
+    if (text.isEmpty && _selectedImageBase64 == null && !_isLiveActive) return;
     if (_isLoading) return;
 
-    final lower = userText.toLowerCase().trim();
-    if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower == 'молчать') {
-      await _stopSpeakingImmediately();
-      _textController.clear();
+    final lower = text.toLowerCase();
+    if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи') {
+      await _stopSpeaking();
+      _inputController.clear();
       return;
     }
 
-    _stopSpeechListening();
+    _stopListening();
 
-    String? finalImageBase64 = _attachedImageBase64;
-    _attachedImageBase64 = null;
+    String? imageToSend = _selectedImageBase64;
+    _selectedImageBase64 = null;
 
-    // Если фото из галереи не выбрано, захватываем кадр из живой камеры
-    if (finalImageBase64 == null && _isCameraActive && _cameraController != null && _cameraController!.value.isInitialized) {
+    if (imageToSend == null && _isLiveActive && _cameraController != null && _cameraController!.value.isInitialized) {
       try {
         final XFile file = await _cameraController!.takePicture();
         final bytes = await file.readAsBytes();
-        finalImageBase64 = base64Encode(bytes);
+        imageToSend = base64Encode(bytes);
       } catch (e) {
-        debugPrint("Ошибка захвата кадра: $e");
+        debugPrint("Кадр ошибка: $e");
       }
     }
 
-    final activeSession = _currentSession;
+    final session = _activeSession;
     setState(() {
-      activeSession.messages.add(ChatMessage(
-        text: userText.isEmpty ? "Посмотри на это изображение" : userText,
+      session.messages.add(ChatMessage(
+        text: text.isEmpty ? "Посмотри на изображение" : text,
         isUser: true,
-        imageBase64: finalImageBase64,
+        imageBase64: imageToSend,
       ));
-      if (activeSession.title == "Живой диалог" && userText.isNotEmpty) {
-        activeSession.title = userText.length > 25 ? "${userText.substring(0, 25)}..." : userText;
+      if (session.title == "Новый чат" && text.isNotEmpty) {
+        session.title = text.length > 26 ? "${text.substring(0, 26)}..." : text;
       }
       _isLoading = true;
-      _textController.clear();
+      _inputController.clear();
     });
-    _saveSessions();
+    _saveData();
     _scrollToBottom();
 
     try {
-      List<dynamic> contentPayload = [];
-      contentPayload.add({
+      List<dynamic> content = [];
+      content.add({
         "type": "text",
-        "text": "${userText.isEmpty ? 'Что здесь изображено?' : userText}\n\n(ВАЖНО: Отвечай строго на русском языке, разговорно, кратко и четко!)"
+        "text": "${text.isEmpty ? 'Что здесь изображено?' : text}\n\n(ВАЖНО: Отвечай строго на русском языке, живо, кратко и четко!)"
       });
 
-      if (finalImageBase64 != null) {
-        contentPayload.add({
+      if (imageToSend != null) {
+        content.add({
           "type": "image_url",
-          "image_url": {"url": "data:image/jpeg;base64,$finalImageBase64"}
+          "image_url": {"url": "data:image/jpeg;base64,$imageToSend"}
         });
       }
 
@@ -395,36 +386,35 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $_apiKey',
-          'HTTP-Referer': 'https://github.com/black-pocket',
-          'X-Title': 'BlackPocket Live',
         },
         body: jsonEncode({
           "model": _modelName,
           "messages": [
             {"role": "system", "content": _systemPrompt},
-            {"role": "user", "content": contentPayload}
+            {"role": "user", "content": content}
           ],
         }),
       );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
-        final reply = data['choices'][0]['message']['content'] ?? 'Нет ответа';
-
+        final reply = data['choices'][0]['message']['content'] ?? 'Пустой ответ';
         setState(() {
-          activeSession.messages.add(ChatMessage(text: reply, isUser: false));
+          session.messages.add(ChatMessage(text: reply, isUser: false));
         });
-        _saveSessions();
+        _saveData();
         _speakText(reply);
       } else {
         setState(() {
-          activeSession.messages.add(
-              ChatMessage(text: "Ошибка API (${response.statusCode}): ${response.body}", isUser: false));
+          session.messages.add(ChatMessage(
+            text: "Ошибка API (${response.statusCode}): ${response.body}",
+            isUser: false,
+          ));
         });
       }
     } catch (e) {
       setState(() {
-        activeSession.messages.add(ChatMessage(text: "Ошибка сети: $e", isUser: false));
+        session.messages.add(ChatMessage(text: "Сбой сети: $e", isUser: false));
       });
     } finally {
       setState(() => _isLoading = false);
@@ -433,94 +423,46 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
   }
 
   void _createNewChat() {
-    final newSession = ChatSession(
+    final s = ChatSession(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title: "Живой диалог",
+      title: "Новый чат",
       messages: [],
     );
     setState(() {
-      _sessions.insert(0, newSession);
-      _currentSessionId = newSession.id;
+      _sessions.insert(0, s);
+      _currentSessionId = s.id;
+      _isLiveActive = false;
+      _selectedImageBase64 = null;
     });
-    _saveSessions();
-    Navigator.pop(context);
+    _saveData();
+    if (_scaffoldKey.currentState?.isDrawerOpen ?? false) {
+      Navigator.pop(context);
+    }
   }
 
-  void _switchChat(String id) {
-    setState(() => _currentSessionId = id);
-    _saveSessions();
-    Navigator.pop(context);
-    _scrollToBottom();
-  }
-
-  void _deleteChat(String id) {
-    setState(() {
-      _sessions.removeWhere((s) => s.id == id);
-      if (_sessions.isEmpty) {
-        final fallback = ChatSession(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          title: "Живой диалог",
-          messages: [],
-        );
-        _sessions.add(fallback);
-      }
-      _currentSessionId = _sessions.first.id;
-    });
-    _saveSessions();
-  }
-
-  void _openSettingsDialog() {
-    final urlController = TextEditingController(text: _apiUrl);
-    final keyController = TextEditingController(text: _apiKey);
-    final modelController = TextEditingController(text: _modelName);
-    final systemController = TextEditingController(text: _systemPrompt);
-    double tempSpeechRate = _speechRate;
-
-    showDialog(
+  void _showAttachmentBottomSheet() {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Параметры BlackPocket'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(controller: urlController, decoration: const InputDecoration(labelText: 'API Endpoint')),
-                TextField(controller: keyController, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
-                TextField(controller: modelController, decoration: const InputDecoration(labelText: 'Model Name')),
-                TextField(controller: systemController, decoration: const InputDecoration(labelText: 'System Prompt'), maxLines: 3),
-                const SizedBox(height: 12),
-                Text('Скорость голоса: ${tempSpeechRate.toStringAsFixed(2)}'),
-                Slider(
-                  value: tempSpeechRate,
-                  min: 0.25,
-                  max: 0.75,
-                  divisions: 10,
-                  label: tempSpeechRate.toStringAsFixed(2),
-                  onChanged: (val) {
-                    setDialogState(() => tempSpeechRate = val);
-                    _tts.setSpeechRate(val);
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
-            FilledButton(
-              onPressed: () {
-                setState(() {
-                  _apiUrl = urlController.text.trim();
-                  _apiKey = keyController.text.trim();
-                  _modelName = modelController.text.trim();
-                  _systemPrompt = systemController.text.trim();
-                  _speechRate = tempSpeechRate;
-                });
-                _saveSettings();
+      backgroundColor: const Color(0xFF1E1F24),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt_outlined, color: Colors.blueAccent),
+              title: const Text('Сделать фото'),
+              onTap: () {
                 Navigator.pop(context);
+                _pickImage(ImageSource.camera);
               },
-              child: const Text('Сохранить'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined, color: Colors.purpleAccent),
+              title: const Text('Выбрать из галереи'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
             ),
           ],
         ),
@@ -528,56 +470,554 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
     );
   }
 
-  @override
-  void dispose() {
-    _cameraController?.dispose();
-    _speech.stop();
-    _tts.stop();
-    super.dispose();
+  void _showSettingsModal() {
+    final urlCtrl = TextEditingController(text: _apiUrl);
+    final keyCtrl = TextEditingController(text: _apiKey);
+    final modelCtrl = TextEditingController(text: _modelName);
+    final promptCtrl = TextEditingController(text: _systemPrompt);
+    double rate = _speechRate;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF131316),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModal) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('Настройки Gemini BlackPocket', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 16),
+                TextField(controller: urlCtrl, decoration: const InputDecoration(labelText: 'API Endpoint URL')),
+                TextField(controller: keyCtrl, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
+                TextField(controller: modelCtrl, decoration: const InputDecoration(labelText: 'Model Name')),
+                TextField(controller: promptCtrl, decoration: const InputDecoration(labelText: 'System Prompt'), maxLines: 2),
+                const SizedBox(height: 12),
+                Text('Скорость голоса: ${rate.toStringAsFixed(2)}'),
+                Slider(
+                  value: rate,
+                  min: 0.25,
+                  max: 0.75,
+                  divisions: 10,
+                  onChanged: (v) {
+                    setModal(() => rate = v);
+                    _tts.setSpeechRate(v);
+                  },
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _apiUrl = urlCtrl.text.trim();
+                        _apiKey = keyCtrl.text.trim();
+                        _modelName = modelCtrl.text.trim();
+                        _systemPrompt = promptCtrl.text.trim();
+                        _speechRate = rate;
+                      });
+                      _saveData();
+                      Navigator.pop(context);
+                    },
+                    child: const Text('Сохранить', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final activeSession = _currentSession;
-    final messages = activeSession.messages;
+    final session = _activeSession;
+    final messages = session.messages;
 
     return Scaffold(
-      drawer: Drawer(
-        backgroundColor: const Color(0xFF141416),
+      key: _scaffoldKey,
+      drawer: _buildGeminiDrawer(),
+      body: Stack(
+        children: [
+          // Основной фон: глубокий синий градиент Gemini снизу вверх
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF030508),
+                  Color(0xFF070B14),
+                  Color(0xFF0A142B),
+                ],
+              ),
+            ),
+          ),
+
+          SafeArea(
+            child: Column(
+              children: [
+                _buildTopAppBar(),
+
+                Expanded(
+                  child: messages.isEmpty
+                      ? _buildWelcomeCenter()
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.only(left: 16, right: 16, top: 10, bottom: 90),
+                          itemCount: messages.length,
+                          itemBuilder: (context, idx) {
+                            final m = messages[idx];
+                            return Align(
+                              alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(vertical: 8),
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
+                                decoration: BoxDecoration(
+                                  color: m.isUser ? const Color(0xFF1E293B) : const Color(0xFF111827),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: m.isUser ? null : Border.all(color: Colors.white12),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (m.imageBase64 != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(bottom: 8.0),
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(12),
+                                          child: Image.memory(
+                                            base64Decode(m.imageBase64!),
+                                            height: 180,
+                                            width: double.infinity,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        ),
+                                      ),
+                                    m.isUser
+                                        ? Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
+                                        : MarkdownBody(
+                                            data: m.text,
+                                            styleSheet: MarkdownStyleSheet(
+                                              p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
+                                            ),
+                                          ),
+                                    if (!m.isUser)
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.end,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
+                                            onPressed: () {
+                                              Clipboard.setData(ClipboardData(text: m.text));
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                const SnackBar(content: Text('Скопировано')),
+                                              );
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: Icon(
+                                              _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                                              size: 18,
+                                              color: _isSpeaking ? Colors.blueAccent : Colors.grey,
+                                            ),
+                                            onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+
+          // Превью прикрепленного изображения
+          if (_selectedImageBase64 != null)
+            Positioned(
+              bottom: 95,
+              left: 20,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+                child: Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(base64Decode(_selectedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text('Фото прикреплено', style: TextStyle(fontSize: 13, color: Colors.white70)),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () => setState(() => _selectedImageBase64 = null),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Нижняя плавающая капсула ввода (Gemini Pill Bar)
+          Positioned(
+            left: 18,
+            right: 18,
+            bottom: 20,
+            child: _buildGeminiPillBar(),
+          ),
+
+          // Полноэкранный живой режим Live Mode (с видоискателем камеры и волной)
+          if (_isLiveActive) _buildLiveOverlay(),
+
+          // Кнопка быстрой остановки речи "Стоп"
+          if (_isSpeaking && !_isLiveActive)
+            Positioned(
+              bottom: 95,
+              right: 20,
+              child: FloatingActionButton.extended(
+                backgroundColor: const Color(0xFF2563EB),
+                icon: const Icon(Icons.stop, color: Colors.white),
+                label: const Text('СТОП', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                onPressed: _stopSpeaking,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // Верхняя панель Gemini
+  Widget _buildTopAppBar() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.menu, size: 26, color: Colors.white70),
+            onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+          ),
+          const SizedBox(width: 6),
+          Row(
+            children: const [
+              Text('Gemini Flash', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+              SizedBox(width: 4),
+              Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 20),
+            ],
+          ),
+          const Spacer(),
+          IconButton(
+            icon: const Icon(Icons.auto_awesome_outlined, color: Colors.white70),
+            onPressed: () {},
+          ),
+          GestureDetector(
+            onTap: _showSettingsModal,
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.blueAccent, width: 2),
+                color: Colors.redAccent.shade700,
+              ),
+              child: const Center(
+                child: Text('A', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Центральный блок "ALEKSANDR, что дальше?" со звёздочкой Gemini
+  Widget _buildWelcomeCenter() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // Звезда-кристалл Gemini (градиент)
+          ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              colors: [Color(0xFF4285F4), Color(0xFF9B72CF), Color(0xFFD96570), Color(0xFFF4B400)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ).createShader(bounds),
+            child: const Icon(Icons.auto_awesome, size: 64, color: Colors.white),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'ALEKSANDR, что\nдальше?',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 32,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+              letterSpacing: 0.5,
+              height: 1.25,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Нижняя капсула входа (Gemini Pill Bar)
+  Widget _buildGeminiPillBar() {
+    return Container(
+      height: 58,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E2128),
+        borderRadius: BorderRadius.circular(32),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.5),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.add, color: Colors.white70, size: 26),
+            onPressed: _showAttachmentBottomSheet,
+          ),
+          Expanded(
+            child: TextField(
+              controller: _inputController,
+              textCapitalization: TextCapitalization.sentences,
+              style: const TextStyle(fontSize: 16, color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Спросить ...',
+                hintStyle: TextStyle(color: Colors.white54, fontSize: 16),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+              ),
+              onSubmitted: (txt) => _handleSend(txt),
+            ),
+          ),
+          IconButton(
+            icon: Icon(
+              _isListening ? Icons.mic : Icons.mic_none,
+              color: _isListening ? Colors.redAccent : Colors.white70,
+              size: 24,
+            ),
+            onPressed: () {
+              if (_isListening) {
+                _stopListening();
+              } else {
+                _startSpeechListening();
+              }
+            },
+          ),
+          const SizedBox(width: 4),
+          // Синяя круглая кнопка Live со звуковой волной
+          GestureDetector(
+            onTap: _toggleLiveModal,
+            child: Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                color: Color(0xFF1D4ED8),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.graphic_eq, color: Colors.white, size: 22),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Окно живого диалога Gemini Live
+  Widget _buildLiveOverlay() {
+    return Container(
+      color: const Color(0xFF070B14).withOpacity(0.96),
+      child: SafeArea(
         child: Column(
           children: [
-            Container(
-              padding: const EdgeInsets.only(top: 50, left: 16, right: 16, bottom: 16),
-              color: Colors.black45,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               child: Row(
                 children: [
-                  const Icon(Icons.videocam, color: Colors.deepPurpleAccent),
-                  const SizedBox(width: 10),
-                  const Text('Сессии BlackPocket', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 28),
+                    onPressed: _toggleLiveModal,
+                  ),
                   const Spacer(),
                   IconButton(
-                    icon: const Icon(Icons.add_comment_outlined, color: Colors.deepPurpleAccent),
-                    onPressed: _createNewChat,
+                    icon: Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: Colors.white70),
+                    onPressed: () => setState(() => _showLiveCamera = !_showLiveCamera),
                   ),
                 ],
               ),
             ),
-            ListTile(
-              leading: const Icon(Icons.add, color: Colors.white70),
-              title: const Text('Новая Live-сессия', style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: _createNewChat,
+
+            if (_showLiveCamera && _cameraController != null && _cameraController!.value.isInitialized)
+              Container(
+                height: 230,
+                width: double.infinity,
+                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 2),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: CameraPreview(_cameraController!),
+                ),
+              ),
+
+            const Spacer(),
+
+            // Анимированная звезда Live
+            ShaderMask(
+              shaderCallback: (bounds) => const LinearGradient(
+                colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
+              ).createShader(bounds),
+              child: const Icon(Icons.auto_awesome, size: 80, color: Colors.white),
             ),
-            const Divider(color: Colors.white12),
+            const SizedBox(height: 20),
+            Text(
+              _isSpeaking
+                  ? "Gemini говорит..."
+                  : (_isListening ? "Слушаю вас..." : "Обработка запроса..."),
+              style: const TextStyle(fontSize: 18, color: Colors.white70, fontWeight: FontWeight.w500),
+            ),
+
+            const Spacer(),
+
+            Padding(
+              padding: const EdgeInsets.only(bottom: 30),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  FloatingActionButton.large(
+                    backgroundColor: _isSpeaking ? Colors.redAccent : const Color(0xFF1D4ED8),
+                    onPressed: () {
+                      if (_isSpeaking) {
+                        _stopSpeaking();
+                      } else if (!_isListening) {
+                        _startSpeechListening();
+                      }
+                    },
+                    child: Icon(_isSpeaking ? Icons.stop : Icons.mic, size: 36, color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Боковое меню (Drawer) в точности как на скриншоте Gemini
+  Widget _buildGeminiDrawer() {
+    return Drawer(
+      backgroundColor: const Color(0xFF0B0F17),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              child: Row(
+                children: [
+                  const Text('Gemini', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+                  const Spacer(),
+                  IconButton(icon: const Icon(Icons.search, color: Colors.white70), onPressed: () {}),
+                  IconButton(icon: const Icon(Icons.close, color: Colors.white70), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+            ),
+
+            // Кнопка "Новый чат"
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: InkWell(
+                onTap: _createNewChat,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E2128),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.edit_outlined, color: Colors.white, size: 20),
+                      SizedBox(width: 14),
+                      Text('Новый чат', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // Пункты меню
+            _drawerTile(Icons.grid_view, 'Библиотека'),
+            _drawerTile(Icons.schedule, 'Запланировано'),
+            _drawerTile(Icons.school_outlined, 'Учащиеся'),
+            _drawerTile(Icons.more_horiz, 'Ещё'),
+
+            const SizedBox(height: 12),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              child: Text('Блокноты', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+            _drawerTile(Icons.add, 'Новый блокнот'),
+
+            const Divider(color: Colors.white12, height: 24),
+
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: Text('Все', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
+            ),
+
+            // Список чатов пользователя
             Expanded(
               child: ListView.builder(
+                padding: EdgeInsets.zero,
                 itemCount: _sessions.length,
-                itemBuilder: (context, index) {
-                  final s = _sessions[index];
+                itemBuilder: (context, idx) {
+                  final s = _sessions[idx];
                   final isCurrent = s.id == _currentSessionId;
                   return ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20),
                     leading: Icon(
                       Icons.chat_bubble_outline,
-                      color: isCurrent ? Colors.deepPurpleAccent : Colors.grey,
+                      size: 18,
+                      color: isCurrent ? Colors.blueAccent : Colors.white60,
                     ),
                     title: Text(
                       s.title,
@@ -588,297 +1028,71 @@ class _LiveAssistantScreenState extends State<LiveAssistantScreen> {
                         fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
                       ),
                     ),
-                    trailing: _sessions.length > 1
-                        ? IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
-                            onPressed: () => _deleteChat(s.id),
-                          )
-                        : null,
-                    selected: isCurrent,
-                    selectedTileColor: Colors.deepPurple.withOpacity(0.15),
-                    onTap: () => _switchChat(s.id),
+                    trailing: const Icon(Icons.push_pin_outlined, size: 16, color: Colors.white30),
+                    onTap: () {
+                      setState(() => _currentSessionId = s.id);
+                      _saveData();
+                      Navigator.pop(context);
+                      _scrollToBottom();
+                    },
                   );
                 },
+              ),
+            ),
+
+            // Подвал профиля "ALEKSANDR Ku81 PRO"
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Colors.white12)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.blueAccent, width: 2),
+                      color: Colors.redAccent.shade700,
+                    ),
+                    child: const Center(
+                      child: Text('A', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Text('ALEKSANDR Ku81', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
+                      Text('PRO', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    ],
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, color: Colors.white70),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _showSettingsModal();
+                    },
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-      appBar: AppBar(
-        title: Text(activeSession.title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-        actions: [
-          IconButton(
-            icon: Icon(_isCameraActive ? Icons.videocam : Icons.videocam_off,
-                color: _isCameraActive ? Colors.deepPurpleAccent : Colors.grey),
-            tooltip: 'Вкл/Выкл видоискатель',
-            onPressed: () => setState(() => _isCameraActive = !_isCameraActive),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: _openSettingsDialog,
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              // Видоискатель камеры Live View
-              if (_isCameraActive && _cameraController != null && _cameraController!.value.isInitialized)
-                Container(
-                  height: 200,
-                  width: double.infinity,
-                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: _liveContinuousMode ? Colors.redAccent : Colors.deepPurpleAccent.withOpacity(0.5),
-                      width: 2,
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        CameraPreview(_cameraController!),
-                        Positioned(
-                          top: 10,
-                          left: 10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 8,
-                                  height: 8,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: _liveContinuousMode ? Colors.redAccent : Colors.greenAccent,
-                                  ),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  _liveContinuousMode ? "LIVE VISION" : "CAMERA ACTIVE",
-                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+    );
+  }
 
-              if (_liveContinuousMode)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  color: Colors.redAccent.withOpacity(0.12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.graphic_eq, color: Colors.redAccent, size: 20),
-                      const SizedBox(width: 8),
-                      Text(
-                        _isSpeaking
-                            ? "BlackPocket отвечает (скажи «Стоп» для сброса)"
-                            : (_isListening ? "Слушаю твой голос..." : "Обработка..."),
-                        style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-
-              // Превью прикрепленного фото из галереи
-              if (_attachedImageBase64 != null)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  color: Colors.white10,
-                  child: Row(
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Image.memory(base64Decode(_attachedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text('Фото из галереи прикреплено', style: TextStyle(fontSize: 13, color: Colors.white70)),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () => setState(() => _attachedImageBase64 = null),
-                      ),
-                    ],
-                  ),
-                ),
-
-              // Список сообщений
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = messages[index];
-                    return Align(
-                      alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 6),
-                        padding: const EdgeInsets.all(12),
-                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
-                        decoration: BoxDecoration(
-                          color: msg.isUser ? Colors.deepPurple.shade800 : const Color(0xFF1E1E20),
-                          borderRadius: BorderRadius.circular(16),
-                          border: msg.isUser ? null : Border.all(color: Colors.white10),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (msg.imageBase64 != null)
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 8.0),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(10),
-                                  child: Image.memory(
-                                    base64Decode(msg.imageBase64!),
-                                    height: 140,
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
-                                  ),
-                                ),
-                              ),
-                            msg.isUser
-                                ? Text(msg.text, style: const TextStyle(fontSize: 16, color: Colors.white))
-                                : MarkdownBody(
-                                    data: msg.text,
-                                    styleSheet: MarkdownStyleSheet(
-                                      p: const TextStyle(fontSize: 16, color: Color(0xFFEEEEEE), height: 1.4),
-                                    ),
-                                  ),
-                            if (!msg.isUser)
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
-                                    onPressed: () {
-                                      Clipboard.setData(ClipboardData(text: msg.text));
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(content: Text('Скопировано')),
-                                      );
-                                    },
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
-                                      size: 18,
-                                      color: _isSpeaking ? Colors.redAccent : Colors.grey,
-                                    ),
-                                    onPressed: () => _isSpeaking ? _stopSpeakingImmediately() : _speakText(msg.text),
-                                  ),
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-
-              if (_isLoading)
-                const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: LinearProgressIndicator(minHeight: 2)),
-
-              // Нижняя панель
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                color: const Color(0xFF0F0F10),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.photo_library_outlined, color: Colors.white70),
-                      tooltip: 'Прикрепить фото из галереи',
-                      onPressed: _pickImageFromGallery,
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        _liveContinuousMode ? Icons.headset : Icons.headset_off_outlined,
-                        color: _liveContinuousMode ? Colors.redAccent : Colors.grey,
-                      ),
-                      tooltip: 'Live режим диалога',
-                      onPressed: _toggleContinuousLive,
-                    ),
-                    Expanded(
-                      child: TextField(
-                        controller: _textController,
-                        textCapitalization: TextCapitalization.sentences,
-                        style: const TextStyle(fontSize: 15),
-                        decoration: InputDecoration(
-                          hintText: _liveContinuousMode
-                              ? 'Скажи «Стоп» чтобы прервать...'
-                              : (_isListening ? 'Слушаю...' : 'Сообщение...'),
-                          filled: true,
-                          fillColor: const Color(0xFF1B1B1E),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                        ),
-                        onSubmitted: (txt) {
-                          if (txt.trim().isNotEmpty || _attachedImageBase64 != null) {
-                            _processLiveInput(txt.trim());
-                          }
-                        },
-                      ),
-                    ),
-                    IconButton(
-                      icon: Icon(
-                        _isListening ? Icons.mic : Icons.mic_none,
-                        color: _isListening ? Colors.redAccent : Colors.white70,
-                      ),
-                      onPressed: () {
-                        if (_isListening) {
-                          _stopSpeechListening();
-                        } else {
-                          _startSpeechListening();
-                        }
-                      },
-                    ),
-                    IconButton.filled(
-                      onPressed: _isLoading
-                          ? null
-                          : () {
-                              final txt = _textController.text.trim();
-                              if (txt.isNotEmpty || _attachedImageBase64 != null) {
-                                _processLiveInput(txt);
-                              }
-                            },
-                      icon: const Icon(Icons.arrow_upward),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          // Плавающая кнопка мгновенной остановки речи (СТОП)
-          if (_isSpeaking)
-            Positioned(
-              bottom: 80,
-              right: 20,
-              child: FloatingActionButton.extended(
-                backgroundColor: Colors.redAccent,
-                icon: const Icon(Icons.stop, color: Colors.white),
-                label: const Text('СТОП', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                onPressed: _stopSpeakingImmediately,
-              ),
-            ),
-        ],
-      ),
+  Widget _drawerTile(IconData icon, String title) {
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+      leading: Icon(icon, color: Colors.white70, size: 22),
+      title: Text(title, style: const TextStyle(color: Colors.white, fontSize: 15)),
+      onTap: () {},
     );
   }
 }
