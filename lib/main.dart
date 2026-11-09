@@ -14,7 +14,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 
 List<CameraDescription> _availableCameras = [];
 
-// Жестко зашитые параметры Google Gemini API
+// Вшитые параметры Google Gemini API
 const String _hardcodedApiKey = "AQ.Ab8RN6INDiAIoK2cYOusWKutVqD0XFZpPLDOyYAriMWojxlNyQ";
 const String _hardcodedModel = "gemini-3.8-flash";
 const String _hardcodedEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -213,7 +213,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // Сброс старых битых сохраненных URL и ключей
     if (prefs.getString('bp_engine_version') != 'v3_native_gemini') {
       await prefs.setString('bp_engine_version', 'v3_native_gemini');
     }
@@ -417,7 +416,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
       final combinedSystemPrompt = "$_systemPrompt\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      List> userParts = [];
+      final userParts = >[];
       userParts.add({
         "text": userFullPrompt.isEmpty ? "Что здесь изображено? Ответь кратко на русском." : userFullPrompt
       });
@@ -431,7 +430,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         });
       }
 
-      // Прямой официальный вызов Gemini API v1beta
       final targetUri = Uri.parse("$_hardcodedEndpoint/$_hardcodedModel:generateContent?key=$_hardcodedApiKey");
 
       final response = await http.post(
@@ -753,7 +751,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                             icon: Icon(
                                               _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
                                               size: 18,
-                                              color: _isSpeaking ? Colors.blueAccent : Colors.grey,
+                                              color: Colors.blueAccent,
                                             ),
                                             onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
                                           ),
