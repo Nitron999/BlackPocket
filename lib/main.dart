@@ -76,12 +76,18 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isListening = false;
   bool _isSpeaking = false;
   bool _autoSpeak = true;
+  double _speechRate = 0.9;
   File? _selectedImage;
 
   String _apiUrl = "https://openrouter.ai/api/v1/chat/completions";
   String _apiKey = "";
   String _modelName = "openrouter/free";
-  String _systemPrompt = "Ты — умный голосовой ассистент BlackPocket. Отвечай точно, грамотно, по делу и на русском языке.";
+  String _systemPrompt =
+      "Ты — BlackPocket, личный интеллектуальный партнер и надежный напарник. "
+      "Общайся естественно, открыто, уверенно и с легким юмором, как опытный знающий друг. "
+      "Без лишней воды, шаблонных вежливостей и роботизированных вступлений. "
+      "Отвечай сразу по существу, глубоко понимай техническую суть (софт, железо, сети, авто) "
+      "и формулируй мысли четким, понятным живым языком.";
 
   @override
   void initState() {
@@ -93,7 +99,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initTts() async {
     await _tts.setLanguage("ru-RU");
     await _tts.setPitch(1.0);
-    await _tts.setSpeechRate(0.9);
+    await _tts.setSpeechRate(_speechRate);
     _tts.setCompletionHandler(() {
       setState(() => _isSpeaking = false);
     });
@@ -107,6 +113,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _modelName = prefs.getString('modelName') ?? _modelName;
       _systemPrompt = prefs.getString('systemPrompt') ?? _systemPrompt;
       _autoSpeak = prefs.getBool('autoSpeak') ?? true;
+      _speechRate = prefs.getDouble('speechRate') ?? 0.9;
 
       final historyJson = prefs.getString('chat_history');
       if (historyJson != null && historyJson.isNotEmpty) {
@@ -115,6 +122,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _messages.addAll(decoded.map((e) => ChatMessage.fromJson(e)).toList());
       }
     });
+    await _tts.setSpeechRate(_speechRate);
     _scrollToBottom();
   }
 
@@ -131,6 +139,8 @@ class _ChatScreenState extends State<ChatScreen> {
     await prefs.setString('modelName', _modelName);
     await prefs.setString('systemPrompt', _systemPrompt);
     await prefs.setBool('autoSpeak', _autoSpeak);
+    await prefs.setDouble('speechRate', _speechRate);
+    await _tts.setSpeechRate(_speechRate);
   }
 
   void _scrollToBottom() {
@@ -151,9 +161,9 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => _isSpeaking = false);
       return;
     }
-    // Очищаем markdown-разметку перед воспроизведением речи
     final cleanText = text.replaceAll(RegExp(r'[\*\_#`>]'), '');
     setState(() => _isSpeaking = true);
+    await _tts.setSpeechRate(_speechRate);
     await _tts.speak(cleanText);
   }
 
@@ -188,7 +198,7 @@ class _ChatScreenState extends State<ChatScreen> {
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Текст скопирован в буфер обмена'),
+        content: Text('Скопировано в буфер обмена'),
         duration: Duration(seconds: 1),
       ),
     );
@@ -198,8 +208,8 @@ class _ChatScreenState extends State<ChatScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Очистить диалог?'),
-        content: const Text('Вся история сообщений будет удалена с устройства.'),
+        title: const Text('Очистить историю?'),
+        content: const Text('Все сообщения будут удалены с устройства.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
           FilledButton(
@@ -226,7 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _messages.add(ChatMessage(
-        text: text.isEmpty ? "Что на этой картинке?" : text,
+        text: text,
         isUser: true,
         imagePath: imagePath,
       ));
@@ -241,7 +251,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (text.isNotEmpty) {
         contentPayload.add({"type": "text", "text": text});
       } else {
-        contentPayload.add({"type": "text", "text": "Опиши подробно, что изображено на фото."});
+        contentPayload.add({
+          "type": "text",
+          "text": "Внимательно изучи это изображение и расскажи главное своими словами."
+        });
       }
 
       if (currentImage != null) {
@@ -309,6 +322,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final modelController = TextEditingController(text: _modelName);
     final systemController = TextEditingController(text: _systemPrompt);
     bool tempAutoSpeak = _autoSpeak;
+    double tempSpeechRate = _speechRate;
 
     showDialog(
       context: context,
@@ -318,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextField(controller: urlController, decoration: const InputDecoration(labelText: 'API Endpoint URL')),
                 TextField(controller: keyController, decoration: const InputDecoration(labelText: 'API Key'), obscureText: true),
@@ -329,6 +344,16 @@ class _ChatScreenState extends State<ChatScreen> {
                   title: const Text('Автоозвучка ответов'),
                   value: tempAutoSpeak,
                   onChanged: (val) => setDialogState(() => tempAutoSpeak = val),
+                ),
+                const SizedBox(height: 8),
+                Text('Скорость голоса: ${tempSpeechRate.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 14)),
+                Slider(
+                  value: tempSpeechRate,
+                  min: 0.5,
+                  max: 1.5,
+                  divisions: 10,
+                  label: '${tempSpeechRate.toStringAsFixed(1)}x',
+                  onChanged: (val) => setDialogState(() => tempSpeechRate = val),
                 ),
               ],
             ),
@@ -343,6 +368,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   _modelName = modelController.text.trim();
                   _systemPrompt = systemController.text.trim();
                   _autoSpeak = tempAutoSpeak;
+                  _speechRate = tempSpeechRate;
                 });
                 _saveSettings();
                 Navigator.pop(context);
@@ -384,7 +410,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         Icon(Icons.record_voice_over_outlined, size: 52, color: Colors.deepPurple.shade300),
                         const SizedBox(height: 14),
-                        const Text('Готов к диалогу. Задай вопрос или пришли фото.', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                        const Text('На связи. Задай вопрос, скинь фото или скажи голосом.',
+                            style: TextStyle(color: Colors.grey, fontSize: 16)),
                       ],
                     ),
                   )
@@ -416,20 +443,21 @@ class _ChatScreenState extends State<ChatScreen> {
                                     child: Image.file(File(msg.imagePath!), height: 180, width: double.infinity, fit: BoxFit.cover),
                                   ),
                                 ),
-                              msg.isUser
-                                  ? Text(
-                                      msg.text,
-                                      style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.35),
-                                    )
-                                  : MarkdownBody(
-                                      data: msg.text,
-                                      styleSheet: MarkdownStyleSheet(
-                                        p: const TextStyle(fontSize: 17, height: 1.45, color: Color(0xFFEDEDED)),
-                                        h1: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                        h2: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                                        code: const TextStyle(fontSize: 15, backgroundColor: Colors.black26),
+                              if (msg.text.isNotEmpty)
+                                msg.isUser
+                                    ? Text(
+                                        msg.text,
+                                        style: const TextStyle(color: Colors.white, fontSize: 17, height: 1.35),
+                                      )
+                                    : MarkdownBody(
+                                        data: msg.text,
+                                        styleSheet: MarkdownStyleSheet(
+                                          p: const TextStyle(fontSize: 17, height: 1.45, color: Color(0xFFEDEDED)),
+                                          h1: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                          h2: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                          code: const TextStyle(fontSize: 15, backgroundColor: Colors.black26),
+                                        ),
                                       ),
-                                    ),
                               if (!msg.isUser) ...[
                                 const SizedBox(height: 8),
                                 const Divider(height: 1, color: Colors.white10),
