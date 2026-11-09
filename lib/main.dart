@@ -439,28 +439,46 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
       final targetUri = Uri.parse("$endpointBase/$_modelName:generateContent");
 
-      final response = await http.post(
-        targetUri,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': cleanKey,
-        },
-        body: jsonEncode({
-          "contents": [
-            {
-              "role": "user",
-              "parts": userParts,
-            }
-          ],
-          "systemInstruction": {
-            "parts": [
-              {"text": combinedSystemPrompt}
-            ]
-          }
-        }),
-      ).timeout(const Duration(seconds: 20));
+      http.Response? response;
+      const int maxRetries = 3;
 
-      if (response.statusCode == 200) {
+      for (int attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          response = await http.post(
+            targetUri,
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': cleanKey,
+            },
+            body: jsonEncode({
+              "contents": [
+                {
+                  "role": "user",
+                  "parts": userParts,
+                }
+              ],
+              "systemInstruction": {
+                "parts": [
+                  {"text": combinedSystemPrompt}
+                ]
+              }
+            }),
+          ).timeout(const Duration(seconds: 30));
+
+          if (response.statusCode != 503) {
+            break;
+          }
+
+          if (attempt < maxRetries - 1) {
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        } on TimeoutException {
+          if (attempt == maxRetries - 1) rethrow;
+          await Future.delayed(const Duration(seconds: 2));
+        }
+      }
+
+      if (response != null && response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         String reply = 'Пустой ответ от Gemini';
 
@@ -477,7 +495,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         });
         _saveData();
         _speakText(reply);
-      } else {
+      } else if (response != null) {
         final errData = jsonDecode(utf8.decode(response.bodyBytes));
         final errMsg = errData['error']?['message'] ?? response.body;
         setState(() {
@@ -486,11 +504,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
             isUser: false,
           ));
         });
+      } else {
+        setState(() {
+          session.messages.add(ChatMessage(
+            text: "Сервер не вернул ответ. Проверьте сеть или VPN.",
+            isUser: false,
+          ));
+        });
       }
     } on TimeoutException {
       setState(() {
         session.messages.add(ChatMessage(
-          text: "Таймаут соединения (20 сек). Сервер не ответил. Проверь, включен ли VPN на телефоне.",
+          text: "Таймаут соединения (30 сек). Сервер не ответил. Проверь VPN или смени локацию сервера.",
           isUser: false,
         ));
       });
@@ -658,7 +683,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                 TextField(
                   controller: modelCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Имя модели (по умолчанию gemini-3.8-flash)',
+                    labelText: 'Имя модели (gemini-3.8-flash)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -828,7 +853,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
                                             icon: Icon(
                                               _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
                                               size: 18,
-                                              color: _isSpeaking ? Colors.blueAccent : Colors.grey,
+                                              color: Colors.blueAccent,
                                             ),
                                             onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
                                           ),
