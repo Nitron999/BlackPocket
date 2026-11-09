@@ -81,8 +81,8 @@ final List<AgentPreset> _availableAgents = [
         "АЛГОРИТМ РАБОТЫ: "
         "1. Четко определяй номера счетов/заказов, артикулы, наименования товаров и количество. "
         "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
-        "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
-        "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
+        "3. ВСЕГДА выводи итоговый результат в виде готовой таблицы (Markdown-таблица с разделителями '|' или CSV с разделителем ';') ВНУТРИ БЛОКА КОДА Markdown (```csv или ```markdown). "
+        "Это позволит приложению упаковать результат в настоящий Excel-файл (.xlsx) для сохранения на устройство. "
         "В начале давай краткую сводку: сколько позиций обработано и общее количество. "
         "Если пользователь только загрузил файл(ы) без команды — ничего не анализируй и жди его прямого указания.",
   ),
@@ -370,8 +370,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v22_multi_file_and_null_safe') {
-      await prefs.setString('bp_clean_migration', 'v22_multi_file_and_null_safe');
+    if (migrationTag != 'v23_real_xlsx_generator') {
+      await prefs.setString('bp_clean_migration', 'v23_real_xlsx_generator');
     }
 
     setState(() {
@@ -539,7 +539,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  // Безопасный парсинг Excel без крашей на пустых ячейках
   String _parseExcelFile(List<int> bytes) {
     try {
       final excel = xl.Excel.decodeBytes(bytes);
@@ -562,13 +561,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             }
           }
 
-          // Пропускаем полностью пустые строки
           if (rowValues.every((val) => val.isEmpty)) continue;
 
           buffer.writeln(rowValues.join(" | "));
           rowCount++;
           if (rowCount > 400) {
-            buffer.writeln("... (показаны первые 400 строк листа для сохранения лимита памяти)");
+            buffer.writeln("... (показаны первые 400 строк листа для сохранения памяти)");
             break;
           }
         }
@@ -583,7 +581,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  // Выбор сразу нескольких файлов одновременно
   Future<void> _pickMultipleFiles() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -634,43 +631,97 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "csv"]) async {
+  Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "xlsx"]) async {
     try {
       HapticFeedback.mediumImpact();
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final targetDir = await downloadsDir.exists() ? downloadsDir : Directory.systemTemp;
 
-      String ext = defaultExt;
       if (codeSnippet.trim().startsWith('{') || codeSnippet.trim().startsWith('[')) {
-        ext = "json";
+        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.json";
+        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
+        _showSavedToast(fileName);
+        return;
       } else if (codeSnippet.contains('rules:') || codeSnippet.contains('proxies:')) {
-        ext = "yaml";
+        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.yaml";
+        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
+        _showSavedToast(fileName);
+        return;
       } else if (codeSnippet.contains('import ') || codeSnippet.contains('def ')) {
-        ext = "py";
-      } else if (codeSnippet.contains(';') || codeSnippet.contains(',')) {
-        ext = "csv";
+        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.py";
+        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
+        _showSavedToast(fileName);
+        return;
       }
 
-      final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.$ext";
-      final file = File('${targetDir.path}/$fileName');
-      await file.writeAsString(codeSnippet);
+      final excel = xl.Excel.createExcel();
+      final sheetName = excel.getDefaultSheet() ?? 'Лист1';
+      final sheet = excel[sheetName];
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('💾 Сохранено в Загрузки: $fileName'),
-          backgroundColor: Colors.green.shade800,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      final lines = const LineSplitter().convert(codeSnippet.trim());
+      int rowIdx = 0;
+
+      for (final line in lines) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        if (RegExp(r'^\|?\s*[-:]+[-|\s:]*$').hasMatch(trimmed)) continue;
+
+        List<String> cells = [];
+        if (trimmed.contains('|')) {
+          cells = trimmed.split('|').map((c) => c.trim()).toList();
+          if (cells.isNotEmpty && cells.first.isEmpty) cells.removeAt(0);
+          if (cells.isNotEmpty && cells.last.isEmpty) cells.removeLast();
+        } else if (trimmed.contains(';')) {
+          cells = trimmed.split(';').map((c) => c.trim()).toList();
+        } else if (trimmed.contains('\t')) {
+          cells = trimmed.split('\t').map((c) => c.trim()).toList();
+        } else if (trimmed.contains(',')) {
+          cells = trimmed.split(',').map((c) => c.trim()).toList();
+        } else {
+          cells = [trimmed];
+        }
+
+        for (int colIdx = 0; colIdx < cells.length; colIdx++) {
+          final cellValue = cells[colIdx];
+          final cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: colIdx, rowIndex: rowIdx));
+          
+          final numVal = num.tryParse(cellValue.replaceAll(' ', '').replaceAll(',', '.'));
+          if (numVal != null && !cellValue.startsWith('0') && cellValue.length < 11) {
+            cell.value = xl.DoubleCellValue(numVal.toDouble());
+          } else {
+            cell.value = xl.TextCellValue(cellValue);
+          }
+        }
+        rowIdx++;
+      }
+
+      final fileBytes = excel.save();
+      if (fileBytes != null) {
+        final fileName = "BlackPocket_Сводка_${DateTime.now().millisecondsSinceEpoch}.xlsx";
+        final file = File('${targetDir.path}/$fileName');
+        await file.writeAsBytes(fileBytes);
+        _showSavedToast(fileName);
+      }
     } catch (e) {
+      debugPrint("Ошибка сохранения Excel: $e");
       Clipboard.setData(ClipboardData(text: codeSnippet));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Скопировано в буфер (ошибка сохранения: $e)'),
+          content: Text('Скопировано в буфер (ошибка: $e)'),
           backgroundColor: const Color(0xFF1E293B),
         ),
       );
     }
+  }
+
+  void _showSavedToast(String fileName) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('📊 Таблица Excel сохранена в Загрузки: $fileName'),
+        backgroundColor: Colors.green.shade800,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   void _renameSession(String id, String currentTitle) {
@@ -833,7 +884,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
     final previousHistory = session.messages.toList();
 
-    // В чате отображается СТРОГО набранный текст пользователя
     final displayPrompt = text;
     final sentFileNames = docsToSend.map((d) => d.fileName).toList();
 
@@ -876,7 +926,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final combinedSystemPrompt =
           "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
-      // Если пользователь не написал текст к файлам — требуем от ИИ ждать прямой команды
       String finalInstruction = buffer.toString().trim();
       if (text.isEmpty && docsToSend.isNotEmpty) {
         final fileListStr = sentFileNames.join(", ");
@@ -1564,7 +1613,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             ),
           ),
 
-          // Плашка предпросмотра прикрепленных файлов (мультизагрузка)
           if (_selectedImageBase64 != null || _attachedDocs.isNotEmpty)
             Positioned(
               bottom: 95,
