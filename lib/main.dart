@@ -77,7 +77,7 @@ final List<AgentPreset> _availableAgents = [
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
         "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости. "
-        "Идеально подходи для голосового режима и быстрых ответов.",
+        "Если пользователь просит собрать, поправить или выдать конфиг/файл, ВСЕГДА прикладывай ПОЛНЫЙ готовый текст файла внутри блока кода Markdown с указанием формата (например, ```yaml). Никогда не говори, что не умеешь скидывать файлы — отдавай их полностью в блоке кода!",
   ),
   const AgentPreset(
     id: "engineer",
@@ -87,8 +87,8 @@ final List<AgentPreset> _availableAgents = [
     systemInstruction:
         "Ты — ведущий инженер-архитектор и разработчик систем. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Давай точный технический анализ, проектируй надежные решения, "
-        "пиши готовый к продакшену программный код в Markdown без лишних предисловий.",
+        "Давай точный технический анализ, проектируй надежные решения. "
+        "Если пользователь просит сделать или отредактировать файл/конфиг, ВСЕГДА выдавай ПОЛНЫЙ рабочий файл от начала до конца в блоке кода Markdown. Никогда не говори 'не умею скидывать файлы', отдавай полный готовый код, чтобы пользователь мог скачать его одной кнопкой!",
   ),
   const AgentPreset(
     id: "analyst",
@@ -99,7 +99,7 @@ final List<AgentPreset> _availableAgents = [
         "Ты — технический аналитик данных и системной документации. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
         "Глубоко вникай в содержимое прикрепленных файлов, логов, скриптов и отчетов. "
-        "Выявляй ошибки, структурируй суть и давай четкие практические выводы.",
+        "При необходимости выдать обновленный конфиг — ВСЕГДА выдавай его полностью в блоке кода Markdown.",
   ),
 ];
 
@@ -191,6 +191,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   bool _showLiveCamera = true;
   double _speechRate = 0.48;
   String _targetRussianLocaleId = "ru-RU";
+  bool _russianLocaleConfirmed = false;
 
   String? _selectedImageBase64;
   String? _attachedFileName;
@@ -257,7 +258,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       await _cameraController!.initialize();
       if (mounted) setState(() {});
     } catch (e) {
-      debugPrint("Камера не найдена или ошибка: $e");
+      debugPrint("Ошибка камеры: $e");
     }
   }
 
@@ -309,6 +310,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           final normalized = loc.localeId.toLowerCase().replaceAll('_', '-');
           if (normalized == 'ru-ru' || normalized.startsWith('ru')) {
             _targetRussianLocaleId = loc.localeId;
+            _russianLocaleConfirmed = true;
             break;
           }
         }
@@ -339,9 +341,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v15_syntax_fixed') {
+    if (migrationTag != 'v17_save_files_fixed') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v15_syntax_fixed');
+      await prefs.setString('bp_clean_migration', 'v17_save_files_fixed');
     }
 
     setState(() {
@@ -433,12 +435,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       HapticFeedback.lightImpact();
       setState(() => _isListening = true);
 
+      final statusMsg = _russianLocaleConfirmed
+          ? '🎤 Слушаю (Русский: $_targetRussianLocaleId)...'
+          : '⚠️ Внимание: Русский не найден в системе. Используй микрофон клавиатуры!';
+
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('🎤 Слушаю (Русский)...'),
-          duration: Duration(milliseconds: 1200),
-          backgroundColor: Color(0xFF1E293B),
+        SnackBar(
+          content: Text(statusMsg),
+          duration: const Duration(seconds: 2),
+          backgroundColor: _russianLocaleConfirmed ? const Color(0xFF1E293B) : Colors.red.shade900,
         ),
       );
 
@@ -525,6 +531,43 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
     } catch (e) {
       debugPrint("Ошибка чтения файла: $e");
+    }
+  }
+
+  Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "txt"]) async {
+    try {
+      HapticFeedback.mediumImpact();
+      final downloadsDir = Directory('/storage/emulated/0/Download');
+      final targetDir = await downloadsDir.exists() ? downloadsDir : Directory.systemTemp;
+
+      String ext = defaultExt;
+      if (codeSnippet.trim().startsWith('{') || codeSnippet.trim().startsWith('[')) {
+        ext = "json";
+      } else if (codeSnippet.contains('rules:') || codeSnippet.contains('proxies:')) {
+        ext = "yaml";
+      } else if (codeSnippet.contains('import ') || codeSnippet.contains('def ')) {
+        ext = "py";
+      }
+
+      final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.$ext";
+      final file = File('${targetDir.path}/$fileName');
+      await file.writeAsString(codeSnippet);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('💾 Файл сохранен в Загрузки: $fileName'),
+          backgroundColor: Colors.green.shade800,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    } catch (e) {
+      Clipboard.setData(ClipboardData(text: codeSnippet));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Файл скопирован в буфер (ошибка записи: $e)'),
+          backgroundColor: const Color(0xFF1E293B),
+        ),
+      );
     }
   }
 
@@ -1171,6 +1214,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     );
   }
 
+  List<String> _extractCodeBlocks(String markdown) {
+    final reg = RegExp(r'```(?:[a-zA-Z0-9_\-]+)?\n([\s\S]*?)```');
+    return reg.allMatches(markdown).map((m) => m.group(1)?.trim() ?? '').where((s) => s.isNotEmpty).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = _activeSession;
@@ -1209,12 +1257,14 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                           itemCount: messages.length,
                           itemBuilder: (context, idx) {
                             final m = messages[idx];
+                            final codeBlocks = !m.isUser ? _extractCodeBlocks(m.text) : <String>[];
+
                             return Align(
                               alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
                               child: Container(
                                 margin: const EdgeInsets.symmetric(vertical: 8),
                                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.86),
+                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.88),
                                 decoration: BoxDecoration(
                                   color: m.isUser ? const Color(0xFF1E293B) : const Color(0xFF111827),
                                   borderRadius: BorderRadius.circular(20),
@@ -1264,7 +1314,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                                 backgroundColor: Color(0xFF1E293B),
                                                 color: Color(0xFF38BDF8),
                                                 fontFamily: 'monospace',
-                                                fontSize: 14,
+                                                fontSize: 13,
                                               ),
                                               codeblockPadding: const EdgeInsets.all(12),
                                               codeblockDecoration: BoxDecoration(
@@ -1274,6 +1324,29 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                               ),
                                             ),
                                           ),
+
+                                    // Кнопка сохранения файла прямо под блоком сгенерированного конфига
+                                    if (!m.isUser && codeBlocks.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 8),
+                                        child: Wrap(
+                                          spacing: 8,
+                                          children: codeBlocks.map((code) {
+                                            return ElevatedButton.icon(
+                                              style: ElevatedButton.styleFrom(
+                                                backgroundColor: const Color(0xFF1E293B),
+                                                foregroundColor: Colors.greenAccent,
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                              ),
+                                              icon: const Icon(Icons.download_for_offline_outlined, size: 18),
+                                              label: const Text('Сохранить файл', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                              onPressed: () => _saveCodeToFile(code),
+                                            );
+                                          }).toList(),
+                                        ),
+                                      ),
+
                                     if (!m.isUser && m.text.isNotEmpty)
                                       Row(
                                         mainAxisAlignment: MainAxisAlignment.end,
@@ -1288,6 +1361,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                             ),
                                           IconButton(
                                             icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
+                                            tooltip: 'Скопировать весь ответ',
                                             onPressed: () {
                                               Clipboard.setData(ClipboardData(text: m.text));
                                               HapticFeedback.lightImpact();
