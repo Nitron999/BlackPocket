@@ -76,7 +76,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isListening = false;
   bool _isSpeaking = false;
   bool _autoSpeak = true;
-  double _speechRate = 0.9;
+  bool _liveVoiceMode = false; // Режим непрерывного диалога
+  double _speechRate = 0.45; // Для Android 0.5 - норма, 0.45 - размеренно и четко
   File? _selectedImage;
 
   String _apiUrl = "https://openrouter.ai/api/v1/chat/completions";
@@ -85,9 +86,8 @@ class _ChatScreenState extends State<ChatScreen> {
   String _systemPrompt =
       "Ты — BlackPocket, личный интеллектуальный партнер и надежный напарник. "
       "Общайся естественно, открыто, уверенно и с легким юмором, как опытный знающий друг. "
-      "Без лишней воды, шаблонных вежливостей и роботизированных вступлений. "
-      "Отвечай сразу по существу, глубоко понимай техническую суть (софт, железо, сети, авто) "
-      "и формулируй мысли четким, понятным живым языком.";
+      "Отвечай кратко, емко, по делу и разговорным языком, идеально подходящим для восприятия на слух. "
+      "Если передано фото, сразу анализируй увиденное без лишних вступлений.";
 
   @override
   void initState() {
@@ -99,8 +99,18 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _initTts() async {
     await _tts.setLanguage("ru-RU");
     await _tts.setPitch(1.0);
+    // В Android ставка 0.5 - нормальная скорость речи
     await _tts.setSpeechRate(_speechRate);
+
     _tts.setCompletionHandler(() {
+      setState(() => _isSpeaking = false);
+      // Если включен режим непрерывного живого диалога — снова открываем уши
+      if (_liveVoiceMode && mounted) {
+        _startListeningContinuous();
+      }
+    });
+
+    _tts.setErrorHandler((msg) {
       setState(() => _isSpeaking = false);
     });
   }
@@ -113,7 +123,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _modelName = prefs.getString('modelName') ?? _modelName;
       _systemPrompt = prefs.getString('systemPrompt') ?? _systemPrompt;
       _autoSpeak = prefs.getBool('autoSpeak') ?? true;
-      _speechRate = prefs.getDouble('speechRate') ?? 0.9;
+      _speechRate = prefs.getDouble('speechRate') ?? 0.45;
 
       final historyJson = prefs.getString('chat_history');
       if (historyJson != null && historyJson.isNotEmpty) {
@@ -167,12 +177,61 @@ class _ChatScreenState extends State<ChatScreen> {
     await _tts.speak(cleanText);
   }
 
+  // Быстрый снимок на камеру с автоматической отправкой
+  Future<void> _captureAndSendLiveEye() async {
+    final pickedFile = await _picker.pickImage(source: ImageSource.camera, imageQuality: 65, maxWidth: 1024);
+    if (pickedFile != null) {
+      setState(() {
+        _selectedImage = File(pickedFile.path);
+      });
+      _sendMessage();
+    }
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     final pickedFile = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1024);
     if (pickedFile != null) {
       setState(() {
         _selectedImage = File(pickedFile.path);
       });
+    }
+  }
+
+  // Непрерывный живой ввод
+  void _startListeningContinuous() async {
+    bool available = await _speech.initialize();
+    if (available && mounted) {
+      setState(() => _isListening = true);
+      _speech.listen(
+        localeId: "ru_RU",
+        listenMode: stt.ListenMode.dictation,
+        onResult: (val) {
+          setState(() {
+            _controller.text = val.recognizedWords;
+          });
+          if (val.finalResult && val.recognizedWords.trim().isNotEmpty) {
+            _sendMessage();
+          }
+        },
+      );
+    }
+  }
+
+  void _toggleLiveMode() async {
+    if (_liveVoiceMode) {
+      // Выключаем живой режим
+      setState(() {
+        _liveVoiceMode = false;
+        _isListening = false;
+      });
+      await _speech.stop();
+      await _tts.stop();
+    } else {
+      // Включаем живой диалог без рук
+      setState(() {
+        _liveVoiceMode = true;
+      });
+      _startListeningContinuous();
     }
   }
 
@@ -197,10 +256,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _copyToClipboard(String text) {
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Скопировано в буфер обмена'),
-        duration: Duration(seconds: 1),
-      ),
+      const SnackBar(content: Text('Скопировано в буфер обмена'), duration: Duration(seconds: 1)),
     );
   }
 
@@ -233,6 +289,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final currentImage = _selectedImage;
     final imagePath = currentImage?.path;
     _controller.clear();
+    if (_isListening) {
+      _speech.stop();
+      setState(() => _isListening = false);
+    }
 
     setState(() {
       _messages.add(ChatMessage(
@@ -253,7 +313,7 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         contentPayload.add({
           "type": "text",
-          "text": "Внимательно изучи это изображение и расскажи главное своими словами."
+          "text": "Внимательно изучи это фото и сразу кратко и емко расскажи своими словами, что ты видишь."
         });
       }
 
@@ -296,7 +356,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
         _saveHistory();
 
-        if (_autoSpeak) {
+        if (_autoSpeak || _liveVoiceMode) {
           _speakText(reply);
         }
       } else {
@@ -346,14 +406,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   onChanged: (val) => setDialogState(() => tempAutoSpeak = val),
                 ),
                 const SizedBox(height: 8),
-                Text('Скорость голоса: ${tempSpeechRate.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 14)),
+                Text('Скорость голоса: ${tempSpeechRate.toStringAsFixed(2)}', style: const TextStyle(fontSize: 14)),
+                const Text('(0.3 - медленно, 0.5 - норма, 0.7 - быстро)', style: TextStyle(fontSize: 12, color: Colors.grey)),
                 Slider(
                   value: tempSpeechRate,
-                  min: 0.5,
-                  max: 1.5,
-                  divisions: 10,
-                  label: '${tempSpeechRate.toStringAsFixed(1)}x',
-                  onChanged: (val) => setDialogState(() => tempSpeechRate = val),
+                  min: 0.2,
+                  max: 0.8,
+                  divisions: 12,
+                  label: tempSpeechRate.toStringAsFixed(2),
+                  onChanged: (val) {
+                    setDialogState(() => tempSpeechRate = val);
+                    _tts.setSpeechRate(val);
+                  },
                 ),
               ],
             ),
@@ -388,6 +452,12 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('BlackPocket', style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold)),
         centerTitle: true,
         actions: [
+          // Кнопка быстрого фото "Посмотри вокруг"
+          IconButton(
+            icon: const Icon(Icons.remove_red_eye),
+            tooltip: 'Посмотреть вокруг (Камера)',
+            onPressed: _isLoading ? null : _captureAndSendLiveEye,
+          ),
           IconButton(
             icon: const Icon(Icons.delete_sweep_outlined),
             tooltip: 'Очистить историю',
@@ -402,15 +472,32 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          if (_liveVoiceMode)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              color: Colors.redAccent.withOpacity(0.15),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.graphic_eq, color: Colors.redAccent, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isSpeaking ? "Ассистент говорит..." : (_isListening ? "Слушаю тебя..." : "Живой диалог активен"),
+                    style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: _messages.isEmpty
                 ? Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.record_voice_over_outlined, size: 52, color: Colors.deepPurple.shade300),
+                        Icon(Icons.headset_mic_outlined, size: 56, color: Colors.deepPurple.shade300),
                         const SizedBox(height: 14),
-                        const Text('На связи. Задай вопрос, скинь фото или скажи голосом.',
+                        const Text('На связи. Включи живой голос или покажи фото.',
                             style: TextStyle(color: Colors.grey, fontSize: 16)),
                       ],
                     ),
@@ -499,7 +586,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Image.file(_selectedImage!, width: 48, height: 48, fit: BoxFit.cover),
                   ),
                   const SizedBox(width: 12),
-                  const Text('Фото выбрано', style: TextStyle(fontSize: 14, color: Colors.white70)),
+                  const Text('Фото готово к отправке', style: TextStyle(fontSize: 14, color: Colors.white70)),
                   const Spacer(),
                   IconButton(icon: const Icon(Icons.close, size: 20), onPressed: () => setState(() => _selectedImage = null)),
                 ],
@@ -520,13 +607,22 @@ class _ChatScreenState extends State<ChatScreen> {
                   onPressed: () => _pickImage(ImageSource.gallery),
                   tooltip: 'Галерея',
                 ),
+                // Кнопка переключения непрерывного Hands-Free живого режима
+                IconButton(
+                  icon: Icon(
+                    _liveVoiceMode ? Icons.headset : Icons.headset_off_outlined,
+                    color: _liveVoiceMode ? Colors.redAccent : Colors.grey,
+                  ),
+                  onPressed: _toggleLiveMode,
+                  tooltip: 'Живой режим Hands-Free',
+                ),
                 Expanded(
                   child: TextField(
                     controller: _controller,
                     textCapitalization: TextCapitalization.sentences,
                     style: const TextStyle(fontSize: 16),
                     decoration: InputDecoration(
-                      hintText: _isListening ? 'Слушаю речь...' : 'Спроси что-нибудь...',
+                      hintText: _liveVoiceMode ? 'Идет живой диалог...' : (_isListening ? 'Слушаю...' : 'Сообщение...'),
                       filled: true,
                       fillColor: const Color(0xFF1E1E1E),
                       border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
@@ -538,7 +634,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 IconButton(
                   icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: _isListening ? Colors.redAccent : null),
                   onPressed: _toggleListening,
-                  tooltip: 'Голос',
+                  tooltip: 'Разовый микрофон',
                 ),
                 IconButton.filled(
                   onPressed: _isLoading ? null : _sendMessage,
