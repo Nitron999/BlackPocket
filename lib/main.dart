@@ -15,7 +15,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 List<CameraDescription> _availableCameras = [];
 
 const String _defaultApiKey = "AQ.Ab8RN6INDiAIoK2cYOusWKutVqD0XFZpPLDOyYAriMWojxlNyQ";
-const String _defaultModel = "gemini-3.5-flash-lite";
+const String _defaultModel = "gemini-3.6-flash";
 const String _defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
 
 Future<void> main() async {
@@ -77,7 +77,23 @@ final List<AgentPreset> _availableAgents = [
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
         "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости. "
-        "Если пользователь просит собрать, поправить или выдать конфиг/файл, ВСЕГДА прикладывай ПОЛНЫЙ готовый текст файла внутри блока кода Markdown с указанием формата (например, ```yaml). Никогда не говори, что не умеешь скидывать файлы — отдавай их полностью в блоке кода!",
+        "Если пользователь просит собрать, поправить или выдать конфиг/файл, ВСЕГДА прикладывай ПОЛНЫЙ готовый текст файла внутри блока кода Markdown с указанием формата. Никогда не говори, что не умеешь скидывать файлы — отдавай их полностью в блоке кода!",
+  ),
+  const AgentPreset(
+    id: "excel_logist",
+    name: "Логист / Разбор счетов (Excel)",
+    description: "Парсинг выгрузок, сведение счетов, подсчёт количества и экспорт таблиц",
+    icon: Icons.table_chart_outlined,
+    systemInstruction:
+        "Ты — эксперт по логистике, учету поставок и обработке табличных данных Excel. "
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
+        "Твоя задача: обрабатывать присланные данные накладных, счетов и спецификаций (CSV, TSV, списки, фрагменты таблиц). "
+        "АЛГОРИТМ РАБОТЫ: "
+        "1. Четко определяй номера счетов/заказов, артикулы, наименования товаров и количество. "
+        "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
+        "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
+        "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
+        "В начале давай краткую сводку: сколько позиций обработано и общее количество.",
   ),
   const AgentPreset(
     id: "engineer",
@@ -200,7 +216,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   String _apiKey = _defaultApiKey;
   String _modelName = _defaultModel;
   String _apiEndpoint = _defaultEndpoint;
-  String _selectedAgentId = "companion";
+  String _selectedAgentId = "excel_logist";
 
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
@@ -341,16 +357,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v17_save_files_fixed') {
+    if (migrationTag != 'v18_excel_agent_added') {
       await prefs.remove('modelName');
-      await prefs.setString('bp_clean_migration', 'v17_save_files_fixed');
+      await prefs.setString('bp_clean_migration', 'v18_excel_agent_added');
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
-      _selectedAgentId = prefs.getString('selectedAgentId') ?? "companion";
+      _selectedAgentId = prefs.getString('selectedAgentId') ?? "excel_logist";
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
       _speechRate = prefs.getDouble('speechRate') ?? 0.48;
 
@@ -517,7 +533,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['txt', 'log', 'json', 'py', 'dart', 'csv', 'yaml', 'md'],
+        allowedExtensions: ['txt', 'log', 'json', 'py', 'dart', 'csv', 'tsv', 'yaml', 'md'],
       );
       if (result != null && result.files.single.path != null) {
         HapticFeedback.selectionClick();
@@ -534,7 +550,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "txt"]) async {
+  Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "csv"]) async {
     try {
       HapticFeedback.mediumImpact();
       final downloadsDir = Directory('/storage/emulated/0/Download');
@@ -547,6 +563,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         ext = "yaml";
       } else if (codeSnippet.contains('import ') || codeSnippet.contains('def ')) {
         ext = "py";
+      } else if (codeSnippet.contains(';') || codeSnippet.contains(',')) {
+        ext = "csv";
       }
 
       final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.$ext";
@@ -555,7 +573,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('💾 Файл сохранен в Загрузки: $fileName'),
+          content: Text('💾 Таблица сохранена в Загрузки: $fileName'),
           backgroundColor: Colors.green.shade800,
           duration: const Duration(seconds: 4),
         ),
@@ -564,7 +582,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       Clipboard.setData(ClipboardData(text: codeSnippet));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Файл скопирован в буфер (ошибка записи: $e)'),
+          content: Text('Таблица скопирована в буфер (ошибка: $e)'),
           backgroundColor: const Color(0xFF1E293B),
         ),
       );
@@ -718,7 +736,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     try {
       String userFullPrompt = text;
       if (fileContentToSend != null) {
-        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
+        userFullPrompt += "\n\n[СОДЕРЖИМОЕ ТАБЛИЦЫ/ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
       }
 
       final combinedSystemPrompt =
@@ -726,7 +744,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       final currentParts = [];
       currentParts.add({
-        "text": userFullPrompt.isEmpty ? "Что в кадре? Ответь кратко на русском." : userFullPrompt
+        "text": userFullPrompt.isEmpty ? "Обработай данные. Ответь на русском." : userFullPrompt
       });
 
       if (imageToSend != null) {
@@ -744,11 +762,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
       final modelsQueue = [_modelName];
-      if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
-        modelsQueue.add("gemini-3.5-flash-lite");
-      }
       if (!modelsQueue.contains("gemini-3.6-flash")) {
         modelsQueue.add("gemini-3.6-flash");
+      }
+      if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
+        modelsQueue.add("gemini-3.5-flash-lite");
       }
 
       bool success = false;
@@ -774,7 +792,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             });
 
             final client = http.Client();
-            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 20));
+            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 25));
 
             if (streamedResponse.statusCode == 200) {
               final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
@@ -1043,8 +1061,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               },
             ),
             ListTile(
-              leading: const Icon(Icons.description_outlined, color: Colors.greenAccent),
-              title: const Text('Загрузить документ (.txt, .log, .json, .py, .dart)'),
+              leading: const Icon(Icons.table_chart_outlined, color: Colors.greenAccent),
+              title: const Text('Загрузить таблицу / документ (.csv, .tsv, .txt, .json)'),
               onTap: () {
                 Navigator.pop(context);
                 _pickDocumentFile();
@@ -1150,7 +1168,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 TextField(
                   controller: modelCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Основная модель (gemini-3.5-flash-lite / 3.8-flash)',
+                    labelText: 'Основная модель (gemini-3.6-flash / 3.8-flash)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1284,7 +1302,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                         child: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            const Icon(Icons.attach_file, size: 16, color: Colors.greenAccent),
+                                            const Icon(Icons.table_chart_outlined, size: 16, color: Colors.greenAccent),
                                             const SizedBox(width: 4),
                                             Text(m.fileName!, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
                                           ],
@@ -1325,7 +1343,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                             ),
                                           ),
 
-                                    // Кнопка сохранения файла прямо под блоком сгенерированного конфига
                                     if (!m.isUser && codeBlocks.isNotEmpty)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 8),
@@ -1406,9 +1423,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                         child: Image.memory(base64Decode(_selectedImageBase64!), width: 40, height: 40, fit: BoxFit.cover),
                       )
                     else
-                      const Icon(Icons.description, color: Colors.greenAccent, size: 30),
+                      const Icon(Icons.table_chart_outlined, color: Colors.greenAccent, size: 30),
                     const SizedBox(width: 8),
-                    Text(_attachedFileName ?? 'Фото прикреплено', style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                    Text(_attachedFileName ?? 'Файл прикреплен', style: const TextStyle(fontSize: 13, color: Colors.white70)),
                     IconButton(
                       icon: const Icon(Icons.close, size: 18),
                       onPressed: () => setState(() {
