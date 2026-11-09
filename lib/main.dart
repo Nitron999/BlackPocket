@@ -83,7 +83,8 @@ final List<AgentPreset> _availableAgents = [
         "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
         "3. ВСЕГДА выводи итоговый результат в виде полной готовой таблицы (формат CSV с разделителем точка с запятой ';' или Markdown-таблица) ВНУТРИ БЛОКА КОДА Markdown (```csv). "
         "Это позволит пользователю мгновенно сохранить готовый файл на устройство одной кнопкой. "
-        "В начале давай краткую сводку: сколько позиций обработано и общее количество.",
+        "В начале давай краткую сводку: сколько позиций обработано и общее количество. "
+        "Если пользователь только загрузил файл без команды — ничего не анализируй и жди его прямого указания.",
   ),
   const AgentPreset(
     id: "companion",
@@ -358,8 +359,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v20_chat_renaming_added') {
-      await prefs.setString('bp_clean_migration', 'v20_chat_renaming_added');
+    if (migrationTag != 'v21_clean_prompt_added') {
+      await prefs.setString('bp_clean_migration', 'v21_clean_prompt_added');
     }
 
     setState(() {
@@ -808,9 +809,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
     final previousHistory = session.messages.toList();
 
-    final displayPrompt = text.isEmpty
-        ? (fileNameToSend != null ? "Изучи таблицу $fileNameToSend" : "Посмотри в кадр")
-        : text;
+    // В пузырь чата выводим ТОЛЬКО собственный текст пользователя (без авто-команд "Изучи таблицу...")
+    final displayPrompt = text;
 
     setState(() {
       session.messages.add(ChatMessage(
@@ -821,8 +821,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       ));
       session.messages.add(botMessage);
 
-      if (session.title == "Новый чат" && displayPrompt.isNotEmpty) {
-        session.title = displayPrompt.length > 26 ? "${displayPrompt.substring(0, 26)}..." : displayPrompt;
+      if (session.title == "Новый чат") {
+        if (displayPrompt.isNotEmpty) {
+          session.title = displayPrompt.length > 26 ? "${displayPrompt.substring(0, 26)}..." : displayPrompt;
+        } else if (fileNameToSend != null) {
+          session.title = fileNameToSend.length > 26 ? "${fileNameToSend.substring(0, 26)}..." : fileNameToSend;
+        }
       }
       _isLoading = true;
       _inputController.clear();
@@ -839,10 +843,20 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final combinedSystemPrompt =
           "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
 
+      // Если пользователь не написал текст к файлу, даем ИИ четкое указание ничего не трогать и ждать команды
+      String finalInstruction = userFullPrompt;
+      if (text.isEmpty && fileContentToSend != null) {
+        finalInstruction =
+            "Файл '$fileNameToSend' успешно прикреплен пользователем.\n"
+            "СТРОГОЕ ПРАВИЛО: Пока ничего не делай, не анализируй файл и ничего не меняй. "
+            "Просто коротко подтверди, что файл получен, и скажи, что ждешь команды и задачи от Александра.\n\n"
+            "[СОДЕРЖИМОЕ ТАБЛИЦЫ/ФАЙЛА '$fileNameToSend']:\n$fileContentToSend";
+      } else if (userFullPrompt.isEmpty) {
+        finalInstruction = "Слушаю вас. Чем помочь?";
+      }
+
       final currentParts = [];
-      currentParts.add({
-        "text": userFullPrompt.isEmpty ? "Обработай данные таблицы. Ответь на русском." : userFullPrompt
-      });
+      currentParts.add({"text": finalInstruction});
 
       if (imageToSend != null) {
         currentParts.add({
@@ -1391,7 +1405,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                     if (m.fileName != null)
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                        margin: const EdgeInsets.only(bottom: 6),
+                                        margin: EdgeInsets.only(bottom: m.text.isNotEmpty ? 6 : 0),
                                         decoration: BoxDecoration(
                                           color: Colors.greenAccent.withOpacity(0.15),
                                           borderRadius: BorderRadius.circular(8),
@@ -1418,27 +1432,31 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                           ),
                                         ),
                                       ),
-                                    m.isUser
-                                        ? Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
-                                        : MarkdownBody(
-                                            data: m.text.isEmpty && _isLoading ? '...' : m.text,
-                                            selectable: true,
-                                            styleSheet: MarkdownStyleSheet(
-                                              p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
-                                              code: const TextStyle(
-                                                backgroundColor: Color(0xFF1E293B),
-                                                color: Color(0xFF38BDF8),
-                                                fontFamily: 'monospace',
-                                                fontSize: 13,
-                                              ),
-                                              codeblockPadding: const EdgeInsets.all(12),
-                                              codeblockDecoration: BoxDecoration(
-                                                color: const Color(0xFF0F172A),
-                                                borderRadius: BorderRadius.circular(10),
-                                                border: Border.all(color: Colors.white12),
-                                              ),
-                                            ),
+                                    if (m.isUser)
+                                      if (m.text.isNotEmpty)
+                                        Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
+                                      else
+                                        const SizedBox.shrink()
+                                    else
+                                      MarkdownBody(
+                                        data: m.text.isEmpty && _isLoading ? '...' : m.text,
+                                        selectable: true,
+                                        styleSheet: MarkdownStyleSheet(
+                                          p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
+                                          code: const TextStyle(
+                                            backgroundColor: Color(0xFF1E293B),
+                                            color: Color(0xFF38BDF8),
+                                            fontFamily: 'monospace',
+                                            fontSize: 13,
                                           ),
+                                          codeblockPadding: const EdgeInsets.all(12),
+                                          codeblockDecoration: BoxDecoration(
+                                            color: const Color(0xFF0F172A),
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: Colors.white12),
+                                          ),
+                                        ),
+                                      ),
 
                                     if (!m.isUser && codeBlocks.isNotEmpty)
                                       Padding(
