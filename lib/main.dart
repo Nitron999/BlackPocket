@@ -3,8 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:camera/camera.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,19 +11,12 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:excel/excel.dart' as xl;
 
-List<CameraDescription> _availableCameras = [];
-
 const String _defaultApiKey = "";
-const String _defaultModel = "gemini-3.6-flash";
+const String _defaultModel = "gemini-3.8-flash";
 const String _defaultEndpoint = "https://generativelanguage.googleapis.com/v1beta/models";
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    _availableCameras = await availableCameras();
-  } catch (e) {
-    debugPrint("Камера не найдена: $e");
-  }
   runApp(const GeminiBlackPocketApp());
 }
 
@@ -44,7 +35,6 @@ class GeminiBlackPocketApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF2563EB),
           surface: Color(0xFF111827),
-          background: Color(0xFF030712),
         ),
       ),
       home: const GeminiMainScreen(),
@@ -119,7 +109,6 @@ class AttachedDoc {
 class ChatMessage {
   String text;
   final bool isUser;
-  final String? imageBase64;
   final List<String> fileNames;
   String? modelUsed;
   final DateTime timestamp;
@@ -127,7 +116,6 @@ class ChatMessage {
   ChatMessage({
     required this.text,
     required this.isUser,
-    this.imageBase64,
     List<String>? fileNames,
     this.modelUsed,
     DateTime? timestamp,
@@ -137,7 +125,6 @@ class ChatMessage {
   Map<String, dynamic> toJson() => {
         'text': text,
         'isUser': isUser,
-        'imageBase64': imageBase64,
         'fileNames': fileNames,
         'modelUsed': modelUsed,
         'timestamp': timestamp.toIso8601String(),
@@ -146,7 +133,6 @@ class ChatMessage {
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         text: json['text'] ?? '',
         isUser: json['isUser'] ?? false,
-        imageBase64: json['imageBase64'],
         fileNames: (json['fileNames'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
         modelUsed: json['modelUsed'],
         timestamp: json['timestamp'] != null
@@ -184,16 +170,12 @@ class GeminiMainScreen extends StatefulWidget {
   State<GeminiMainScreen> createState() => _GeminiMainScreenState();
 }
 
-class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerProviderStateMixin {
+class _GeminiMainScreenState extends State<GeminiMainScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final ImagePicker _picker = ImagePicker();
   final stt.SpeechToText _speech = stt.SpeechToText();
   final FlutterTts _tts = FlutterTts();
-
-  CameraController? _cameraController;
-  int _currentCameraIndex = 0;
 
   List<ChatSession> _sessions = [];
   String _currentSessionId = "";
@@ -201,13 +183,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   bool _isListening = false;
   bool _isSpeaking = false;
   bool _isLoading = false;
-  bool _isLiveActive = false;
-  bool _showLiveCamera = true;
   double _speechRate = 0.48;
   String _targetRussianLocaleId = "ru-RU";
   bool _russianLocaleConfirmed = false;
 
-  String? _selectedImageBase64;
   final List<AttachedDoc> _attachedDocs = [];
 
   String _apiKey = _defaultApiKey;
@@ -220,8 +199,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       "Он логист в Москве по учету печатных плат (ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект»). "
       "Сводит накладные «Посылка» со «Сводками». Отвечай емко, строго следуй данным из таблиц.";
 
-  late AnimationController _pulseController;
-
   AgentPreset get _currentAgent =>
       _availableAgents.firstWhere((a) => a.id == _selectedAgentId, orElse: () => _availableAgents.first);
 
@@ -229,12 +206,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   void initState() {
     super.initState();
     _inputController.addListener(_onInputChanged);
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1200),
-    )..repeat(reverse: true);
-
-    _initCamera(_currentCameraIndex);
     _initTts();
     _initSpeechRecognizer();
     _loadData();
@@ -249,38 +220,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _inputController.removeListener(_onInputChanged);
     _inputController.dispose();
     _scrollController.dispose();
-    _pulseController.dispose();
-    _cameraController?.dispose();
     super.dispose();
-  }
-
-  Future<void> _initCamera(int cameraIndex) async {
-    if (_availableCameras.isEmpty) return;
-    if (_cameraController != null) {
-      await _cameraController!.dispose();
-    }
-
-    _currentCameraIndex = cameraIndex % _availableCameras.length;
-    _cameraController = CameraController(
-      _availableCameras[_currentCameraIndex],
-      ResolutionPreset.low,
-      enableAudio: false,
-    );
-
-    try {
-      await _cameraController!.initialize();
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint("Камера не найдена: $e");
-    }
-  }
-
-  Future<void> _switchCamera() async {
-    if (_availableCameras.length > 1) {
-      HapticFeedback.selectionClick();
-      final nextIndex = (_currentCameraIndex + 1) % _availableCameras.length;
-      await _initCamera(nextIndex);
-    }
   }
 
   Future<void> _initTts() async {
@@ -289,16 +229,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     await _tts.setSpeechRate(_speechRate);
 
     _tts.setCompletionHandler(() {
-      if (mounted) {
-        setState(() => _isSpeaking = false);
-        if (_isLiveActive && !_isLoading) {
-          Future.delayed(const Duration(milliseconds: 350), () {
-            if (mounted && _isLiveActive && !_isLoading && !_isSpeaking) {
-              _startSpeechListening();
-            }
-          });
-        }
-      }
+      if (mounted) setState(() => _isSpeaking = false);
     });
 
     _tts.setErrorHandler((_) {
@@ -354,16 +285,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v31_perfect_logist') {
-      await prefs.setString('bp_clean_migration', 'v31_perfect_logist');
-      await prefs.setString('modelName', 'gemini-3.6-flash');
+    if (migrationTag != 'v32_flash_38_strict') {
+      await prefs.setString('bp_clean_migration', 'v32_flash_38_strict');
+      await prefs.setString('modelName', 'gemini-3.8-flash');
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
-      if (_modelName.contains('1.5') || _modelName.contains('lite')) {
-        _modelName = 'gemini-3.6-flash';
+      if (_modelName.contains('1.5') || _modelName.contains('2.5') || _modelName.contains('lite')) {
+        _modelName = 'gemini-3.8-flash';
       }
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
       _selectedAgentId = prefs.getString('selectedAgentId') ?? "excel_logist";
@@ -464,19 +395,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       HapticFeedback.lightImpact();
       setState(() => _isListening = true);
 
-      final statusMsg = _russianLocaleConfirmed
-          ? '🎤 Слушаю (Русский: $_targetRussianLocaleId)...'
-          : '⚠️ Внимание: Используй микрофон клавиатуры!';
-
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(statusMsg),
-          duration: const Duration(seconds: 2),
-          backgroundColor: _russianLocaleConfirmed ? const Color(0xFF1E293B) : Colors.red.shade900,
-        ),
-      );
-
       _speech.listen(
         localeId: _targetRussianLocaleId,
         listenMode: stt.ListenMode.dictation,
@@ -488,10 +406,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           _inputController.text = words;
 
           final lower = words.toLowerCase();
-          if (lower == 'стоп' ||
-              lower == 'хватит' ||
-              lower == 'замолчи' ||
-              lower.contains('стоп')) {
+          if (lower == 'стоп' || lower == 'хватит' || lower == 'замолчи' || lower.contains('стоп')) {
             _stopSpeaking();
             _speech.stop();
             setState(() {
@@ -513,19 +428,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     await _speech.stop();
     HapticFeedback.lightImpact();
     if (mounted) setState(() => _isListening = false);
-  }
-
-  void _toggleLiveModal() {
-    HapticFeedback.mediumImpact();
-    setState(() {
-      _isLiveActive = !_isLiveActive;
-    });
-    if (_isLiveActive) {
-      _startSpeechListening();
-    } else {
-      _stopListening();
-      _stopSpeaking();
-    }
   }
 
   String _parseExcelFile(List<int> bytes) {
@@ -835,7 +737,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
-    if (text.isEmpty && _selectedImageBase64 == null && _attachedDocs.isEmpty && !_isLiveActive) return;
+    if (text.isEmpty && _attachedDocs.isEmpty) return;
     if (_isLoading) return;
 
     final lower = text.toLowerCase();
@@ -848,10 +750,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     HapticFeedback.lightImpact();
     _stopListening();
 
-    String? imageToSend = _selectedImageBase64;
     final List<AttachedDoc> docsToSend = List.from(_attachedDocs);
-
-    _selectedImageBase64 = null;
     _attachedDocs.clear();
 
     final session = _activeSession;
@@ -865,7 +764,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       session.messages.add(ChatMessage(
         text: displayPrompt,
         isUser: true,
-        imageBase64: imageToSend,
         fileNames: sentFileNames,
       ));
       session.messages.add(botMessage);
@@ -909,26 +807,18 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         finalInstruction = "Слушаю вас.";
       }
 
-      final currentParts = [];
-      currentParts.add({"text": finalInstruction});
-
-      if (imageToSend != null) {
-        currentParts.add({
-          "inlineData": {
-            "mimeType": "image/jpeg",
-            "data": imageToSend,
-          }
-        });
-      }
+      final currentParts = [
+        {"text": finalInstruction}
+      ];
 
       final payloadContents = _buildContentsHistory(previousHistory, currentParts);
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      // ТОЛЬКО ДЕЙСТВУЮЩИЕ И МОЩНЫЕ МОДЕЛИ GOOGLE API
+      // ТОЛЬКО ДЕЙСТВУЮЩИЕ FLASH-МОДЕЛИ GOOGLE API
       final modelsQueue = [
+        "gemini-3.8-flash",
         "gemini-3.6-flash",
-        "gemini-2.5-flash",
       ];
 
       bool success = false;
@@ -1043,8 +933,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     setState(() {
       _sessions.insert(0, s);
       _currentSessionId = s.id;
-      _isLiveActive = false;
-      _selectedImageBase64 = null;
       _attachedDocs.clear();
     });
     _saveData();
@@ -1165,7 +1053,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 TextField(
                   controller: modelCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Основная модель (gemini-3.6-flash)',
+                    labelText: 'Основная модель (gemini-3.8-flash)',
                     border: OutlineInputBorder(),
                   ),
                 ),
