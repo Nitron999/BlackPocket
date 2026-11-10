@@ -72,7 +72,7 @@ class _MainScreenState extends State<MainScreen> {
 2) ООО «ЭЛЕКТРОконнект» (Новосибирск — Филиал)
 
 ТВОЯ ЗАДАЧА:
-Принять накладную «Посылка» и свести её со «Сводкой ООО Печатные платы» и «Сводкой филиал».
+Принять накладную «Посылка» (текущую партию) и свести её со «Сводкой ООО Печатные платы» и «Сводкой филиал».
 Температура работы 0.0. Запрещено выдумывать, фантазировать или округлять данные.
 
 СТРОГИЕ ПРАВИЛА РАЗДЕЛЕНИЯ И ОБРАБОТКИ:
@@ -149,7 +149,7 @@ class _MainScreenState extends State<MainScreen> {
       allowedExtensions: ['xlsx', 'xls', 'csv', 'txt'],
     );
 
-    if (result != null && result.files.single.path != null) {
+    if (result != null && result.files.isNotEmpty && result.files.single.path != null) {
       final file = File(result.files.single.path!);
       setState(() {
         if (type == 1) _posylkaFile = file;
@@ -162,7 +162,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _processLogistics() async {
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
-      _showSnackbar('Введите API ключ Gemini Cloud!');
+      _showSnackbar('Введите API ключ Gemini в настройках!');
       return;
     }
 
@@ -176,23 +176,27 @@ class _MainScreenState extends State<MainScreen> {
       _lastCsvResult = null;
     });
 
-    _addMessage('user', 'Запуск сведения накладных: ${_posylkaFile!.path.split(Platform.pathSeparator).last}');
+    final fileName = _posylkaFile?.path.split(Platform.pathSeparator).last ?? 'Посылка';
+    _addMessage('user', 'Запуск сведения накладных: $fileName');
 
     try {
-      final posylkaContent = await _readFileData(_posylkaFile!);
+      // Читаем только нужные актуальные строки, чтобы не перегружать память
+      final posylkaContent = await _readExcelTail(_posylkaFile!, maxRows: 150);
+      
       String svodkaPpContent = '';
       if (_svodkaPpFile != null) {
-        svodkaPpContent = await _readFileData(_svodkaPpFile!);
+        svodkaPpContent = await _readExcelTail(_svodkaPpFile!, maxRows: 600);
       }
+      
       String svodkaFilialContent = '';
       if (_svodkaFilialFile != null) {
-        svodkaFilialContent = await _readFileData(_svodkaFilialFile!);
+        svodkaFilialContent = await _readExcelTail(_svodkaFilialFile!, maxRows: 1500);
       }
 
       final promptText = '''
 ВХОДНЫЕ ДАННЫЕ ДЛЯ СВЕДЕНИЯ:
 
-=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД) ===
+=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД / ПОСЛЕДНЯЯ ПАРТИЯ) ===
 $posylkaContent
 
 === 2. СВОДКА ООО ПЕЧАТНЫЕ ПЛАТЫ (ГОЛОВА) ===
@@ -201,7 +205,12 @@ $svodkaPpContent
 === 3. СВОДКА ФИЛИАЛ (ЭЛЕКТРОКОННЕКТ) ===
 $svodkaFilialContent
 
-Выполни полное сопоставление по инструкции, расставь точные названия клиентов, договорные тиражи «По счету», пустые счета и этикетки для филиала, отсортируй по ДМ -> СДЭК -> К -> Самовывоз и верни CSV.
+Выполни полное сопоставление по инструкции:
+- Определи пропущенные фирмы для «Печатных плат»
+- Проставь договорные тиражи «По счету»
+- Для филиала оставь колонки «Счет пп» и «Этикетка» пустыми
+- Разложи по доставке: ДМ -> СДЭК -> К -> Самовывоз
+- Верни результат в виде CSV.
 ''';
 
       final response = await _callGeminiFlash(apiKey, promptText);
@@ -221,16 +230,31 @@ $svodkaFilialContent
     }
   }
 
-  Future<String> _readFileData(File file) async {
+  // Безопасное чтение хвоста таблицы Excel без риска Null pointer
+  Future<String> _readExcelTail(File file, {int maxRows = 500}) async {
     final ext = file.path.split('.').last.toLowerCase();
     if (ext == 'xlsx' || ext == 'xls') {
       final bytes = await file.readAsBytes();
       final excel = ex.Excel.decodeBytes(bytes);
       final sb = StringBuffer();
-      for (final table in excel.tables.keys) {
-        sb.writeln('Лист: $table');
-        final sheet = excel.tables[table]!;
-        for (final row in sheet.rows) {
+
+      for (final tableName in excel.tables.keys) {
+        final sheet = excel.tables[tableName];
+        if (sheet == null) continue;
+
+        sb.writeln('Лист: $tableName');
+        final allRows = sheet.rows;
+        
+        // Берём заголовок (первые 2 строки)
+        if (allRows.isNotEmpty) {
+          final headerVals = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
+          sb.writeln(headerVals.join(';'));
+        }
+
+        // Берём последние maxRows строк, где содержатся актуальные текущие данные
+        final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
+        for (int i = startIndex; i < allRows.length; i++) {
+          final row = allRows[i];
           final rowVals = row.map((c) => c?.value?.toString() ?? '').toList();
           if (rowVals.any((v) => v.trim().isNotEmpty)) {
             sb.writeln(rowVals.join(';'));
@@ -279,19 +303,28 @@ $svodkaFilialContent
     }
 
     final data = jsonDecode(resp.body);
-    final text = data['candidates'][0]['content']['parts'][0]['text'] as String;
-    return text;
+    final candidates = data['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception('Нейросеть не вернула результат. Проверьте содержимое файлов.');
+    }
+
+    final content = candidates[0]['content'];
+    if (content == null || content['parts'] == null || (content['parts'] as List).isEmpty) {
+      throw Exception('Пустой ответ от модели (возможно, сработал фильтр или лимит токенов).');
+    }
+
+    return content['parts'][0]['text'] as String;
   }
 
   String _extractCsv(String text) {
     if (text.contains('```csv')) {
       final start = text.indexOf('```csv') + 6;
       final end = text.indexOf('```', start);
-      return text.substring(start, end).trim();
+      if (end != -1) return text.substring(start, end).trim();
     } else if (text.contains('```')) {
       final start = text.indexOf('```') + 3;
       final end = text.indexOf('```', start);
-      return text.substring(start, end).trim();
+      if (end != -1) return text.substring(start, end).trim();
     }
     return text.trim();
   }
@@ -478,7 +511,7 @@ $svodkaFilialContent
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: SelectableText(
-                      m['text']!,
+                      m['text']?.toString() ?? '',
                       style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
                     ),
                   ),
