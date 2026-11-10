@@ -370,8 +370,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v23_real_xlsx_generator') {
-      await prefs.setString('bp_clean_migration', 'v23_real_xlsx_generator');
+    if (migrationTag != 'v24_chartsheet_and_tail_parser') {
+      await prefs.setString('bp_clean_migration', 'v24_chartsheet_and_tail_parser');
     }
 
     setState(() {
@@ -545,13 +545,25 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final buffer = StringBuffer();
 
       for (final table in excel.tables.keys) {
+        if (table.toLowerCase().contains('диаграмм') || table.toLowerCase().contains('chart')) {
+          continue;
+        }
+
         final currentSheet = excel.tables[table];
-        if (currentSheet == null) continue;
+        if (currentSheet == null || currentSheet.rows.isEmpty) continue;
 
         buffer.writeln("[ЛИСТ: $table]");
-        int rowCount = 0;
 
-        for (final row in currentSheet.rows) {
+        final allRows = currentSheet.rows;
+        List<List<xl.Data?>> targetRows = [];
+        if (allRows.length > 400) {
+          targetRows.addAll(allRows.take(15));
+          targetRows.addAll(allRows.skip(allRows.length - 350));
+        } else {
+          targetRows = allRows;
+        }
+
+        for (final row in targetRows) {
           final List<String> rowValues = [];
           for (final cell in row) {
             if (cell == null || cell.value == null) {
@@ -562,22 +574,16 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           }
 
           if (rowValues.every((val) => val.isEmpty)) continue;
-
           buffer.writeln(rowValues.join(" | "));
-          rowCount++;
-          if (rowCount > 400) {
-            buffer.writeln("... (показаны первые 400 строк листа для сохранения памяти)");
-            break;
-          }
         }
         buffer.writeln();
       }
 
       final result = buffer.toString().trim();
-      return result.isEmpty ? "(Таблица пустая или не содержит данных)" : result;
+      return result.isEmpty ? "(Таблица пустая)" : result;
     } catch (e) {
       debugPrint("Сбой декодирования Excel: $e");
-      return "(Не удалось разобрать Excel-файл: $e)";
+      return "(Ошибка разбора файла: $e)";
     }
   }
 
