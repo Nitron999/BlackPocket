@@ -30,11 +30,12 @@ class BlackPocketApp extends StatelessWidget {
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F172A),
+        scaffoldBackgroundColor: const Color(0xFF090D16),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF38BDF8),
           secondary: Color(0xFF818CF8),
-          surface: Color(0xFF1E293B),
+          surface: Color(0xFF131B2E),
+          surfaceVariant: Color(0xFF1E293B),
           error: Color(0xFFEF4444),
         ),
         fontFamily: 'Roboto',
@@ -53,9 +54,11 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
+  final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   bool _isLoading = false;
+  bool _isLogisticsExpanded = false;
   String _apiStatus = 'Ключ не настроен';
   Color _statusColor = Colors.orangeAccent;
 
@@ -63,63 +66,47 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  final _messages = [];
+  final List> _chatHistory = [];
   String? _lastCsvResult;
 
-  static const String _systemInstruction = '''
-Ты — прецизионный промышленный парсер и калькулятор логистических накладных для предприятий:
-1) ООО «Печатные платы» (Москва — Головной офис)
-2) ООО «ЭЛЕКТРОконнект» (Новосибирск — Филиал)
+  static const String _logisticsSystemPrompt = '''
+Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
+Температура: 0.0. Без домыслов и гаданий.
 
-ТВОЯ ЗАДАЧА:
-Принять накладную «Посылка» (текущую партию) и свести её со «Сводкой ООО Печатные платы» и «Сводкой филиал».
-Температура работы 0.0. Запрещено выдумывать, фантазировать или округлять данные.
-
-СТРОГИЕ ПРАВИЛА РАЗДЕЛЕНИЯ И ОБРАБОТКИ:
-
-1. СТРУКТУРА ВЫХОДНОГО CSV (ровно 13 колонок, разделитель точка с запятой ";"):
+СТРУКТУРА CSV (13 колонок через точку с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
 
-2. БЛОК 1: ГОЛОВНОЙ ОФИС (ООО «Печатные платы»)
-- Ищется по номеру PS в файле «Сводка ООО Печатные платы» (лист «СВОДКА»).
-- Фирма: берётся из сводки (колонка «Фирма, заказчик»). Если в Посылке фирма не указана, ОБЯЗАТЕЛЬНО найти и вписать её точное название!
-- Счет пп: московский номер счета с сохранением ВСЕХ ведущих нулей (формат: 0654, 0644, 0615, 0611, 0616).
-- Сч/Н: номер счета Новосибирска.
-- По счету: ПОЛНЫЙ тираж договора из сводки ПП (колонка «количество», столбец 4). Запрещено ставить туда значение из колонки «Получено»!
-- Получено и Отгрузить: фактические значения из таблицы посылки.
-- Этикетка: ВСЕГДА ставить значение "ОТК".
-- Доставка: определяется по типу: "ДМ" (Доставка Москва), "СДЭК", "К" (Курьер), "Самовывоз".
+ПРАВИЛА:
+1. ГОЛОВА (ООО «Печатные платы»):
+- Поиск по PS в сводке ПП. Заполнить фирму, если не указана.
+- Счет пп: московский счет с ведущими нулями (0654, 0644, 0611).
+- По счету: ПОЛНЫЙ тираж из сводки ПП (колонка «количество», столбец 4). Не дублировать «Получено»!
+- Этикетка: всегда "ОТК".
+- Доставка: "ДМ", "СДЭК", "К", "Самовывоз".
 
-3. РАЗДЕЛИТЕЛЬ БЛОКОВ:
-Ровно одна строка:
+2. РАЗДЕЛИТЕЛЬ:
 филиал;;;;;;;;;;;;
 
-4. БЛОК 2: ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»)
-- Все строки, идущие под разделителем «филиал».
-- Счет пп: СТРОГО ПУСТОЕ ПОЛЕ (;;). У филиала НЕ БЫВАЕТ счетов «Печатных плат»!
-- Этикетка: СТРОГО ПУСТОЕ ПОЛЕ (;;). У филиала НЕ БЫВАЕТ ОТК!
-- По счету: искать в «Сводке филиал» (лист «ФИЛИАЛ») по СВЯЗКЕ [Номер счета Новосибирска (Сч/Н, колонка 0) + PS (колонка 4)]. Брать значение строго из колонки 7 («кол-во» / запуск в работу). Это полный оплаченный заказ! (Например, если пришла 1 шт., а в договоре по счету 50 шт. — ставить 50!).
-- Доставка: определять по сводке филиала:
-  * "Доставка Москва" -> ставить "ДМ"
-  * "Курьер" (включая заказы Нейрософт, Кузьминский) -> ставить "К"
-  * "СДЭК" / "курьер СДЭК" -> ставить "СДЭК"
-  * "Самовывоз" -> ставить "Самовывоз"
+3. ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»):
+- Счет пп: СТРОГО ПУСТО.
+- Этикетка: СТРОГО ПУСТО (ОТК нет!).
+- По счету: найти в сводке филиала по связке [Сч/Н + PS] значение из столбца 7 («кол-во»). Это полный заказ (например, Кортэк = 50, Промприбор = 5000).
+- Доставка: Нейрософт и Кузьминский -> "К"; АТБ-Электроника -> "ДМ"; СДЭК -> "СДЭК"; Самовывоз -> "Самовывоз".
 
-5. СТРОГАЯ СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
-Внутри блока Головы, а затем внутри блока Филиала строки ДОЛЖНЫ быть строго отсортированы по доставке:
-1) ДМ (в самом верху)
-2) СДЭК
-3) К
-4) Самовывоз
+4. СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
+ДМ -> СДЭК -> К -> Самовывоз.
 
-6. ФОРМАТ ОТВЕТА:
-Выведи ТОЛЬКО чистый CSV блок внутри ```csv ... ``` без лишних рассуждений.
+Формат ответа: только блок ```csv ... ``` без лишнего текста.
 ''';
 
   @override
   void initState() {
     super.initState();
     _loadApiKey();
+    _chatHistory.add({
+      'role': 'assistant',
+      'text': 'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
+    });
   }
 
   Future<void> _loadApiKey() async {
@@ -128,7 +115,7 @@ class _MainScreenState extends State<MainScreen> {
     if (key.isNotEmpty) {
       setState(() {
         _apiKeyController.text = key;
-        _apiStatus = 'API ключ подключен';
+        _apiStatus = 'API подключен';
         _statusColor = Colors.greenAccent;
       });
     }
@@ -138,7 +125,7 @@ class _MainScreenState extends State<MainScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('gemini_api_key', key.trim());
     setState(() {
-      _apiStatus = key.trim().isNotEmpty ? 'API ключ сохранен' : 'Ключ не настроен';
+      _apiStatus = key.trim().isNotEmpty ? 'API подключен' : 'Ключ не настроен';
       _statusColor = key.trim().isNotEmpty ? Colors.greenAccent : Colors.orangeAccent;
     });
   }
@@ -149,24 +136,54 @@ class _MainScreenState extends State<MainScreen> {
       allowedExtensions: ['xlsx', 'xls', 'csv', 'txt'],
     );
 
-    if (result != null && result.files.isNotEmpty && result.files.single.path != null) {
-      final file = File(result.files.single.path!);
-      setState(() {
-        if (type == 1) _posylkaFile = file;
-        if (type == 2) _svodkaPpFile = file;
-        if (type == 3) _svodkaFilialFile = file;
-      });
+    if (result != null && result.files.isNotEmpty) {
+      final path = result.files.single.path;
+      if (path != null && path.isNotEmpty) {
+        setState(() {
+          if (type == 1) _posylkaFile = File(path);
+          if (type == 2) _svodkaPpFile = File(path);
+          if (type == 3) _svodkaFilialFile = File(path);
+        });
+      }
     }
   }
 
-  Future<void> _processLogistics() async {
+  // Обычный чат с Gemini
+  Future<void> _sendChatMessage() async {
+    final text = _chatInputController.text.trim();
+    if (text.isEmpty) return;
+
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
-      _showSnackbar('Введите API ключ Gemini в настройках!');
+      _showSnackbar('Сначала введи API ключ в настройках (шестерёнка)!');
       return;
     }
 
-    if (_posylkaFile == null) {
+    _chatInputController.clear();
+    _appendMessage('user', text);
+
+    setState(() => _isLoading = true);
+
+    try {
+      final responseText = await _callGeminiText(apiKey, text);
+      _appendMessage('assistant', responseText);
+    } catch (e) {
+      _appendMessage('system', 'Ошибка: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // Сведение логистических таблиц
+  Future<void> _processLogistics() async {
+    final apiKey = _apiKeyController.text.trim();
+    if (apiKey.isEmpty) {
+      _showSnackbar('Введите API ключ в настройках!');
+      return;
+    }
+
+    final posFile = _posylkaFile;
+    if (posFile == null || !posFile.existsSync()) {
       _showSnackbar('Выберите файл Посылки!');
       return;
     }
@@ -176,27 +193,28 @@ class _MainScreenState extends State<MainScreen> {
       _lastCsvResult = null;
     });
 
-    final fileName = _posylkaFile?.path.split(Platform.pathSeparator).last ?? 'Посылка';
-    _addMessage('user', 'Запуск сведения накладных: $fileName');
+    final fileName = posFile.path.split(Platform.pathSeparator).last;
+    _appendMessage('user', '📦 Запуск сведения накладной: $fileName');
 
     try {
-      // Читаем только нужные актуальные строки, чтобы не перегружать память
-      final posylkaContent = await _readExcelTail(_posylkaFile!, maxRows: 150);
+      final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
       
       String svodkaPpContent = '';
-      if (_svodkaPpFile != null) {
-        svodkaPpContent = await _readExcelTail(_svodkaPpFile!, maxRows: 600);
+      final ppFile = _svodkaPpFile;
+      if (ppFile != null && ppFile.existsSync()) {
+        svodkaPpContent = await _readExcelTailSafe(ppFile, maxRows: 600);
       }
       
       String svodkaFilialContent = '';
-      if (_svodkaFilialFile != null) {
-        svodkaFilialContent = await _readExcelTail(_svodkaFilialFile!, maxRows: 1500);
+      final filFile = _svodkaFilialFile;
+      if (filFile != null && filFile.existsSync()) {
+        svodkaFilialContent = await _readExcelTailSafe(filFile, maxRows: 1500);
       }
 
       final promptText = '''
 ВХОДНЫЕ ДАННЫЕ ДЛЯ СВЕДЕНИЯ:
 
-=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД / ПОСЛЕДНЯЯ ПАРТИЯ) ===
+=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД) ===
 $posylkaContent
 
 === 2. СВОДКА ООО ПЕЧАТНЫЕ ПЛАТЫ (ГОЛОВА) ===
@@ -205,59 +223,56 @@ $svodkaPpContent
 === 3. СВОДКА ФИЛИАЛ (ЭЛЕКТРОКОННЕКТ) ===
 $svodkaFilialContent
 
-Выполни полное сопоставление по инструкции:
-- Определи пропущенные фирмы для «Печатных плат»
-- Проставь договорные тиражи «По счету»
-- Для филиала оставь колонки «Счет пп» и «Этикетка» пустыми
-- Разложи по доставке: ДМ -> СДЭК -> К -> Самовывоз
-- Верни результат в виде CSV.
+Выполни сопоставление по инструкции и верни CSV.
 ''';
 
-      final response = await _callGeminiFlash(apiKey, promptText);
-      final csv = _extractCsv(response);
+      final response = await _callGeminiRaw(
+        apiKey: apiKey,
+        systemInstruction: _logisticsSystemPrompt,
+        prompt: promptText,
+      );
 
+      final csv = _extractCsv(response);
       setState(() {
         _lastCsvResult = csv;
       });
 
-      _addMessage('assistant', response);
+      _appendMessage('assistant', response);
     } catch (e) {
-      _addMessage('system', 'Ошибка при обработке: $e');
+      _appendMessage('system', 'Ошибка логистики: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      setState(() => _isLoading = false);
     }
   }
 
-  // Безопасное чтение хвоста таблицы Excel без риска Null pointer
-  Future<String> _readExcelTail(File file, {int maxRows = 500}) async {
-    final ext = file.path.split('.').last.toLowerCase();
-    if (ext == 'xlsx' || ext == 'xls') {
+  Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
+    final path = file.path.toLowerCase();
+    if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
       final bytes = await file.readAsBytes();
       final excel = ex.Excel.decodeBytes(bytes);
-      final sb = StringBuffer();
+      final tables = excel.tables;
+      if (tables.isEmpty) return '';
 
-      for (final tableName in excel.tables.keys) {
-        final sheet = excel.tables[tableName];
-        if (sheet == null) continue;
+      final sb = StringBuffer();
+      for (final entry in tables.entries) {
+        final tableName = entry.key;
+        final sheet = entry.value;
 
         sb.writeln('Лист: $tableName');
         final allRows = sheet.rows;
-        
-        // Берём заголовок (первые 2 строки)
-        if (allRows.isNotEmpty) {
-          final headerVals = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
-          sb.writeln(headerVals.join(';'));
-        }
+        if (allRows.isEmpty) continue;
 
-        // Берём последние maxRows строк, где содержатся актуальные текущие данные
+        // Заголовок
+        final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
+        sb.writeln(header.join(';'));
+
+        // Хвост
         final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
         for (int i = startIndex; i < allRows.length; i++) {
           final row = allRows[i];
-          final rowVals = row.map((c) => c?.value?.toString() ?? '').toList();
-          if (rowVals.any((v) => v.trim().isNotEmpty)) {
-            sb.writeln(rowVals.join(';'));
+          final rowList = row.map((c) => c?.value?.toString() ?? '').toList();
+          if (rowList.any((v) => v.trim().isNotEmpty)) {
+            sb.writeln(rowList.join(';'));
           }
         }
       }
@@ -267,7 +282,20 @@ $svodkaFilialContent
     }
   }
 
-  Future<String> _callGeminiFlash(String apiKey, String prompt) async {
+  // Общий запрос к Gemini
+  Future<String> _callGeminiText(String apiKey, String userMessage) async {
+    return _callGeminiRaw(
+      apiKey: apiKey,
+      systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы.',
+      prompt: userMessage,
+    );
+  }
+
+  Future<String> _callGeminiRaw({
+    required String apiKey,
+    required String systemInstruction,
+    required String prompt,
+  }) async {
     final url = Uri.parse(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=$apiKey',
     );
@@ -275,7 +303,7 @@ $svodkaFilialContent
     final payload = {
       'system_instruction': {
         'parts': [
-          {'text': _systemInstruction}
+          {'text': systemInstruction}
         ]
       },
       'contents': [
@@ -287,7 +315,7 @@ $svodkaFilialContent
         }
       ],
       'generationConfig': {
-        'temperature': 0.0,
+        'temperature': 0.2,
         'maxOutputTokens': 8192,
       }
     };
@@ -299,21 +327,24 @@ $svodkaFilialContent
     );
 
     if (resp.statusCode != 200) {
-      throw Exception('Ошибка API (${resp.statusCode}): ${resp.body}');
+      throw Exception('Код ${resp.statusCode}: ${resp.body}');
     }
 
-    final data = jsonDecode(resp.body);
-    final candidates = data['candidates'] as List?;
+    final data = jsonDecode(resp.body) as Map<String, dynamic>?;
+    final candidates = data?['candidates'] as List<dynamic>?;
     if (candidates == null || candidates.isEmpty) {
-      throw Exception('Нейросеть не вернула результат. Проверьте содержимое файлов.');
+      throw Exception('Модель не вернула ответ.');
     }
 
-    final content = candidates[0]['content'];
-    if (content == null || content['parts'] == null || (content['parts'] as List).isEmpty) {
-      throw Exception('Пустой ответ от модели (возможно, сработал фильтр или лимит токенов).');
-    }
+    final first = candidates[0] as Map<String, dynamic>?;
+    final content = first?['content'] as Map<String, dynamic>?;
+    final parts = content?['parts'] as List<dynamic>?;
+    final text = (parts != null && parts.isNotEmpty) ? parts[0]['text'] as String? : null;
 
-    return content['parts'][0]['text'] as String;
+    if (text == null || text.isEmpty) {
+      throw Exception('Пустой ответ.');
+    }
+    return text;
   }
 
   String _extractCsv(String text) {
@@ -330,8 +361,9 @@ $svodkaFilialContent
   }
 
   Future<void> _exportToFormattedExcel() async {
-    if (_lastCsvResult == null || _lastCsvResult!.isEmpty) {
-      _showSnackbar('Нет данных CSV для выгрузки!');
+    final csvData = _lastCsvResult;
+    if (csvData == null || csvData.isEmpty) {
+      _showSnackbar('Нет данных CSV!');
       return;
     }
 
@@ -340,8 +372,7 @@ $svodkaFilialContent
       final sheet = excel['Посылка'];
       excel.delete('Sheet1');
 
-      final lines = _lastCsvResult!.split('\n');
-
+      final lines = csvData.split('\n');
       for (int r = 0; r < lines.length; r++) {
         final line = lines[r].trim();
         if (line.isEmpty) continue;
@@ -350,7 +381,6 @@ $svodkaFilialContent
         for (int c = 0; c < cells.length; c++) {
           final val = cells[c].trim();
           final cellIndex = ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r);
-
           if (r > 0 && c >= 4 && c <= 6 && int.tryParse(val) != null) {
             sheet.cell(cellIndex).value = ex.IntCellValue(int.parse(val));
           } else {
@@ -374,9 +404,9 @@ $svodkaFilialContent
     }
   }
 
-  void _addMessage(String role, String text) {
+  void _appendMessage(String role, String text) {
     setState(() {
-      _messages.add({'role': role, 'text': text});
+      _chatHistory.add({'role': role, 'text': text});
     });
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
@@ -399,28 +429,172 @@ $svodkaFilialContent
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
+        backgroundColor: const Color(0xFF101726),
+        elevation: 0,
+        title: Row(
           children: [
-            Icon(Icons.precision_manufacturing, color: Color(0xFF38BDF8)),
-            SizedBox(width: 8),
-            Text('BlackPocket AI', style: TextStyle(fontWeight: FontWeight.bold)),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0284C7).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.bolt, color: Color(0xFF38BDF8), size: 20),
+            ),
+            const SizedBox(width: 10),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('BlackPocket AI', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                Text('Гена • на связи', style: TextStyle(fontSize: 11, color: Colors.greenAccent)),
+              ],
+            ),
           ],
         ),
         actions: [
+          // Кнопка сворачивания/разворачивания логистики
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: Icon(
+              _isLogisticsExpanded ? Icons.inventory_2 : Icons.inventory_2_outlined,
+              color: _isLogisticsExpanded ? const Color(0xFF38BDF8) : Colors.white70,
+            ),
+            tooltip: 'Модуль логистики',
+            onPressed: () {
+              setState(() {
+                _isLogisticsExpanded = !_isLogisticsExpanded;
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
             onPressed: () => _showSettingsDialog(context),
-          )
+          ),
         ],
-        elevation: 2,
-        backgroundColor: const Color(0xFF1E293B),
       ),
       body: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            color: const Color(0xFF0F172A),
+          // Выдвижная верхняя панель логистики
+          _buildLogisticsTopPanel(),
+
+          // Лента сообщений чата
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              itemCount: _chatHistory.length,
+              itemBuilder: (context, idx) {
+                final m = _chatHistory[idx];
+                final role = m['role'] ?? 'assistant';
+                final isUser = role == 'user';
+                final isSystem = role == 'system';
+                final text = m['text'] ?? '';
+
+                return Align(
+                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 5),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    constraints: BoxConstraints(
+                      maxWidth: MediaQuery.of(context).size.width * 0.85,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? const Color(0xFF0369A1)
+                          : isSystem
+                              ? const Color(0xFF7F1D1D)
+                              : const Color(0xFF162032),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(14),
+                        topRight: const Radius.circular(14),
+                        bottomLeft: Radius.circular(isUser ? 14 : 2),
+                        bottomRight: Radius.circular(isUser ? 2 : 14),
+                      ),
+                      border: Border.all(
+                        color: isUser
+                            ? const Color(0xFF38BDF8).withOpacity(0.3)
+                            : isSystem
+                                ? Colors.redAccent.withOpacity(0.3)
+                                : const Color(0xFF334155).withOpacity(0.4),
+                      ),
+                    ),
+                    child: SelectableText(
+                      text,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.white.withOpacity(0.95),
+                        fontFamily: isSystem || text.startsWith('Фирма;') ? 'monospace' : null,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
+                  ),
+                  SizedBox(width: 8),
+                  Text('Гена думает...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                ],
+              ),
+            ),
+
+          // Полноценная нижняя строка ввода для общения
+          _buildChatInputArea(),
+        ],
+      ),
+    );
+  }
+
+  // Виджет выдвижной панели логистики
+  Widget _buildLogisticsTopPanel() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF101726),
+        border: Border(
+          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isLogisticsExpanded = !_isLogisticsExpanded;
+              });
+            },
             child: Row(
+              children: [
+                const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF38BDF8)),
+                const SizedBox(width: 8),
+                const Text(
+                  'Сведение накладных (Посылка / Сводки)',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white70),
+                ),
+                const Spacer(),
+                Icon(
+                  _isLogisticsExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                  size: 18,
+                  color: Colors.white54,
+                ),
+              ],
+            ),
+          ),
+          if (_isLogisticsExpanded) ...[
+            const SizedBox(height: 10),
+            Row(
               children: [
                 Expanded(
                   child: _fileBtn(
@@ -440,34 +614,26 @@ $svodkaFilialContent
                 const SizedBox(width: 6),
                 Expanded(
                   child: _fileBtn(
-                    label: _svodkaFilialFile == null ? '3. Сводка Фил.' : 'Филиал: OK',
+                    label: _svodkaFilialFile == null ? '3. Филиал' : 'Филиал: OK',
                     active: _svodkaFilialFile != null,
                     onTap: () => _pickFile(3),
                   ),
                 ),
               ],
             ),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
+            const SizedBox(height: 8),
+            Row(
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0284C7),
                       foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.play_arrow),
-                    label: Text(_isLoading ? 'Сведение таблицы...' : 'СВЕСТИ НАКЛАДНУЮ'),
+                    icon: const Icon(Icons.play_arrow, size: 18),
+                    label: const Text('СВЕСТИ НАКЛАДНУЮ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     onPressed: _isLoading ? null : _processLogistics,
                   ),
                 ),
@@ -479,47 +645,66 @@ $svodkaFilialContent
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.download),
-                    tooltip: 'Экспорт в Excel',
+                    tooltip: 'Скачать Excel',
                     onPressed: _exportToFormattedExcel,
                   )
                 ]
               ],
             ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (context, idx) {
-                final m = _messages[idx];
-                final isUser = m['role'] == 'user';
-                final isSystem = m['role'] == 'system';
-
-                return Align(
-                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 4),
-                    padding: const EdgeInsets.all(12),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.9),
-                    decoration: BoxDecoration(
-                      color: isUser
-                          ? const Color(0xFF0369A1)
-                          : isSystem
-                              ? const Color(0xFF7F1D1D)
-                              : const Color(0xFF1E293B),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: SelectableText(
-                      m['text']?.toString() ?? '',
-                      style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
+          ]
         ],
+      ),
+    );
+  }
+
+  // Нижняя панель чата
+  Widget _buildChatInputArea() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFF101726),
+        border: Border(top: BorderSide(color: Color(0xFF1E293B))),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF182235),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF334155).withOpacity(0.5)),
+                ),
+                child: TextField(
+                  controller: _chatInputController,
+                  maxLines: 4,
+                  minLines: 1,
+                  style: const TextStyle(fontSize: 14),
+                  decoration: const InputDecoration(
+                    hintText: 'Спроси что угодно у Гены...',
+                    hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  ),
+                  onSubmitted: (_) => _sendChatMessage(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF0284C7),
+                shape: BoxShape.circle,
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.arrow_upward, color: Colors.white, size: 20),
+                onPressed: _isLoading ? null : _sendChatMessage,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -529,7 +714,7 @@ $svodkaFilialContent
       style: OutlinedButton.styleFrom(
         foregroundColor: active ? Colors.greenAccent : Colors.grey,
         side: BorderSide(color: active ? Colors.greenAccent : Colors.grey.shade700),
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       ),
       onPressed: onTap,
@@ -546,15 +731,15 @@ $svodkaFilialContent
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
-        title: const Text('Настройки Google Cloud API'),
+        backgroundColor: const Color(0xFF162032),
+        title: const Text('Настройки Gemini API'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: _apiKeyController,
               decoration: const InputDecoration(
-                labelText: 'Gemini API Key (AQ...)',
+                labelText: 'Ключ Gemini API (AQ...)',
                 border: OutlineInputBorder(),
               ),
             ),
