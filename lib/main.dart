@@ -24,7 +24,7 @@ Future<void> main() async {
   try {
     _availableCameras = await availableCameras();
   } catch (e) {
-    debugPrint("Камера не найдена или ошибка: $e");
+    debugPrint("Камера не найдена: $e");
   }
   runApp(const GeminiBlackPocketApp());
 }
@@ -72,45 +72,36 @@ final List<AgentPreset> _availableAgents = [
   const AgentPreset(
     id: "excel_logist",
     name: "Логист / Разбор счетов (Excel)",
-    description: "Точное сведение: Посылка, Сводка Печатные платы и Сводка филиал",
+    description: "Авто-сведение: Посылка, Сводка Печатные платы и филиал",
     icon: Icons.table_chart_outlined,
     systemInstruction:
-        "Ты — высококвалифицированный эксперт по логистике и учету печатных плат для Александра (Москва). "
-        "Твоя задача — предельно внимательно и безошибочно сопоставлять данные из прикрепленных файлов накладных. "
-        "ПРАВИЛА ОБРАБОТКИ ДАННЫХ: "
-        "1. Работай со свежими записями из реестров (Посылка, Сводки головной организации и филиала). "
-        "2. Точно определяй номера заказов, Сч/н, PS, количество к отгрузке и отметки ОТК. "
-        "3. Ведущие нули в номерах счетов ПП (0585, 0643, 0615 и др.) сохраняй в исходном виде. "
-        "4. В середине таблицы ставь строку-разделитель: филиал;;;;;;;;; "
-        "5. Итоговую таблицу выводи в блоке кода ```csv со столбцами: "
-        "Фирма;PS;Счет пп;Сч/н;По счету;Получено;Отгрузить;ОТК;Примечание/Этикетка;Доставка "
-        "6. В начале сообщения давай краткую числовую сводку: количество позиций и сумма штук к отгрузке. "
-        "Работай строго по фактам из таблиц, без фантазий и лишних рассуждений.",
+        "Ты — персональный эксперт-логист Александра по учету и отгрузке плат (ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект», Москва). "
+        "Александр передает файлы: «Посылка», «Сводка ООО Печатные платы» и «Сводка филиал». "
+        "ТВОЙ АЛГОРИТМ РАБОТЫ (СТРОГО ПО АНАЛОГИИ С ВЕРХНИМИ СТРОКАМИ ПОСЫЛКИ): "
+        "1. ИСХОДНЫЕ ДАННЫЕ: В файле «Посылка» в конце таблицы находится свежий приход (заполнены Фирма, PS, Сч/Н Новосибирска, Получено, Отгрузить!, а Счет пп и По счету пустые). "
+        "2. СОПОСТАВЛЕНИЕ СО СВОДКАМИ (ПОИСК ПО PS ИЛИ ПО СВЯЗКЕ Сч/Н + ФИРМА): "
+        "   - Найди каждую позицию в «Сводке Печатные платы» (для головных заказов) или в «Сводке филиал» (для филиала). "
+        "   - ПОДТЯНИ 'Счет пп': извлеки московский номер счета. ОБЯЗАТЕЛЬНО сохраняй ведущие нули (например, 0585, 0643, 0441, 0615). Если счета в сводке нет — оставь пусто. "
+        "   - ПОДТЯНИ 'По счету': найди исходный полный тираж заказа по счету/договору. Например: если в посылке получено 484 и отгрузить 484, а в сводке заказ на 500 — в колонку 'По счету' обязательно поставь 500! "
+        "   - ПОДТЯНИ 'Доставка': определи способ доставки (Самовывоз, К, ДМ, СДЭК и т.д.). "
+        "   - ПРОВЕРЬ 'ОТК': если в примечании, названии фирмы или сводке указан паспорт/ОТК — пропиши ОТК. "
+        "3. РАЗДЕЛЕНИЕ НА БЛОКИ: "
+        "   - Сначала выведи все головные заказы ООО «Печатные платы». "
+        "   - В середине поставь разделительную строку: филиал;;;;;;;;; "
+        "   - Затем выведи все заказы филиала (ЭЛЕКТРОконнект). "
+        "4. ФОРМАТ ОТВЕТА: "
+        "   В самом начале напиши краткую сводку: сколько позиций сведено (головных и филиала) и общую сумму штук к отгрузке. "
+        "   Затем выведи итоговый реестр строго в одном блоке кода ```csv со столбцами: "
+        "   Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;ОТК;Примечание/Этикетка;Доставка",
   ),
   const AgentPreset(
     id: "companion",
     name: "Живой напарник",
-    description: "Разговорный стиль, кратко, без воды, оптимизирован под голос",
+    description: "Разговорный стиль, кратко, без воды",
     icon: Icons.chat_bubble_outline,
     systemInstruction:
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
-        "Отвечай кратко, ёмко, по-живому, дружелюбно, без лишней бюрократии.",
-  ),
-  const AgentPreset(
-    id: "engineer",
-    name: "Инженер / Кодер",
-    description: "Глубокая архитектура, чистый код, багфикс и разбор электроники",
-    icon: Icons.code,
-    systemInstruction:
-        "Ты — ведущий инженер-разработчик. Давай технически выверенный код и глубокий аудит решений.",
-  ),
-  const AgentPreset(
-    id: "analyst",
-    name: "Аналитик документов",
-    description: "Тщательный аудит логов, конфигов, таблиц и текстовых файлов",
-    icon: Icons.analytics_outlined,
-    systemInstruction:
-        "Ты — системный аналитик документации и отчетов. Анализируй файлы досконально.",
+        "Отвечай кратко, ёмко, по-живому, дружелюбно, без бюрократии.",
   ),
 ];
 
@@ -226,8 +217,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
-      "Ведет отгрузки и логистику печатных плат в Москве. Сводит таблицы Посылка и Сводки. "
-      "Отвечай емко, по делу, с максимальной числовой точностью.";
+      "Он логист в Москве по учету печатных плат (ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект»). "
+      "Сводит накладные «Посылка» со «Сводками». Отвечай емко, строго следуй данным из таблиц.";
 
   late AnimationController _pulseController;
 
@@ -280,7 +271,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       await _cameraController!.initialize();
       if (mounted) setState(() {});
     } catch (e) {
-      debugPrint("Ошибка камеры: $e");
+      debugPrint("Камера не найдена: $e");
     }
   }
 
@@ -363,15 +354,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v29_flash_36_strict') {
-      await prefs.setString('bp_clean_migration', 'v29_flash_36_strict');
+    if (migrationTag != 'v31_perfect_logist') {
+      await prefs.setString('bp_clean_migration', 'v31_perfect_logist');
       await prefs.setString('modelName', 'gemini-3.6-flash');
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
-      if (_modelName.contains('lite')) {
+      if (_modelName.contains('1.5') || _modelName.contains('lite')) {
         _modelName = 'gemini-3.6-flash';
       }
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
@@ -537,17 +528,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    final picked = await _picker.pickImage(source: source, imageQuality: 70, maxWidth: 1024);
-    if (picked != null) {
-      HapticFeedback.selectionClick();
-      final bytes = await picked.readAsBytes();
-      setState(() {
-        _selectedImageBase64 = base64Encode(bytes);
-      });
-    }
-  }
-
   String _parseExcelFile(List<int> bytes) {
     try {
       final excel = xl.Excel.decodeBytes(bytes);
@@ -566,9 +546,9 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         final allRows = currentSheet.rows;
         List<List<xl.Data?>> targetRows = [];
 
-        if (allRows.length > 100) {
+        if (allRows.length > 120) {
           targetRows.addAll(allRows.take(10));
-          targetRows.addAll(allRows.skip(allRows.length - 50));
+          targetRows.addAll(allRows.skip(allRows.length - 80));
         } else {
           targetRows = allRows;
         }
@@ -630,7 +610,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('📊 Добавлено файлов: $addedCount'),
+            content: Text('📊 Загружено файлов: $addedCount'),
             backgroundColor: const Color(0xFF1E293B),
             duration: const Duration(seconds: 2),
           ),
@@ -652,23 +632,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       HapticFeedback.mediumImpact();
       final downloadsDir = Directory('/storage/emulated/0/Download');
       final targetDir = await downloadsDir.exists() ? downloadsDir : Directory.systemTemp;
-
-      if (codeSnippet.trim().startsWith('{') || codeSnippet.trim().startsWith('[')) {
-        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.json";
-        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
-        _showSavedToast(fileName);
-        return;
-      } else if (codeSnippet.contains('rules:') || codeSnippet.contains('proxies:')) {
-        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.yaml";
-        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
-        _showSavedToast(fileName);
-        return;
-      } else if (codeSnippet.contains('import ') || codeSnippet.contains('def ')) {
-        final fileName = "BlackPocket_${DateTime.now().millisecondsSinceEpoch}.py";
-        await File('${targetDir.path}/$fileName').writeAsString(codeSnippet);
-        _showSavedToast(fileName);
-        return;
-      }
 
       final excel = xl.Excel.createExcel();
       final sheetName = excel.getDefaultSheet() ?? 'Лист1';
@@ -720,7 +683,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           }
 
           final int fontSize = (colIdx == 0 || isHeader) ? 18 : 16;
-
           xl.ExcelColor fontColor = xl.ExcelColor.black;
           xl.ExcelColor bgColor = whiteColor;
 
@@ -744,8 +706,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               final valUp = cellValue.toUpperCase();
               if (valUp == 'К' || valUp == 'ДМ' || valUp.contains('САМОВЫВОЗ')) {
                 fontColor = xl.ExcelColor.fromHexString('#CC0000');
-              } else {
-                fontColor = xl.ExcelColor.black;
               }
             }
             if (colIdx == 8 && cellValue.isNotEmpty) {
@@ -809,10 +769,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Отмена'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
           FilledButton(
             onPressed: () {
               final newName = titleController.text.trim();
@@ -831,31 +788,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         ],
       ),
     );
-  }
-
-  void _checkAndAutoSaveMemory(String text) {
-    final lower = text.toLowerCase().trim();
-    if (lower.startsWith('запомни:') || lower.startsWith('запомни, что') || lower.startsWith('запомни ')) {
-      String fact = text;
-      final match = RegExp(r'запомни[,:]?\s*(что\s*)?', caseSensitive: false).firstMatch(text);
-      if (match != null) {
-        fact = text.substring(match.end).trim();
-      }
-      if (fact.isNotEmpty) {
-        if (!_memoryFacts.contains(fact)) {
-          _memoryFacts = "$_memoryFacts\n-$fact";
-          _saveData();
-          HapticFeedback.mediumImpact();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              backgroundColor: const Color(0xFF1E293B),
-              content: Text('🧠 Запомнил: $fact', style: const TextStyle(color: Colors.greenAccent)),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      }
-    }
   }
 
   dynamic _buildContentsHistory(dynamic historyList, dynamic currentParts) {
@@ -901,18 +833,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     return resultList;
   }
 
-  bool _phraseRequestsVision(String text) {
-    final lower = text.toLowerCase();
-    return lower.contains('посмотри') ||
-        lower.contains('что это') ||
-        lower.contains('видишь') ||
-        lower.contains('глянь') ||
-        lower.contains('проверь') ||
-        lower.contains('разбери') ||
-        lower.contains('в кадре') ||
-        lower.contains('на фото');
-  }
-
   Future<void> _handleSend([String? forcedText]) async {
     final text = (forcedText ?? _inputController.text).trim();
     if (text.isEmpty && _selectedImageBase64 == null && _attachedDocs.isEmpty && !_isLiveActive) return;
@@ -927,27 +847,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
     HapticFeedback.lightImpact();
     _stopListening();
-    _checkAndAutoSaveMemory(text);
 
     String? imageToSend = _selectedImageBase64;
     final List<AttachedDoc> docsToSend = List.from(_attachedDocs);
 
     _selectedImageBase64 = null;
     _attachedDocs.clear();
-
-    if (imageToSend == null &&
-        _isLiveActive &&
-        _cameraController != null &&
-        _cameraController!.value.isInitialized &&
-        (_phraseRequestsVision(text) || text.isEmpty)) {
-      try {
-        final XFile file = await _cameraController!.takePicture();
-        final bytes = await file.readAsBytes();
-        imageToSend = base64Encode(bytes);
-      } catch (e) {
-        debugPrint("Кадр ошибка: $e");
-      }
-    }
 
     final session = _activeSession;
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
@@ -985,7 +890,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       if (docsToSend.isNotEmpty) {
-        buffer.writeln("\n[ПРИКРЕПЛЕННЫЕ ТАБЛИЦЫ ЛОГИСТИКИ]:");
+        buffer.writeln("\n[ПРИКРЕПЛЕННЫЕ ТАБЛИЦЫ]:");
         for (final doc in docsToSend) {
           buffer.writeln("\n--- ФАЙЛ: ${doc.fileName} ---");
           buffer.writeln(doc.content);
@@ -998,12 +903,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       String finalInstruction = buffer.toString().trim();
       if (text.isEmpty && docsToSend.isNotEmpty) {
         finalInstruction =
-            "Александр прикрепил таблицы логистики (${sentFileNames.join(', ')}).\n"
-            "Выполни сведение счетов: возьми свежие данные из Посылки, сопоставь со Сводками, "
-            "размести позиции филиала под строку-разделитель 'филиал', сохрани ведущие нули в счетах ПП "
-            "и выдай готовый результат строго в блоке кода ```csv.";
+            "Сведи накладные (${sentFileNames.join(', ')}): возьми свежие данные из Посылки, сверь со Сводками, "
+            "размести филиал под строку-разделитель 'филиал', сохрани ведущие нули в счетах ПП и выдай CSV внутри ```csv.";
       } else if (finalInstruction.isEmpty) {
-        finalInstruction = "Слушаю вас. Чем помочь?";
+        finalInstruction = "Слушаю вас.";
       }
 
       final currentParts = [];
@@ -1019,15 +922,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       final payloadContents = _buildContentsHistory(previousHistory, currentParts);
-
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      // ИСКЛЮЧИТЕЛЬНО МОЩНЫЕ МОДЕЛИ: FLASH-LITE ПОЛНОСТЬЮ ИСКЛЮЧЕН
+      // ТОЛЬКО ДЕЙСТВУЮЩИЕ И МОЩНЫЕ МОДЕЛИ GOOGLE API
       final modelsQueue = [
         "gemini-3.6-flash",
         "gemini-2.5-flash",
-        "gemini-1.5-pro",
       ];
 
       bool success = false;
@@ -1043,7 +944,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               'Content-Type': 'application/json',
               'x-goog-api-key': cleanKey,
             });
-            // ЖЕСТКАЯ ТЕМПЕРАТУРА 0.0 ДЛЯ МАКСИМАЛЬНОЙ ТОЧНОСТИ
             request.body = jsonEncode({
               "contents": payloadContents,
               "systemInstruction": {
@@ -1120,18 +1020,14 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       if (!success && botMessage.text.isEmpty) {
-        final errText = "Связь с сервером прервалась. Проверь VPN.";
         setState(() {
-          botMessage.text = errText;
+          botMessage.text = "Связь с сервером прервалась. Проверь VPN.";
         });
-        if (_isLiveActive) _speakText("Связь оборвалась, повтори.");
       }
     } catch (e) {
-      final errText = "Сбой сети: $e";
       setState(() {
-        botMessage.text = errText;
+        botMessage.text = "Сбой соединения: $e";
       });
-      if (_isLiveActive) _speakText("Сбой соединения.");
     } finally {
       setState(() => _isLoading = false);
       _scrollToBottom();
@@ -1175,166 +1071,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     _saveData();
   }
 
-  void _clearAllSessions() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Очистить всю историю?'),
-        content: const Text('Все предыдущие диалоги будут удалены безвозвратно.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Отмена')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _sessions.clear();
-                final first = ChatSession(
-                  id: DateTime.now().millisecondsSinceEpoch.toString(),
-                  title: "Новый чат",
-                  messages: [],
-                );
-                _sessions.add(first);
-                _currentSessionId = first.id;
-              });
-              _saveData();
-            },
-            child: const Text('Очистить'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _exportCurrentChat() {
-    final session = _activeSession;
-    final buffer = StringBuffer();
-    buffer.writeln("# Экспорт диалога: ${session.title}");
-    buffer.writeln("Дата: ${DateTime.now().toLocal().toString().split('.')[0]}\n");
-
-    for (final m in session.messages) {
-      final sender = m.isUser ? "Пользователь (Александр)" : "BlackPocket (${m.modelUsed ?? 'AI'})";
-      buffer.writeln("### $sender");
-      if (m.fileNames.isNotEmpty) buffer.writeln("*Прикреплены файлы: ${m.fileNames.join(', ')}*");
-      buffer.writeln("${m.text}\n");
-    }
-
-    final fullExport = buffer.toString();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Экспорт диалога (.md)'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Text(
-              fullExport,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Закрыть')),
-          FilledButton.icon(
-            icon: const Icon(Icons.copy, size: 18),
-            label: const Text('Скопировать всё'),
-            onPressed: () {
-              _copyToClipboard(fullExport, 'Диалог скопирован в формате Markdown');
-              Navigator.pop(context);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAgentPicker() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF131316),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Text('Выбор роли ассистента', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 12),
-              ..._availableAgents.map((agent) {
-                final isSelected = agent.id == _selectedAgentId;
-                return ListTile(
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  tileColor: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
-                  leading: Icon(agent.icon, color: isSelected ? Colors.blueAccent : Colors.white70),
-                  title: Text(agent.name, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.w500)),
-                  subtitle: Text(agent.description, style: const TextStyle(fontSize: 12, color: Colors.white54)),
-                  trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blueAccent) : null,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    setState(() => _selectedAgentId = agent.id);
-                    _saveData();
-                    Navigator.pop(context);
-                  },
-                );
-              }),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _showAttachmentBottomSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF1E2128),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt_outlined, color: Colors.blueAccent),
-              title: const Text('Сделать фото'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library_outlined, color: Colors.purpleAccent),
-              title: const Text('Выбрать из галереи'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.table_chart_outlined, color: Colors.greenAccent),
-              title: const Text('Загрузить документы / таблицы (до нескольких штук)'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickMultipleFiles();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showMemoryDialog() {
     final memCtrl = TextEditingController(text: _memoryFacts);
     showDialog(
@@ -1352,13 +1088,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Постоянные факты, которые ИИ помнит во всех диалогах:',
+              'Факты об Александре (без кода и лишних знаков):',
               style: TextStyle(fontSize: 13, color: Colors.white70),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: memCtrl,
-              maxLines: 6,
+              maxLines: 5,
               style: const TextStyle(fontSize: 14),
               decoration: const InputDecoration(
                 filled: true,
@@ -1513,11 +1249,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [
-                  Color(0xFF030508),
-                  Color(0xFF070B14),
-                  Color(0xFF0A142B),
-                ],
+                colors: [Color(0xFF030508), Color(0xFF070B14), Color(0xFF0A142B)],
               ),
             ),
           ),
@@ -1581,19 +1313,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                                 ),
                                               );
                                             }).toList(),
-                                          ),
-                                        ),
-                                      if (m.imageBase64 != null)
-                                        Padding(
-                                          padding: const EdgeInsets.only(bottom: 8.0),
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(12),
-                                            child: Image.memory(
-                                              base64Decode(m.imageBase64!),
-                                              height: 180,
-                                              width: double.infinity,
-                                              fit: BoxFit.cover,
-                                            ),
                                           ),
                                         ),
                                       if (m.isUser)
@@ -1700,7 +1419,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             ),
           ),
 
-          if (_selectedImageBase64 != null || _attachedDocs.isNotEmpty)
+          if (_attachedDocs.isNotEmpty)
             Positioned(
               bottom: 95,
               left: 18,
@@ -1715,54 +1434,32 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
-                    children: [
-                      if (_selectedImageBase64 != null)
-                        Stack(
+                    children: _attachedDocs.asMap().entries.map((entry) {
+                      final idx = entry.key;
+                      final doc = entry.value;
+                      return Container(
+                        margin: const EdgeInsets.only(left: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.memory(base64Decode(_selectedImageBase64!), width: 44, height: 44, fit: BoxFit.cover),
-                            ),
-                            Positioned(
-                              top: -4,
-                              right: -4,
-                              child: GestureDetector(
-                                onTap: () => setState(() => _selectedImageBase64 = null),
-                                child: Container(
-                                  decoration: const BoxDecoration(color: Colors.black, shape: BoxShape.circle),
-                                  child: const Icon(Icons.close, size: 16, color: Colors.white),
-                                ),
-                              ),
+                            const Icon(Icons.table_chart_outlined, size: 16, color: Colors.greenAccent),
+                            const SizedBox(width: 6),
+                            Text(doc.fileName, style: const TextStyle(fontSize: 12, color: Colors.white)),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () => setState(() => _attachedDocs.removeAt(idx)),
+                              child: const Icon(Icons.close, size: 16, color: Colors.white54),
                             ),
                           ],
                         ),
-                      ..._attachedDocs.asMap().entries.map((entry) {
-                        final idx = entry.key;
-                        final doc = entry.value;
-                        return Container(
-                          margin: const EdgeInsets.only(left: 8),
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1E293B),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.table_chart_outlined, size: 16, color: Colors.greenAccent),
-                              const SizedBox(width: 6),
-                              Text(doc.fileName, style: const TextStyle(fontSize: 12, color: Colors.white)),
-                              const SizedBox(width: 4),
-                              GestureDetector(
-                                onTap: () => setState(() => _attachedDocs.removeAt(idx)),
-                                child: const Icon(Icons.close, size: 16, color: Colors.white54),
-                              ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ],
+                      );
+                    }).toList(),
                   ),
                 ),
               ),
@@ -1774,8 +1471,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             bottom: 20,
             child: _buildGeminiPillBar(),
           ),
-
-          if (_isLiveActive) _buildLiveOverlay(),
         ],
       ),
     );
@@ -1791,22 +1486,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             onPressed: () => _scaffoldKey.currentState?.openDrawer(),
           ),
           const SizedBox(width: 4),
-          InkWell(
-            onTap: _showAgentPicker,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Row(
-                children: [
-                  Icon(_currentAgent.icon, size: 18, color: Colors.blueAccent),
-                  const SizedBox(width: 6),
-                  Text(_currentAgent.name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.keyboard_arrow_down, color: Colors.white70, size: 18),
-                ],
-              ),
-            ),
-          ),
+          Text(_currentAgent.name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
           const Spacer(),
           IconButton(
             icon: const Icon(Icons.psychology_outlined, color: Colors.blueAccent),
@@ -1837,17 +1517,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          ShaderMask(
-            shaderCallback: (bounds) => const LinearGradient(
-              colors: [Color(0xFF4285F4), Color(0xFF9B72CF), Color(0xFFD96570), Color(0xFFF4B400)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ).createShader(bounds),
-            child: const Icon(Icons.auto_awesome, size: 64, color: Colors.white),
-          ),
-          const SizedBox(height: 24),
-          const Text(
+        children: const [
+          Icon(Icons.auto_awesome, size: 64, color: Colors.blueAccent),
+          SizedBox(height: 24),
+          Text(
             'ALEKSANDR, что\nдальше?',
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -1864,9 +1537,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   }
 
   Widget _buildGeminiPillBar() {
-    final bool hasContent = _inputController.text.trim().isNotEmpty ||
-        _selectedImageBase64 != null ||
-        _attachedDocs.isNotEmpty;
+    final bool hasContent = _inputController.text.trim().isNotEmpty || _attachedDocs.isNotEmpty;
 
     return Container(
       height: 58,
@@ -1875,18 +1546,14 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         color: const Color(0xFF1E2128),
         borderRadius: BorderRadius.circular(32),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.5),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
+          BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 16, offset: const Offset(0, 4)),
         ],
       ),
       child: Row(
         children: [
           IconButton(
             icon: const Icon(Icons.add, color: Colors.white70, size: 26),
-            onPressed: _showAttachmentBottomSheet,
+            onPressed: _pickMultipleFiles,
           ),
           Expanded(
             child: TextField(
@@ -1923,8 +1590,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             onTap: () {
               if (hasContent) {
                 _handleSend();
-              } else {
-                _toggleLiveModal();
               }
             },
             child: Container(
@@ -1934,109 +1599,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 color: Color(0xFF1D4ED8),
                 shape: BoxShape.circle,
               ),
-              child: Icon(
-                hasContent ? Icons.arrow_upward : Icons.graphic_eq,
-                color: Colors.white,
-                size: 22,
-              ),
+              child: const Icon(Icons.arrow_upward, color: Colors.white, size: 22),
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildLiveOverlay() {
-    return Container(
-      color: const Color(0xFF070B14).withOpacity(0.96),
-      child: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white, size: 28),
-                    onPressed: _toggleLiveModal,
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.flip_camera_ios, color: Colors.white70),
-                    tooltip: 'Переключить камеру',
-                    onPressed: _switchCamera,
-                  ),
-                  IconButton(
-                    icon: Icon(_showLiveCamera ? Icons.videocam : Icons.videocam_off, color: Colors.white70),
-                    onPressed: () => setState(() => _showLiveCamera = !_showLiveCamera),
-                  ),
-                ],
-              ),
-            ),
-
-            if (_showLiveCamera && _cameraController != null && _cameraController!.value.isInitialized)
-              Container(
-                height: 230,
-                width: double.infinity,
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 2),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: CameraPreview(_cameraController!),
-                ),
-              ),
-
-            const Spacer(),
-
-            AnimatedBuilder(
-              animation: _pulseController,
-              builder: (context, child) {
-                final scale = _isSpeaking || _isListening ? 1.0 + (_pulseController.value * 0.18) : 1.0;
-                return Transform.scale(
-                  scale: scale,
-                  child: ShaderMask(
-                    shaderCallback: (bounds) => const LinearGradient(
-                      colors: [Color(0xFF3B82F6), Color(0xFF8B5CF6), Color(0xFFEC4899)],
-                    ).createShader(bounds),
-                    child: const Icon(Icons.auto_awesome, size: 84, color: Colors.white),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 22),
-            Text(
-              _isSpeaking
-                  ? "BlackPocket говорит..."
-                  : (_isListening ? "Слушаю вас (Hands-Free)..." : "Обработка запроса..."),
-              style: const TextStyle(fontSize: 18, color: Colors.white70, fontWeight: FontWeight.w500),
-            ),
-
-            const Spacer(),
-
-            Padding(
-              padding: const EdgeInsets.only(bottom: 30),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  FloatingActionButton.large(
-                    backgroundColor: _isSpeaking ? Colors.redAccent : const Color(0xFF1D4ED8),
-                    onPressed: () {
-                      if (_isSpeaking) {
-                        _stopSpeaking();
-                      } else if (!_isListening) {
-                        _startSpeechListening();
-                      }
-                    },
-                    child: Icon(_isSpeaking ? Icons.stop : Icons.mic, size: 36, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -2082,47 +1648,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               ),
             ),
 
-            const SizedBox(height: 6),
-
-            ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              leading: const Icon(Icons.file_download_outlined, color: Colors.greenAccent, size: 22),
-              title: const Text('Экспорт чата (.md)', style: TextStyle(color: Colors.white, fontSize: 15)),
-              onTap: () {
-                Navigator.pop(context);
-                _exportCurrentChat();
-              },
-            ),
-
-            ListTile(
-              dense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-              leading: const Icon(Icons.psychology, color: Colors.blueAccent, size: 22),
-              title: const Text('Память ассистента', style: TextStyle(color: Colors.white, fontSize: 15)),
-              onTap: () {
-                Navigator.pop(context);
-                _showMemoryDialog();
-              },
-            ),
-
             const Divider(color: Colors.white12, height: 20),
-
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-              child: Row(
-                children: [
-                  const Text('История чатов', style: TextStyle(color: Colors.white54, fontSize: 14, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  if (_sessions.length > 1 || (_sessions.isNotEmpty && _sessions[0].messages.isNotEmpty))
-                    IconButton(
-                      icon: const Icon(Icons.delete_sweep_outlined, color: Colors.white38, size: 20),
-                      tooltip: 'Очистить всю историю',
-                      onPressed: _clearAllSessions,
-                    ),
-                ],
-              ),
-            ),
 
             Expanded(
               child: ListView.builder(
@@ -2153,17 +1679,14 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                       children: [
                         IconButton(
                           icon: const Icon(Icons.edit_outlined, size: 16, color: Colors.white54),
-                          tooltip: 'Переименовать',
                           onPressed: () => _renameSession(s.id, s.title),
                         ),
                         IconButton(
                           icon: const Icon(Icons.close, size: 16, color: Colors.white38),
-                          tooltip: 'Удалить чат',
                           onPressed: () => _deleteSession(s.id),
                         ),
                       ],
                     ),
-                    onLongPress: () => _renameSession(s.id, s.title),
                     onTap: () {
                       setState(() => _currentSessionId = s.id);
                       _saveData();
@@ -2177,9 +1700,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Colors.white12)),
-              ),
+              decoration: const BoxDecoration(border: Border(top: BorderSide(color: Colors.white12))),
               child: Row(
                 children: [
                   Container(
@@ -2195,18 +1716,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Text('ALEKSANDR Ku81', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
-                      Text('PRO', style: TextStyle(color: Colors.white54, fontSize: 12)),
-                    ],
-                  ),
+                  const Text('ALEKSANDR', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
                   const Spacer(),
                   IconButton(
                     icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-                    tooltip: 'Настройки',
                     onPressed: () {
                       Navigator.pop(context);
                       _showSettingsModal();
