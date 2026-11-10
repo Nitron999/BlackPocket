@@ -36,6 +36,7 @@ class GeminiBlackPocketApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'BlackPocket AI',
+      debugShowCosmeticError: false,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -72,24 +73,20 @@ final List<AgentPreset> _availableAgents = [
   const AgentPreset(
     id: "excel_logist",
     name: "Логист / Разбор счетов (Excel)",
-    description: "Авто-сведение: Посылка, Сводка Печатные платы и Сводка филиал",
+    description: "Точное сведение: Посылка, Сводка Печатные платы и Сводка филиал",
     icon: Icons.table_chart_outlined,
     systemInstruction:
-        "Ты — главный логист по учету и отгрузке печатных плат для Александра (ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект», Москва). "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "ПРАВИЛО №2: НИКАКИХ отмазок вроде 'я текстовый ИИ и не умею красить ячейки'! Приложение САМО раскрасит файл, применит Tahoma 18/16, цвета и границы при нажатии кнопки 'Сохранить файл'. "
-        "РЕГЛАМЕНТ РАБОТЫ С ТРЕМЯ ФАЙЛАМИ: "
-        "1. ФАЙЛ 'Посылка' (или 'Посылка 26'): берешь свежие строки из хвоста реестра (номера заказов, PS, Сч/н, количество полученных/отгружаемых плат, отметку ОТК). "
-        "2. ФАЙЛ 'Сводка ООО Печатные платы': сверяешь счета головной организации, определяешь позиции к отгрузке, сохраняешь ведущие нули в счетах ПП ('0585', '0643', '0615' и т.д.). "
-        "3. ФАЙЛ 'Сводка филиал': отделяешь позиции филиала и ставишь их строго ПОД строку-разделитель 'филиал'. "
-        "СТРОГАЯ СТРУКТУРА КОЛОНОК CSV: "
+        "Ты — высококвалифицированный эксперт по логистике и учету печатных плат для Александра (Москва). "
+        "Твоя задача — предельно внимательно и безошибочно сопоставлять данные из прикрепленных файлов накладных. "
+        "ПРАВИЛА ОБРАБОТКИ ДАННЫХ: "
+        "1. Работай со свежими записями из реестров (Посылка, Сводки головной организации и филиала). "
+        "2. Точно определяй номера заказов, Сч/н, PS, количество к отгрузке и отметки ОТК. "
+        "3. Ведущие нули в номерах счетов ПП (0585, 0643, 0615 и др.) сохраняй в исходном виде. "
+        "4. В середине таблицы ставь строку-разделитель: филиал;;;;;;;;; "
+        "5. Итоговую таблицу выводи в блоке кода ```csv со столбцами: "
         "Фирма;PS;Счет пп;Сч/н;По счету;Получено;Отгрузить;ОТК;Примечание/Этикетка;Доставка "
-        "ПРАВИЛА ОФОРМЛЕНИЯ: "
-        "- В середине таблицы обязательна строка-разделитель: филиал;;;;;;;;; "
-        "- В колонке 'Доставка' четко указывай: К, ДМ, СДЭК или Самовывоз. "
-        "- Всегда сохраняй ведущие нули в счетах ПП. "
-        "- В начале ответа дай кратко: сколько позиций сведено и общее количество к отгрузке. "
-        "- Саму таблицу выдавай строго в одном блоке кода ```csv.",
+        "6. В начале сообщения давай краткую числовую сводку: количество позиций и сумма штук к отгрузке. "
+        "Работай строго по фактам из таблиц, без фантазий и лишних рассуждений.",
   ),
   const AgentPreset(
     id: "companion",
@@ -98,8 +95,7 @@ final List<AgentPreset> _availableAgents = [
     icon: Icons.chat_bubble_outline,
     systemInstruction:
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости.",
+        "Отвечай кратко, ёмко, по-живому, дружелюбно, без лишней бюрократии.",
   ),
   const AgentPreset(
     id: "engineer",
@@ -107,9 +103,7 @@ final List<AgentPreset> _availableAgents = [
     description: "Глубокая архитектура, чистый код, багфикс и разбор электроники",
     icon: Icons.code,
     systemInstruction:
-        "Ты — ведущий инженер-архитектор и разработчик систем. "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Давай точный технический анализ, проектируй надежные решения.",
+        "Ты — ведущий инженер-разработчик. Давай технически выверенный код и глубокий аудит решений.",
   ),
   const AgentPreset(
     id: "analyst",
@@ -117,8 +111,7 @@ final List<AgentPreset> _availableAgents = [
     description: "Тщательный аудит логов, конфигов, таблиц и текстовых файлов",
     icon: Icons.analytics_outlined,
     systemInstruction:
-        "Ты — технический аналитик данных и системной документации. "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке!",
+        "Ты — системный аналитик документации и отчетов. Анализируй файлы досконально.",
   ),
 ];
 
@@ -234,8 +227,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
-      "Отвечай кратко, емко, по-живому, на чистом русском языке. "
-      "Он логист в Москве, ведет отгрузки печатных плат. Всегда сводит 3 файла: Посылка, Сводка Печатные платы и Сводка филиал.";
+      "Ведет отгрузки и логистику печатных плат в Москве. Сводит таблицы Посылка и Сводки. "
+      "Отвечай емко, по делу, с максимальной числовой точностью.";
 
   late AnimationController _pulseController;
 
@@ -371,13 +364,17 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v28_copy_user_msg_and_logist_preset') {
-      await prefs.setString('bp_clean_migration', 'v28_copy_user_msg_and_logist_preset');
+    if (migrationTag != 'v29_flash_36_strict') {
+      await prefs.setString('bp_clean_migration', 'v29_flash_36_strict');
+      await prefs.setString('modelName', 'gemini-3.6-flash');
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
+      if (_modelName.contains('lite')) {
+        _modelName = 'gemini-3.6-flash';
+      }
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
       _selectedAgentId = prefs.getString('selectedAgentId') ?? "excel_logist";
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
@@ -479,7 +476,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       final statusMsg = _russianLocaleConfirmed
           ? '🎤 Слушаю (Русский: $_targetRussianLocaleId)...'
-          : '⚠️ Внимание: Русский не найден в системе. Используй микрофон клавиатуры!';
+          : '⚠️ Внимание: Используй микрофон клавиатуры!';
 
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -504,7 +501,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           if (lower == 'стоп' ||
               lower == 'хватит' ||
               lower == 'замолчи' ||
-              lower == 'молчать' ||
               lower.contains('стоп')) {
             _stopSpeaking();
             _speech.stop();
@@ -867,7 +863,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final resultList = [];
     final dynamic history = (historyList is List) ? historyList : [];
 
-    final int startIdx = history.length > 8 ? history.length - 8 : 0;
+    final int startIdx = history.length > 6 ? history.length - 6 : 0;
     final dynamic recent = history.sublist(startIdx);
 
     for (final item in recent) {
@@ -998,15 +994,15 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       final combinedSystemPrompt =
-          "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА О ПОЛЬЗОВАТЕЛЕ]:\n$_memoryFacts";
+          "${_currentAgent.systemInstruction}\n\n[ПАМЯТЬ АССИСТЕНТА]:\n$_memoryFacts";
 
       String finalInstruction = buffer.toString().trim();
       if (text.isEmpty && docsToSend.isNotEmpty) {
-        // Если прикрепил файлы без текста — ИИ сразу выполняет регламентное сведение
         finalInstruction =
-            "Александр прикрепил таблицы накладных (${sentFileNames.join(', ')}).\n"
-            "Выполни регламентное сведение счетов: возьми свежие позиции из Посылки, сверь со Сводками, "
-            "поставь разделитель 'филиал', сохрани ведущие нули в счетах ПП и выдай готовый CSV внутри блока ```csv.";
+            "Александр прикрепил таблицы логистики (${sentFileNames.join(', ')}).\n"
+            "Выполни сведение счетов: возьми свежие данные из Посылки, сопоставь со Сводками, "
+            "размести позиции филиала под строку-разделитель 'филиал', сохрани ведущие нули в счетах ПП "
+            "и выдай готовый результат строго в блоке кода ```csv.";
       } else if (finalInstruction.isEmpty) {
         finalInstruction = "Слушаю вас. Чем помочь?";
       }
@@ -1028,13 +1024,12 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final cleanKey = _apiKey.trim();
       final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
 
-      final modelsQueue = [_modelName];
-      if (!modelsQueue.contains("gemini-3.6-flash")) {
-        modelsQueue.add("gemini-3.6-flash");
-      }
-      if (!modelsQueue.contains("gemini-3.5-flash-lite")) {
-        modelsQueue.add("gemini-3.5-flash-lite");
-      }
+      // ИСКЛЮЧИТЕЛЬНО МОЩНЫЕ МОДЕЛИ: FLASH-LITE ПОЛНОСТЬЮ ИСКЛЮЧЕН
+      final modelsQueue = [
+        "gemini-3.6-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-pro",
+      ];
 
       bool success = false;
 
@@ -1049,17 +1044,22 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               'Content-Type': 'application/json',
               'x-goog-api-key': cleanKey,
             });
+            // ЖЕСТКАЯ ТЕМПЕРАТУРА 0.0 ДЛЯ МАКСИМАЛЬНОЙ ТОЧНОСТИ
             request.body = jsonEncode({
               "contents": payloadContents,
               "systemInstruction": {
                 "parts": [
                   {"text": combinedSystemPrompt}
                 ]
+              },
+              "generationConfig": {
+                "temperature": 0.0,
+                "topP": 0.95
               }
             });
 
             final client = http.Client();
-            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 25));
+            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 35));
 
             if (streamedResponse.statusCode == 200) {
               final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
@@ -1353,13 +1353,13 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Факты и предпочтения, которые ИИ помнит во всех диалогах (можно сказать в чате «Запомни: ...»):',
+              'Постоянные факты, которые ИИ помнит во всех диалогах:',
               style: TextStyle(fontSize: 13, color: Colors.white70),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: memCtrl,
-              maxLines: 7,
+              maxLines: 6,
               style: const TextStyle(fontSize: 14),
               decoration: const InputDecoration(
                 filled: true,
@@ -1430,7 +1430,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 TextField(
                   controller: modelCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Основная модель (gemini-3.6-flash / 3.8-flash)',
+                    labelText: 'Основная модель (gemini-3.6-flash)',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -1542,7 +1542,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                             return Align(
                               alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
                               child: GestureDetector(
-                                // ДОЛГИЙ ТАП КОПИРУЕТ ЛЮБОЕ СООБЩЕНИЕ (И СВОЕ, И БОТА)
                                 onLongPress: () {
                                   if (m.text.isNotEmpty) {
                                     _copyToClipboard(m.text, m.isUser ? 'Ваш запрос скопирован' : 'Ответ скопирован');
@@ -1612,10 +1611,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                                               children: [
                                                 IconButton(
                                                   icon: const Icon(Icons.copy_outlined, size: 16, color: Colors.white38),
-                                                  tooltip: 'Скопировать мой текст',
+                                                  tooltip: 'Скопировать',
                                                   constraints: const BoxConstraints(),
                                                   padding: const EdgeInsets.only(top: 6, left: 6),
-                                                  onPressed: () => _copyToClipboard(m.text, 'Ваш запрос скопирован'),
+                                                  onPressed: () => _copyToClipboard(m.text, 'Запрос скопирован'),
                                                 ),
                                               ],
                                             ),
