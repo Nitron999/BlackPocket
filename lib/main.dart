@@ -66,7 +66,8 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  final List> _chatHistory = [];
+  // Убраны угловые скобки, чтобы терминал их не съедал
+  final _chatHistory = [];
   String? _lastCsvResult;
 
   static const String _logisticsSystemPrompt = '''
@@ -262,11 +263,9 @@ $svodkaFilialContent
         final allRows = sheet.rows;
         if (allRows.isEmpty) continue;
 
-        // Заголовок
         final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
         sb.writeln(header.join(';'));
 
-        // Хвост
         final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
         for (int i = startIndex; i < allRows.length; i++) {
           final row = allRows[i];
@@ -282,7 +281,6 @@ $svodkaFilialContent
     }
   }
 
-  // Общий запрос к Gemini
   Future<String> _callGeminiText(String apiKey, String userMessage) async {
     return _callGeminiRaw(
       apiKey: apiKey,
@@ -330,16 +328,17 @@ $svodkaFilialContent
       throw Exception('Код ${resp.statusCode}: ${resp.body}');
     }
 
-    final data = jsonDecode(resp.body) as Map<String, dynamic>?;
-    final candidates = data?['candidates'] as List<dynamic>?;
+    final data = jsonDecode(resp.body) as Map?;
+    final candidates = data?['candidates'] as List?;
     if (candidates == null || candidates.isEmpty) {
       throw Exception('Модель не вернула ответ.');
     }
 
-    final first = candidates[0] as Map<String, dynamic>?;
-    final content = first?['content'] as Map<String, dynamic>?;
-    final parts = content?['parts'] as List<dynamic>?;
-    final text = (parts != null && parts.isNotEmpty) ? parts[0]['text'] as String? : null;
+    final first = candidates[0] as Map?;
+    final content = first?['content'] as Map?;
+    final parts = content?['parts'] as List?;
+    final firstPart = (parts != null && parts.isNotEmpty) ? parts[0] as Map? : null;
+    final text = firstPart?['text'] as String?;
 
     if (text == null || text.isEmpty) {
       throw Exception('Пустой ответ.');
@@ -452,7 +451,6 @@ $svodkaFilialContent
           ],
         ),
         actions: [
-          // Кнопка сворачивания/разворачивания логистики
           IconButton(
             icon: Icon(
               _isLogisticsExpanded ? Icons.inventory_2 : Icons.inventory_2_outlined,
@@ -473,21 +471,18 @@ $svodkaFilialContent
       ),
       body: Column(
         children: [
-          // Выдвижная верхняя панель логистики
           _buildLogisticsTopPanel(),
-
-          // Лента сообщений чата
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               itemCount: _chatHistory.length,
               itemBuilder: (context, idx) {
-                final m = _chatHistory[idx];
-                final role = m['role'] ?? 'assistant';
+                final m = _chatHistory[idx] as Map;
+                final role = m['role']?.toString() ?? 'assistant';
                 final isUser = role == 'user';
                 final isSystem = role == 'system';
-                final text = m['text'] ?? '';
+                final text = m['text']?.toString() ?? '';
 
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -530,7 +525,6 @@ $svodkaFilialContent
               },
             ),
           ),
-
           if (_isLoading)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 4),
@@ -547,15 +541,12 @@ $svodkaFilialContent
                 ],
               ),
             ),
-
-          // Полноценная нижняя строка ввода для общения
           _buildChatInputArea(),
         ],
       ),
     );
   }
 
-  // Виджет выдвижной панели логистики
   Widget _buildLogisticsTopPanel() {
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
@@ -657,7 +648,6 @@ $svodkaFilialContent
     );
   }
 
-  // Нижняя панель чата
   Widget _buildChatInputArea() {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 8, 12),
