@@ -63,7 +63,7 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  final _messages = >[];
+  final _messages = [];
   String? _lastCsvResult;
 
   static const String _systemInstruction = '''
