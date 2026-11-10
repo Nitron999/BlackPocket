@@ -53,7 +53,6 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
-  final TextEditingController _promptController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   bool _isLoading = false;
@@ -318,7 +317,7 @@ $svodkaFilialContent
         for (int c = 0; c < cells.length; c++) {
           final val = cells[c].trim();
           final cellIndex = ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r);
-          
+
           if (r > 0 && c >= 4 && c <= 6 && int.tryParse(val) != null) {
             sheet.cell(cellIndex).value = ex.IntCellValue(int.parse(val));
           } else {
@@ -385,7 +384,6 @@ $svodkaFilialContent
       ),
       body: Column(
         children: [
-          // File picking bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             color: const Color(0xFF0F172A),
@@ -417,7 +415,6 @@ $svodkaFilialContent
               ],
             ),
           ),
-          // Action button
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Row(
@@ -443,9 +440,12 @@ $svodkaFilialContent
                 ),
                 if (_lastCsvResult != null) ...[
                   const SizedBox(width: 8),
-                  IconButton.filled(
-                    style: IconButton.filled(backgroundColor: const Color(0xFF16A34A)),
-                    icon: const Icon(Icons.download, color: Colors.white),
+                  IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF16A34A),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.download),
                     tooltip: 'Экспорт в Excel',
                     onPressed: _exportToFormattedExcel,
                   )
@@ -453,7 +453,6 @@ $svodkaFilialContent
               ],
             ),
           ),
-          // Chat log
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
