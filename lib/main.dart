@@ -367,8 +367,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v26_exact_excel_styles') {
-      await prefs.setString('bp_clean_migration', 'v26_exact_excel_styles');
+    if (migrationTag != 'v27_excel_color_fix') {
+      await prefs.setString('bp_clean_migration', 'v27_excel_color_fix');
     }
 
     setState(() {
@@ -635,7 +635,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
-  // СОХРАНЕНИЕ ТОЧНО ОДИН В ОДИН ПО ОБРАЗЦУ
   Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "xlsx"]) async {
     try {
       HapticFeedback.mediumImpact();
@@ -667,6 +666,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       int rowIdx = 0;
 
       final blackBorder = xl.Border(borderStyle: xl.BorderStyle.Thin, borderColorHex: xl.ExcelColor.fromHexString('#000000'));
+      final whiteColor = xl.ExcelColor.fromHexString('#FFFFFF');
 
       for (final line in lines) {
         final trimmed = line.trim();
@@ -694,8 +694,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           final cellValue = cells[colIdx];
           final cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: colIdx, rowIndex: rowIdx));
 
-          // 1. ПРАВИЛЬНЫЙ ТИП ЯЧЕЙКИ:
-          // Колонку C ("Счет пп") ВСЕГДА пишем текстом, чтобы сохранять 0585, 0643 без потери нулей
+          // Числовые значения без лишних нулей (.0), счета ПП пишем текстом
           final cleanNumStr = cellValue.replaceAll(' ', '').replaceAll(',', '.');
           final numVal = num.tryParse(cleanNumStr);
           if (colIdx != 2 && numVal != null && !cellValue.startsWith('0') && cellValue.length < 11 && !isHeader) {
@@ -704,42 +703,35 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             cell.value = xl.TextCellValue(cellValue);
           }
 
-          // 2. ВЫРАВНИВАНИЕ: Колонка А (Фирма) — по левому краю, все остальные (B-J) — строго по центру!
+          // Выравнивание: A (Фирма) по левому краю, остальные по центру
           xl.HorizontalAlign align = xl.HorizontalAlign.Center;
           if (colIdx == 0 && !isFilialRow) {
             align = xl.HorizontalAlign.Left;
           }
 
-          // 3. РАЗМЕР ШРИФТА: Колонка А — 18 пт (жирный), колонки B-J — 16 пт (жирный)
+          // Размер шрифта: A — 18, остальные B-J — 16
           final int fontSize = (colIdx == 0 || isHeader) ? 18 : 16;
 
-          // 4. ЦВЕТА ШРИФТА И ФОНА ТОЧНО ПО СКРИНШОТУ:
+          // Цвета шрифта и фона
           xl.ExcelColor fontColor = xl.ExcelColor.black;
-          xl.ExcelColor? bgColor;
+          xl.ExcelColor bgColor = whiteColor;
 
           if (isFilialRow) {
-            // Строка "филиал": ячейка А с тёмно-красным фоном, текст черный жирный
             if (colIdx == 0) {
               bgColor = xl.ExcelColor.fromHexString('#B91C1C'); // Красный фон ячейки филиал
             }
           } else if (isSamovyvozRow) {
-            // Строка "Самовывоз" (Бифорком): вся строка залита оранжево-жёлтым фоном
-            bgColor = xl.ExcelColor.fromHexString('#F59E0B');
-            // При этом числа отгрузки и текст "Самовывоз" выделены красным
+            bgColor = xl.ExcelColor.fromHexString('#F59E0B'); // Оранжево-желтый фон для строки Самовывоз
             if (colIdx == 6 || colIdx == 9) {
               fontColor = xl.ExcelColor.fromHexString('#CC0000');
             }
           } else if (!isHeader) {
-            // Колонка G (индекс 6, "Отгрузить!") — ВСЕГДА КРАСНЫЙ ШРИФТ
             if (colIdx == 6) {
-              fontColor = xl.ExcelColor.fromHexString('#CC0000');
+              fontColor = xl.ExcelColor.fromHexString('#CC0000'); // Красный шрифт для Отгрузить
             }
-            // Колонка H (индекс 7, "ОТК") — ВСЕГДА СИНИЙ ЖИРНЫЙ ШРИФТ
             if (colIdx == 7 && cellValue.toUpperCase().contains('ОТК')) {
-              fontColor = xl.ExcelColor.fromHexString('#0044CC');
+              fontColor = xl.ExcelColor.fromHexString('#0044CC'); // Синий шрифт для ОТК
             }
-            // Колонка J (индекс 9, "Доставка"):
-            // "К", "ДМ" и "Самовывоз" — КРАСНЫЙ ШРИФТ, а "СДЭК" — ЧЁРНЫЙ ШРИФТ
             if (colIdx == 9) {
               final valUp = cellValue.toUpperCase();
               if (valUp == 'К' || valUp == 'ДМ' || valUp.contains('САМОВЫВОЗ')) {
@@ -748,9 +740,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
                 fontColor = xl.ExcelColor.black;
               }
             }
-            // Колонка I (индекс 8, "Примечание/Этикетка") — если заполнена (напр. П/Б), заливаем розовым
             if (colIdx == 8 && cellValue.isNotEmpty) {
-              bgColor = xl.ExcelColor.fromHexString('#FCE7F3');
+              bgColor = xl.ExcelColor.fromHexString('#FCE7F3'); // Розовый фон для Примечания
             }
           }
 
