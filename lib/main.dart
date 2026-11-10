@@ -75,16 +75,17 @@ final List<AgentPreset> _availableAgents = [
     description: "Парсинг выгрузок XLSX/CSV, сведение счетов, подсчёт количества и экспорт таблиц",
     icon: Icons.table_chart_outlined,
     systemInstruction:
-        "Ты — эксперт по логистике, учету поставок и обработке табличных данных Excel. "
+        "Ты — ведущий эксперт по логистике, накладным и учету поставок плат ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект». "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Твоя задача: обрабатывать присланные данные накладных, счетов и спецификаций (XLSX, CSV, TSV, списки, фрагменты таблиц). "
-        "АЛГОРИТМ РАБОТЫ: "
-        "1. Четко определяй номера счетов/заказов, артикулы, наименования товаров и количество. "
-        "2. Складывай и группируй одинаковые позиции, считай итоговые суммы и остатки. "
-        "3. ВСЕГДА выводи итоговый результат в виде готовой таблицы (Markdown-таблица с разделителями '|' или CSV с разделителем ';') ВНУТРИ БЛОКА КОДА Markdown (```csv или ```markdown). "
-        "Это позволит приложению упаковать результат в настоящий Excel-файл (.xlsx) для сохранения на устройство. "
-        "В начале давай краткую сводку: сколько позиций обработано и общее количество. "
-        "Если пользователь только загрузил файл(ы) без команды — ничего не анализируй и жди его прямого указания.",
+        "ПРАВИЛО №2: НИКОГДА не пиши вступлений типа 'я текстовый ИИ и не умею красить ячейки или менять шрифт'! Приложение САМО покрасит файл, выставит Tahoma 18/16 и цвета при экспорте в Excel. "
+        "Твоя задача: мгновенно обработать накладные, сгруппировать позиции и выдать ЧИСТЫЙ CSV-блок с точкой с запятой ';'. "
+        "СТРОГАЯ СТРУКТУРА КОЛОНОК ТАБЛИЦЫ: "
+        "Фирма;PS;Счет пп;Сч/н;По счету;Получено;Отгрузить;ОТК;Примечание/Этикетка;Доставка "
+        "ПРАВИЛА ОФОРМЛЕНИЯ ДАННЫХ: "
+        "1. Сохраняй ведущие нули в счетах ПП (например, '0585', '0643', '0615'). "
+        "2. В середине списка обязательно ставь строку-разделитель: филиал;;;;;;;;; "
+        "3. В начале ответа давай только краткую сводку: сколько позиций обработано и общее количество к отгрузке. "
+        "4. Сам результат выводи строго внутри одного блока кода ```csv.",
   ),
   const AgentPreset(
     id: "companion",
@@ -94,8 +95,7 @@ final List<AgentPreset> _availableAgents = [
     systemInstruction:
         "Ты — BlackPocket, персональный живой ИИ-напарник Александра. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости. "
-        "Если пользователь просит собрать, поправить или выдать конфиг/файл, ВСЕГДА прикладывай ПОЛНЫЙ готовый текст файла внутри блока кода Markdown с указанием формата. Никогда не говори, что не умеешь скидывать файлы — отдавай их полностью в блоке кода!",
+        "Отвечай кратко (1-3 емких предложения), по-живому, дружелюбно, без шаблонной вежливости.",
   ),
   const AgentPreset(
     id: "engineer",
@@ -105,8 +105,7 @@ final List<AgentPreset> _availableAgents = [
     systemInstruction:
         "Ты — ведущий инженер-архитектор и разработчик систем. "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Давай точный технический анализ, проектируй надежные решения. "
-        "Если пользователь просит сделать или отредактировать файл/конфиг, ВСЕГДА выдавай ПОЛНЫЙ рабочий файл от начала до конца в блоке кода Markdown. Никогда не говори 'не умею скидывать файлы', отдавай полный готовый код, чтобы пользователь мог скачать его одной кнопкой!",
+        "Давай точный технический анализ, проектируй надежные решения.",
   ),
   const AgentPreset(
     id: "analyst",
@@ -115,9 +114,7 @@ final List<AgentPreset> _availableAgents = [
     icon: Icons.analytics_outlined,
     systemInstruction:
         "Ты — технический аналитик данных и системной документации. "
-        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "Глубоко вникай в содержимое прикрепленных файлов, логов, скриптов и отчетов. "
-        "При необходимости выдать обновленный конфиг — ВСЕГДА выдавай его полностью в блоке кода Markdown.",
+        "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке!",
   ),
 ];
 
@@ -234,7 +231,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
       "Отвечай кратко, емко, по-живому, на чистом русском языке. "
-      "Он ценит техническую грамотность, конструктив, отсутствие шаблонных вежливых вступлений.";
+      "Он логист в Москве, ведет отгрузки печатных плат. Никогда не говори 'я текстовый ИИ и не умею красить ячейки'. Выдавай сразу чистый CSV.";
 
   late AnimationController _pulseController;
 
@@ -370,8 +367,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v24_chartsheet_and_tail_parser') {
-      await prefs.setString('bp_clean_migration', 'v24_chartsheet_and_tail_parser');
+    if (migrationTag != 'v26_exact_excel_styles') {
+      await prefs.setString('bp_clean_migration', 'v26_exact_excel_styles');
     }
 
     setState(() {
@@ -556,9 +553,10 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
         final allRows = currentSheet.rows;
         List<List<xl.Data?>> targetRows = [];
-        if (allRows.length > 400) {
-          targetRows.addAll(allRows.take(15));
-          targetRows.addAll(allRows.skip(allRows.length - 350));
+
+        if (allRows.length > 100) {
+          targetRows.addAll(allRows.take(10));
+          targetRows.addAll(allRows.skip(allRows.length - 50));
         } else {
           targetRows = allRows;
         }
@@ -637,6 +635,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     }
   }
 
+  // СОХРАНЕНИЕ ТОЧНО ОДИН В ОДИН ПО ОБРАЗЦУ
   Future<void> _saveCodeToFile(String codeSnippet, [String defaultExt = "xlsx"]) async {
     try {
       HapticFeedback.mediumImpact();
@@ -667,43 +666,114 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       final lines = const LineSplitter().convert(codeSnippet.trim());
       int rowIdx = 0;
 
+      final blackBorder = xl.Border(borderStyle: xl.BorderStyle.Thin, borderColorHex: xl.ExcelColor.fromHexString('#000000'));
+
       for (final line in lines) {
         final trimmed = line.trim();
         if (trimmed.isEmpty) continue;
         if (RegExp(r'^\|?\s*[-:]+[-|\s:]*$').hasMatch(trimmed)) continue;
 
         List<String> cells = [];
-        if (trimmed.contains('|')) {
+        if (trimmed.contains(';')) {
+          cells = trimmed.split(';').map((c) => c.trim()).toList();
+        } else if (trimmed.contains('|')) {
           cells = trimmed.split('|').map((c) => c.trim()).toList();
           if (cells.isNotEmpty && cells.first.isEmpty) cells.removeAt(0);
           if (cells.isNotEmpty && cells.last.isEmpty) cells.removeLast();
-        } else if (trimmed.contains(';')) {
-          cells = trimmed.split(';').map((c) => c.trim()).toList();
         } else if (trimmed.contains('\t')) {
           cells = trimmed.split('\t').map((c) => c.trim()).toList();
-        } else if (trimmed.contains(',')) {
-          cells = trimmed.split(',').map((c) => c.trim()).toList();
         } else {
-          cells = [trimmed];
+          cells = trimmed.split(',').map((c) => c.trim()).toList();
         }
+
+        final bool isHeader = rowIdx == 0;
+        final bool isFilialRow = cells.isNotEmpty && cells[0].toLowerCase().contains('филиал');
+        final bool isSamovyvozRow = cells.any((c) => c.toLowerCase().contains('самовывоз'));
 
         for (int colIdx = 0; colIdx < cells.length; colIdx++) {
           final cellValue = cells[colIdx];
           final cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: colIdx, rowIndex: rowIdx));
-          
-          final numVal = num.tryParse(cellValue.replaceAll(' ', '').replaceAll(',', '.'));
-          if (numVal != null && !cellValue.startsWith('0') && cellValue.length < 11) {
-            cell.value = xl.DoubleCellValue(numVal.toDouble());
+
+          // 1. ПРАВИЛЬНЫЙ ТИП ЯЧЕЙКИ:
+          // Колонку C ("Счет пп") ВСЕГДА пишем текстом, чтобы сохранять 0585, 0643 без потери нулей
+          final cleanNumStr = cellValue.replaceAll(' ', '').replaceAll(',', '.');
+          final numVal = num.tryParse(cleanNumStr);
+          if (colIdx != 2 && numVal != null && !cellValue.startsWith('0') && cellValue.length < 11 && !isHeader) {
+            cell.value = xl.IntCellValue(numVal.toInt());
           } else {
             cell.value = xl.TextCellValue(cellValue);
           }
+
+          // 2. ВЫРАВНИВАНИЕ: Колонка А (Фирма) — по левому краю, все остальные (B-J) — строго по центру!
+          xl.HorizontalAlign align = xl.HorizontalAlign.Center;
+          if (colIdx == 0 && !isFilialRow) {
+            align = xl.HorizontalAlign.Left;
+          }
+
+          // 3. РАЗМЕР ШРИФТА: Колонка А — 18 пт (жирный), колонки B-J — 16 пт (жирный)
+          final int fontSize = (colIdx == 0 || isHeader) ? 18 : 16;
+
+          // 4. ЦВЕТА ШРИФТА И ФОНА ТОЧНО ПО СКРИНШОТУ:
+          xl.ExcelColor fontColor = xl.ExcelColor.black;
+          xl.ExcelColor? bgColor;
+
+          if (isFilialRow) {
+            // Строка "филиал": ячейка А с тёмно-красным фоном, текст черный жирный
+            if (colIdx == 0) {
+              bgColor = xl.ExcelColor.fromHexString('#B91C1C'); // Красный фон ячейки филиал
+            }
+          } else if (isSamovyvozRow) {
+            // Строка "Самовывоз" (Бифорком): вся строка залита оранжево-жёлтым фоном
+            bgColor = xl.ExcelColor.fromHexString('#F59E0B');
+            // При этом числа отгрузки и текст "Самовывоз" выделены красным
+            if (colIdx == 6 || colIdx == 9) {
+              fontColor = xl.ExcelColor.fromHexString('#CC0000');
+            }
+          } else if (!isHeader) {
+            // Колонка G (индекс 6, "Отгрузить!") — ВСЕГДА КРАСНЫЙ ШРИФТ
+            if (colIdx == 6) {
+              fontColor = xl.ExcelColor.fromHexString('#CC0000');
+            }
+            // Колонка H (индекс 7, "ОТК") — ВСЕГДА СИНИЙ ЖИРНЫЙ ШРИФТ
+            if (colIdx == 7 && cellValue.toUpperCase().contains('ОТК')) {
+              fontColor = xl.ExcelColor.fromHexString('#0044CC');
+            }
+            // Колонка J (индекс 9, "Доставка"):
+            // "К", "ДМ" и "Самовывоз" — КРАСНЫЙ ШРИФТ, а "СДЭК" — ЧЁРНЫЙ ШРИФТ
+            if (colIdx == 9) {
+              final valUp = cellValue.toUpperCase();
+              if (valUp == 'К' || valUp == 'ДМ' || valUp.contains('САМОВЫВОЗ')) {
+                fontColor = xl.ExcelColor.fromHexString('#CC0000');
+              } else {
+                fontColor = xl.ExcelColor.black;
+              }
+            }
+            // Колонка I (индекс 8, "Примечание/Этикетка") — если заполнена (напр. П/Б), заливаем розовым
+            if (colIdx == 8 && cellValue.isNotEmpty) {
+              bgColor = xl.ExcelColor.fromHexString('#FCE7F3');
+            }
+          }
+
+          cell.cellStyle = xl.CellStyle(
+            fontFamily: 'Tahoma',
+            fontSize: fontSize,
+            bold: true,
+            fontColorHex: fontColor,
+            backgroundColorHex: bgColor,
+            horizontalAlign: align,
+            verticalAlign: xl.VerticalAlign.Center,
+            leftBorder: blackBorder,
+            rightBorder: blackBorder,
+            topBorder: blackBorder,
+            bottomBorder: blackBorder,
+          );
         }
         rowIdx++;
       }
 
       final fileBytes = excel.save();
       if (fileBytes != null) {
-        final fileName = "BlackPocket_Сводка_${DateTime.now().millisecondsSinceEpoch}.xlsx";
+        final fileName = "Посылка_Сводка_${DateTime.now().millisecondsSinceEpoch}.xlsx";
         final file = File('${targetDir.path}/$fileName');
         await file.writeAsBytes(fileBytes);
         _showSavedToast(fileName);
@@ -723,7 +793,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   void _showSavedToast(String fileName) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('📊 Таблица Excel сохранена в Загрузки: $fileName'),
+        content: Text('📊 Таблица Excel сохранена: $fileName'),
         backgroundColor: Colors.green.shade800,
         duration: const Duration(seconds: 4),
       ),
