@@ -66,7 +66,7 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  // Убраны угловые скобки, чтобы терминал их не съедал
+  // Никаких угловых скобок, чтобы не ломался парсер терминала
   final _chatHistory = [];
   String? _lastCsvResult;
 
@@ -106,17 +106,17 @@ class _MainScreenState extends State<MainScreen> {
     _loadApiKey();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
+      'text': 'Здорово, Шурик! Я переехал на мощные сервера Groq. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
     });
   }
 
   Future<void> _loadApiKey() async {
     final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString('gemini_api_key') ?? '';
+    final key = prefs.getString('groq_api_key') ?? '';
     if (key.isNotEmpty) {
       setState(() {
         _apiKeyController.text = key;
-        _apiStatus = 'API подключен';
+        _apiStatus = 'API подключен (Groq)';
         _statusColor = Colors.greenAccent;
       });
     }
@@ -124,9 +124,9 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _saveApiKey(String key) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('gemini_api_key', key.trim());
+    await prefs.setString('groq_api_key', key.trim());
     setState(() {
-      _apiStatus = key.trim().isNotEmpty ? 'API подключен' : 'Ключ не настроен';
+      _apiStatus = key.trim().isNotEmpty ? 'API подключен (Groq)' : 'Ключ не настроен';
       _statusColor = key.trim().isNotEmpty ? Colors.greenAccent : Colors.orangeAccent;
     });
   }
@@ -149,14 +149,14 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // Обычный чат с Gemini
+  // Обычный чат
   Future<void> _sendChatMessage() async {
     final text = _chatInputController.text.trim();
     if (text.isEmpty) return;
 
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
-      _showSnackbar('Сначала введи API ключ в настройках (шестерёнка)!');
+      _showSnackbar('Сначала введи ключ Groq (gsk_...) в настройках!');
       return;
     }
 
@@ -166,7 +166,12 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final responseText = await _callGeminiText(apiKey, text);
+      final responseText = await _callGroqRaw(
+        apiKey: apiKey,
+        systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы.',
+        prompt: text,
+        temperature: 0.2,
+      );
       _appendMessage('assistant', responseText);
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
@@ -179,7 +184,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _processLogistics() async {
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
-      _showSnackbar('Введите API ключ в настройках!');
+      _showSnackbar('Введите ключ Groq в настройках!');
       return;
     }
 
@@ -195,7 +200,7 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     final fileName = posFile.path.split(Platform.pathSeparator).last;
-    _appendMessage('user', '📦 Запуск сведения накладной: $fileName');
+    _appendMessage('user', '📦 Запуск сведения накладной через Groq: $fileName');
 
     try {
       final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
@@ -227,10 +232,11 @@ $svodkaFilialContent
 Выполни сопоставление по инструкции и верни CSV.
 ''';
 
-      final response = await _callGeminiRaw(
+      final response = await _callGroqRaw(
         apiKey: apiKey,
         systemInstruction: _logisticsSystemPrompt,
         prompt: promptText,
+        temperature: 0.0,
       );
 
       final csv = _extractCsv(response);
@@ -263,9 +269,11 @@ $svodkaFilialContent
         final allRows = sheet.rows;
         if (allRows.isEmpty) continue;
 
+        // Заголовок
         final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
         sb.writeln(header.join(';'));
 
+        // Хвост
         final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
         for (int i = startIndex; i < allRows.length; i++) {
           final row = allRows[i];
@@ -281,67 +289,49 @@ $svodkaFilialContent
     }
   }
 
-  Future<String> _callGeminiText(String apiKey, String userMessage) async {
-    return _callGeminiRaw(
-      apiKey: apiKey,
-      systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы.',
-      prompt: userMessage,
-    );
-  }
-
-  Future<String> _callGeminiRaw({
+  // Универсальный метод вызова API Groq (Llama 3 70B)
+  Future<String> _callGroqRaw({
     required String apiKey,
     required String systemInstruction,
     required String prompt,
+    required double temperature,
   }) async {
-    final url = Uri.parse(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=$apiKey',
-    );
+    final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
     final payload = {
-      'system_instruction': {
-        'parts': [
-          {'text': systemInstruction}
-        ]
-      },
-      'contents': [
-        {
-          'role': 'user',
-          'parts': [
-            {'text': prompt}
-          ]
-        }
-      ],
-      'generationConfig': {
-        'temperature': 0.2,
-        'maxOutputTokens': 8192,
-      }
+      'model': 'llama3-70b-8192',
+      'temperature': temperature,
+      'messages': [
+        {'role': 'system', 'content': systemInstruction},
+        {'role': 'user', 'content': prompt}
+      ]
     };
 
     final resp = await http.post(
       url,
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer \$apiKey',
+      },
       body: jsonEncode(payload),
     );
 
     if (resp.statusCode != 200) {
-      throw Exception('Код ${resp.statusCode}: ${resp.body}');
+      throw Exception('Ошибка API Groq (\${resp.statusCode}): \${resp.body}');
     }
 
     final data = jsonDecode(resp.body) as Map?;
-    final candidates = data?['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw Exception('Модель не вернула ответ.');
+    final choices = data?['choices'] as List?;
+    if (choices == null || choices.isEmpty) {
+      throw Exception('Groq не вернул ответ.');
     }
 
-    final first = candidates[0] as Map?;
-    final content = first?['content'] as Map?;
-    final parts = content?['parts'] as List?;
-    final firstPart = (parts != null && parts.isNotEmpty) ? parts[0] as Map? : null;
-    final text = firstPart?['text'] as String?;
+    final firstChoice = choices[0] as Map?;
+    final message = firstChoice?['message'] as Map?;
+    final text = message?['content'] as String?;
 
     if (text == null || text.isEmpty) {
-      throw Exception('Пустой ответ.');
+      throw Exception('Пустой ответ от модели.');
     }
     return text;
   }
@@ -389,17 +379,17 @@ $svodkaFilialContent
       }
 
       final dir = await getApplicationDocumentsDirectory();
-      final filePath = '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final filePath = '\${dir.path}/Посылка_Сведение_\${DateTime.now().millisecondsSinceEpoch}.xlsx';
       final fileBytes = excel.save();
 
       if (fileBytes != null) {
         final f = File(filePath);
         await f.writeAsBytes(fileBytes);
-        _showSnackbar('Excel сохранен: $filePath');
+        _showSnackbar('Excel сохранен: \$filePath');
         await OpenFilex.open(filePath);
       }
     } catch (e) {
-      _showSnackbar('Ошибка выгрузки: $e');
+      _showSnackbar('Ошибка выгрузки: \$e');
     }
   }
 
@@ -722,14 +712,14 @@ $svodkaFilialContent
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF162032),
-        title: const Text('Настройки Gemini API'),
+        title: const Text('Настройки API (Groq)'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: _apiKeyController,
               decoration: const InputDecoration(
-                labelText: 'Ключ Gemini API (AQ...)',
+                labelText: 'Ключ Groq API (gsk_...)',
                 border: OutlineInputBorder(),
               ),
             ),
