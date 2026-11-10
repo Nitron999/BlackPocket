@@ -1,7 +1,8 @@
 name: blackpocket_ai
-description: "BlackPocket AI Assistant"
+description: "BlackPocket AI Logistics Automation App"
 publish_to: 'none'
-version: 1.0.6+7
+
+version: 1.0.0+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -9,15 +10,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  camera: ^0.10.5+9
-  image_picker: ^1.0.7
-  file_picker: ^8.0.0
+  cupertino_icons: ^1.0.6
   http: ^1.2.0
   shared_preferences: ^2.2.2
-  flutter_markdown: ^0.6.18+4
-  speech_to_text: ^6.6.0
-  flutter_tts: ^3.8.5
+  file_picker: ^8.0.0
   excel: ^4.0.3
+  path_provider: ^2.1.2
+  open_filex: ^4.4.0
 
 dev_dependencies:
   flutter_test:
