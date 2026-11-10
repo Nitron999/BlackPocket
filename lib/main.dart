@@ -286,8 +286,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v33_strict_diagnostic') {
-      await prefs.setString('bp_clean_migration', 'v33_strict_diagnostic');
+    if (migrationTag != 'v35_force_38_direct') {
+      await prefs.setString('bp_clean_migration', 'v35_force_38_direct');
       await prefs.setString('modelName', 'gemini-3.8-flash');
       await prefs.setString('apiEndpoint', _defaultEndpoint);
     }
@@ -295,7 +295,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
-      if (_modelName.contains('1.5') || _modelName.contains('2.5') || _modelName.contains('3.6') || _modelName.contains('lite')) {
+      if (_modelName != 'gemini-3.8-flash') {
         _modelName = 'gemini-3.8-flash';
       }
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
@@ -760,7 +760,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _attachedDocs.clear();
 
     final session = _activeSession;
-    final targetModel = _modelName.trim().isNotEmpty ? _modelName.trim() : "gemini-3.8-flash";
+    final targetModel = "gemini-3.8-flash";
     final botMessage = ChatMessage(text: '', isUser: false, modelUsed: targetModel);
     final previousHistory = session.messages.toList();
 
@@ -825,81 +825,68 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
         endpointBase = "https://generativelanguage.googleapis.com/v1beta/models";
       }
 
-      final streamUri = Uri.parse("$endpointBase/$targetModel:streamGenerateContent?alt=sse&key=$cleanKey");
+      // Прямой POST-запрос generateContent без SSE-стриминга
+      final directUri = Uri.parse("$endpointBase/$targetModel:generateContent?key=$cleanKey");
 
       bool success = false;
       String detailedError = "";
 
       for (int attempt = 0; attempt < 2; attempt++) {
         try {
-          final request = http.Request('POST', streamUri);
-          request.headers.addAll({
-            'Content-Type': 'application/json',
-            'x-goog-api-key': cleanKey,
-          });
-          request.body = jsonEncode({
-            "contents": payloadContents,
-            "systemInstruction": {
-              "parts": [
-                {"text": combinedSystemPrompt}
-              ]
-            },
-            "generationConfig": {
-              "temperature": 0.0,
-              "topP": 0.95
-            }
-          });
-
-          final client = http.Client();
-          final streamedResponse = await client.send(request).timeout(const Duration(seconds: 40));
-
-          if (streamedResponse.statusCode == 200) {
-            final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
-            String accumulated = '';
-
-            await for (final line in stream) {
-              if (line.startsWith('data: ')) {
-                final jsonStr = line.substring(6).trim();
-                if (jsonStr == '[DONE]') continue;
-                try {
-                  final dynamic data = jsonDecode(jsonStr);
-                  if (data != null &&
-                      data['candidates'] is List &&
-                      (data['candidates'] as List).isNotEmpty) {
-                    final candidate = data['candidates'][0];
-                    if (candidate['content'] != null &&
-                        candidate['content']['parts'] is List &&
-                        (candidate['content']['parts'] as List).isNotEmpty) {
-                      final chunk = candidate['content']['parts'][0]['text'] ?? '';
-                      accumulated += chunk.toString();
-                      setState(() {
-                        botMessage.text = accumulated;
-                      });
-                      _scrollToBottom();
-                    }
+          final response = await http
+              .post(
+                directUri,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'x-goog-api-key': cleanKey,
+                },
+                body: jsonEncode({
+                  "contents": payloadContents,
+                  "systemInstruction": {
+                    "parts": [
+                      {"text": combinedSystemPrompt}
+                    ]
+                  },
+                  "generationConfig": {
+                    "temperature": 0.0,
+                    "topP": 0.95
                   }
-                } catch (_) {}
+                }),
+              )
+              .timeout(const Duration(seconds: 45));
+
+          if (response.statusCode == 200) {
+            final dynamic data = jsonDecode(utf8.decode(response.bodyBytes));
+            String answerText = "";
+            if (data != null && data['candidates'] is List && (data['candidates'] as List).isNotEmpty) {
+              final candidate = data['candidates'][0];
+              if (candidate['content'] != null &&
+                  candidate['content']['parts'] is List &&
+                  (candidate['content']['parts'] as List).isNotEmpty) {
+                answerText = candidate['content']['parts'][0]['text'] ?? '';
               }
             }
 
-            if (accumulated.isNotEmpty) {
+            if (answerText.isNotEmpty) {
+              setState(() {
+                botMessage.text = answerText;
+              });
               success = true;
               HapticFeedback.selectionClick();
               _saveData();
-              _speakText(accumulated);
+              _speakText(answerText);
               break;
             }
           } else {
-            final errBody = await streamedResponse.stream.bytesToString();
-            detailedError = "Google API Отказ (${streamedResponse.statusCode}):\n$errBody";
+            detailedError = "Google API Отказ (${response.statusCode}):\n${response.body}";
             break;
           }
         } on TimeoutException {
-          detailedError = "Таймаут соединения (40 сек). Сервер не ответил.";
+          detailedError = "Таймаут соединения (45 сек). Сервер не ответил.";
           if (attempt == 1) break;
           await Future.delayed(const Duration(seconds: 1));
         } catch (e) {
-          detailedError = "Сетевой сбой при отправке на $targetModel:\n$e";
+          detailedError = "Сетевой сбой при обращении к $targetModel:\n$e";
           if (attempt == 1) break;
           await Future.delayed(const Duration(milliseconds: 500));
         }
