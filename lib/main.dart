@@ -72,20 +72,24 @@ final List<AgentPreset> _availableAgents = [
   const AgentPreset(
     id: "excel_logist",
     name: "Логист / Разбор счетов (Excel)",
-    description: "Парсинг выгрузок XLSX/CSV, сведение счетов, подсчёт количества и экспорт таблиц",
+    description: "Авто-сведение: Посылка, Сводка Печатные платы и Сводка филиал",
     icon: Icons.table_chart_outlined,
     systemInstruction:
-        "Ты — ведущий эксперт по логистике, накладным и учету поставок плат ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект». "
+        "Ты — главный логист по учету и отгрузке печатных плат для Александра (ООО «Печатные платы» и ООО «ЭЛЕКТРОконнект», Москва). "
         "ПРАВИЛО №1: ВСЕГДА отвечай СТРОГО на русском языке! "
-        "ПРАВИЛО №2: НИКОГДА не пиши вступлений типа 'я текстовый ИИ и не умею красить ячейки или менять шрифт'! Приложение САМО покрасит файл, выставит Tahoma 18/16 и цвета при экспорте в Excel. "
-        "Твоя задача: мгновенно обработать накладные, сгруппировать позиции и выдать ЧИСТЫЙ CSV-блок с точкой с запятой ';'. "
-        "СТРОГАЯ СТРУКТУРА КОЛОНОК ТАБЛИЦЫ: "
+        "ПРАВИЛО №2: НИКАКИХ отмазок вроде 'я текстовый ИИ и не умею красить ячейки'! Приложение САМО раскрасит файл, применит Tahoma 18/16, цвета и границы при нажатии кнопки 'Сохранить файл'. "
+        "РЕГЛАМЕНТ РАБОТЫ С ТРЕМЯ ФАЙЛАМИ: "
+        "1. ФАЙЛ 'Посылка' (или 'Посылка 26'): берешь свежие строки из хвоста реестра (номера заказов, PS, Сч/н, количество полученных/отгружаемых плат, отметку ОТК). "
+        "2. ФАЙЛ 'Сводка ООО Печатные платы': сверяешь счета головной организации, определяешь позиции к отгрузке, сохраняешь ведущие нули в счетах ПП ('0585', '0643', '0615' и т.д.). "
+        "3. ФАЙЛ 'Сводка филиал': отделяешь позиции филиала и ставишь их строго ПОД строку-разделитель 'филиал'. "
+        "СТРОГАЯ СТРУКТУРА КОЛОНОК CSV: "
         "Фирма;PS;Счет пп;Сч/н;По счету;Получено;Отгрузить;ОТК;Примечание/Этикетка;Доставка "
-        "ПРАВИЛА ОФОРМЛЕНИЯ ДАННЫХ: "
-        "1. Сохраняй ведущие нули в счетах ПП (например, '0585', '0643', '0615'). "
-        "2. В середине списка обязательно ставь строку-разделитель: филиал;;;;;;;;; "
-        "3. В начале ответа давай только краткую сводку: сколько позиций обработано и общее количество к отгрузке. "
-        "4. Сам результат выводи строго внутри одного блока кода ```csv.",
+        "ПРАВИЛА ОФОРМЛЕНИЯ: "
+        "- В середине таблицы обязательна строка-разделитель: филиал;;;;;;;;; "
+        "- В колонке 'Доставка' четко указывай: К, ДМ, СДЭК или Самовывоз. "
+        "- Всегда сохраняй ведущие нули в счетах ПП. "
+        "- В начале ответа дай кратко: сколько позиций сведено и общее количество к отгрузке. "
+        "- Саму таблицу выдавай строго в одном блоке кода ```csv.",
   ),
   const AgentPreset(
     id: "companion",
@@ -231,7 +235,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
   String _memoryFacts =
       "Пользователя зовут Александр (Шурик). "
       "Отвечай кратко, емко, по-живому, на чистом русском языке. "
-      "Он логист в Москве, ведет отгрузки печатных плат. Никогда не говори 'я текстовый ИИ и не умею красить ячейки'. Выдавай сразу чистый CSV.";
+      "Он логист в Москве, ведет отгрузки печатных плат. Всегда сводит 3 файла: Посылка, Сводка Печатные платы и Сводка филиал.";
 
   late AnimationController _pulseController;
 
@@ -367,8 +371,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v27_excel_color_fix') {
-      await prefs.setString('bp_clean_migration', 'v27_excel_color_fix');
+    if (migrationTag != 'v28_copy_user_msg_and_logist_preset') {
+      await prefs.setString('bp_clean_migration', 'v28_copy_user_msg_and_logist_preset');
     }
 
     setState(() {
@@ -425,6 +429,19 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
         );
       }
     });
+  }
+
+  void _copyToClipboard(String text, [String notify = 'Скопировано в буфер']) {
+    Clipboard.setData(ClipboardData(text: text));
+    HapticFeedback.lightImpact();
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(notify),
+        duration: const Duration(seconds: 2),
+        backgroundColor: const Color(0xFF1E293B),
+      ),
+    );
   }
 
   Future<void> _stopSpeaking() async {
@@ -694,7 +711,6 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
           final cellValue = cells[colIdx];
           final cell = sheet.cell(xl.CellIndex.indexByColumnRow(columnIndex: colIdx, rowIndex: rowIdx));
 
-          // Числовые значения без лишних нулей (.0), счета ПП пишем текстом
           final cleanNumStr = cellValue.replaceAll(' ', '').replaceAll(',', '.');
           final numVal = num.tryParse(cleanNumStr);
           if (colIdx != 2 && numVal != null && !cellValue.startsWith('0') && cellValue.length < 11 && !isHeader) {
@@ -703,34 +719,31 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             cell.value = xl.TextCellValue(cellValue);
           }
 
-          // Выравнивание: A (Фирма) по левому краю, остальные по центру
           xl.HorizontalAlign align = xl.HorizontalAlign.Center;
           if (colIdx == 0 && !isFilialRow) {
             align = xl.HorizontalAlign.Left;
           }
 
-          // Размер шрифта: A — 18, остальные B-J — 16
           final int fontSize = (colIdx == 0 || isHeader) ? 18 : 16;
 
-          // Цвета шрифта и фона
           xl.ExcelColor fontColor = xl.ExcelColor.black;
           xl.ExcelColor bgColor = whiteColor;
 
           if (isFilialRow) {
             if (colIdx == 0) {
-              bgColor = xl.ExcelColor.fromHexString('#B91C1C'); // Красный фон ячейки филиал
+              bgColor = xl.ExcelColor.fromHexString('#B91C1C');
             }
           } else if (isSamovyvozRow) {
-            bgColor = xl.ExcelColor.fromHexString('#F59E0B'); // Оранжево-желтый фон для строки Самовывоз
+            bgColor = xl.ExcelColor.fromHexString('#F59E0B');
             if (colIdx == 6 || colIdx == 9) {
               fontColor = xl.ExcelColor.fromHexString('#CC0000');
             }
           } else if (!isHeader) {
             if (colIdx == 6) {
-              fontColor = xl.ExcelColor.fromHexString('#CC0000'); // Красный шрифт для Отгрузить
+              fontColor = xl.ExcelColor.fromHexString('#CC0000');
             }
             if (colIdx == 7 && cellValue.toUpperCase().contains('ОТК')) {
-              fontColor = xl.ExcelColor.fromHexString('#0044CC'); // Синий шрифт для ОТК
+              fontColor = xl.ExcelColor.fromHexString('#0044CC');
             }
             if (colIdx == 9) {
               final valUp = cellValue.toUpperCase();
@@ -741,7 +754,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
               }
             }
             if (colIdx == 8 && cellValue.isNotEmpty) {
-              bgColor = xl.ExcelColor.fromHexString('#FCE7F3'); // Розовый фон для Примечания
+              bgColor = xl.ExcelColor.fromHexString('#FCE7F3');
             }
           }
 
@@ -771,13 +784,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
     } catch (e) {
       debugPrint("Ошибка сохранения Excel: $e");
-      Clipboard.setData(ClipboardData(text: codeSnippet));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Скопировано в буфер (ошибка: $e)'),
-          backgroundColor: const Color(0xFF1E293B),
-        ),
-      );
+      _copyToClipboard(codeSnippet, 'Скопировано в буфер (ошибка сохранения)');
     }
   }
 
@@ -841,7 +848,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
       if (fact.isNotEmpty) {
         if (!_memoryFacts.contains(fact)) {
-          _memoryFacts = "$_memoryFacts\n- $fact";
+          _memoryFacts = "$_memoryFacts\n-$fact";
           _saveData();
           HapticFeedback.mediumImpact();
           ScaffoldMessenger.of(context).showSnackBar(
@@ -983,7 +990,7 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
       }
 
       if (docsToSend.isNotEmpty) {
-        buffer.writeln("\n[ПРИКРЕПЛЕННЫЕ ДОКУМЕНТЫ/ТАБЛИЦЫ]:");
+        buffer.writeln("\n[ПРИКРЕПЛЕННЫЕ ТАБЛИЦЫ ЛОГИСТИКИ]:");
         for (final doc in docsToSend) {
           buffer.writeln("\n--- ФАЙЛ: ${doc.fileName} ---");
           buffer.writeln(doc.content);
@@ -995,12 +1002,11 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
       String finalInstruction = buffer.toString().trim();
       if (text.isEmpty && docsToSend.isNotEmpty) {
-        final fileListStr = sentFileNames.join(", ");
+        // Если прикрепил файлы без текста — ИИ сразу выполняет регламентное сведение
         finalInstruction =
-            "Пользователь прикрепил файлы: $fileListStr.\n"
-            "СТРОГОЕ ПРАВИЛО: Сейчас ничего не делай, не анализируй данные и ничего не меняй. "
-            "Просто коротко подтверди, что файлы ($fileListStr) получены, и скажи, что ждешь команды от Александра.\n\n"
-            "$finalInstruction";
+            "Александр прикрепил таблицы накладных (${sentFileNames.join(', ')}).\n"
+            "Выполни регламентное сведение счетов: возьми свежие позиции из Посылки, сверь со Сводками, "
+            "поставь разделитель 'филиал', сохрани ведущие нули в счетах ПП и выдай готовый CSV внутри блока ```csv.";
       } else if (finalInstruction.isEmpty) {
         finalInstruction = "Слушаю вас. Чем помочь?";
       }
@@ -1234,12 +1240,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
             icon: const Icon(Icons.copy, size: 18),
             label: const Text('Скопировать всё'),
             onPressed: () {
-              Clipboard.setData(ClipboardData(text: fullExport));
-              HapticFeedback.mediumImpact();
+              _copyToClipboard(fullExport, 'Диалог скопирован в формате Markdown');
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Диалог скопирован в буфер в формате Markdown')),
-              );
             },
           ),
         ],
@@ -1539,137 +1541,157 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> with SingleTickerPr
 
                             return Align(
                               alignment: m.isUser ? Alignment.centerRight : Alignment.centerLeft,
-                              child: Container(
-                                margin: const EdgeInsets.symmetric(vertical: 8),
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.88),
-                                decoration: BoxDecoration(
-                                  color: m.isUser ? const Color(0xFF1E293B) : const Color(0xFF111827),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: m.isUser ? null : Border.all(color: Colors.white12),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (m.fileNames.isNotEmpty)
-                                      Padding(
-                                        padding: EdgeInsets.only(bottom: m.text.isNotEmpty ? 6 : 0),
-                                        child: Wrap(
-                                          spacing: 6,
-                                          runSpacing: 4,
-                                          children: m.fileNames.map((fName) {
-                                            return Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              decoration: BoxDecoration(
-                                                color: Colors.greenAccent.withOpacity(0.15),
-                                                borderRadius: BorderRadius.circular(8),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  const Icon(Icons.table_chart_outlined, size: 14, color: Colors.greenAccent),
-                                                  const SizedBox(width: 4),
-                                                  Text(fName, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
-                                                ],
-                                              ),
-                                            );
-                                          }).toList(),
-                                        ),
-                                      ),
-                                    if (m.imageBase64 != null)
-                                      Padding(
-                                        padding: const EdgeInsets.only(bottom: 8.0),
-                                        child: ClipRRect(
-                                          borderRadius: BorderRadius.circular(12),
-                                          child: Image.memory(
-                                            base64Decode(m.imageBase64!),
-                                            height: 180,
-                                            width: double.infinity,
-                                            fit: BoxFit.cover,
-                                          ),
-                                        ),
-                                      ),
-                                    if (m.isUser)
-                                      if (m.text.isNotEmpty)
-                                        Text(m.text, style: const TextStyle(fontSize: 16, color: Colors.white))
-                                      else
-                                        const SizedBox.shrink()
-                                    else
-                                      MarkdownBody(
-                                        data: m.text.isEmpty && _isLoading ? '...' : m.text,
-                                        selectable: true,
-                                        styleSheet: MarkdownStyleSheet(
-                                          p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
-                                          code: const TextStyle(
-                                            backgroundColor: Color(0xFF1E293B),
-                                            color: Color(0xFF38BDF8),
-                                            fontFamily: 'monospace',
-                                            fontSize: 13,
-                                          ),
-                                          codeblockPadding: const EdgeInsets.all(12),
-                                          codeblockDecoration: BoxDecoration(
-                                            color: const Color(0xFF0F172A),
-                                            borderRadius: BorderRadius.circular(10),
-                                            border: Border.all(color: Colors.white12),
-                                          ),
-                                        ),
-                                      ),
-
-                                    if (!m.isUser && codeBlocks.isNotEmpty)
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 8),
-                                        child: Wrap(
-                                          spacing: 8,
-                                          children: codeBlocks.map((code) {
-                                            return ElevatedButton.icon(
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: const Color(0xFF1E293B),
-                                                foregroundColor: Colors.greenAccent,
-                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                              ),
-                                              icon: const Icon(Icons.download_for_offline_outlined, size: 18),
-                                              label: const Text('Сохранить файл', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                                              onPressed: () => _saveCodeToFile(code),
-                                            );
-                                          }).toList(),
-                                        ),
-                                      ),
-
-                                    if (!m.isUser && m.text.isNotEmpty)
-                                      Row(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        children: [
-                                          if (m.modelUsed != null)
-                                            Padding(
-                                              padding: const EdgeInsets.only(right: 8),
-                                              child: Text(
-                                                m.modelUsed!,
-                                                style: const TextStyle(fontSize: 10, color: Colors.white38),
-                                              ),
-                                            ),
-                                          IconButton(
-                                            icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
-                                            tooltip: 'Скопировать весь ответ',
-                                            onPressed: () {
-                                              Clipboard.setData(ClipboardData(text: m.text));
-                                              HapticFeedback.lightImpact();
-                                              ScaffoldMessenger.of(context).showSnackBar(
-                                                const SnackBar(content: Text('Скопировано')),
+                              child: GestureDetector(
+                                // ДОЛГИЙ ТАП КОПИРУЕТ ЛЮБОЕ СООБЩЕНИЕ (И СВОЕ, И БОТА)
+                                onLongPress: () {
+                                  if (m.text.isNotEmpty) {
+                                    _copyToClipboard(m.text, m.isUser ? 'Ваш запрос скопирован' : 'Ответ скопирован');
+                                  }
+                                },
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 8),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.88),
+                                  decoration: BoxDecoration(
+                                    color: m.isUser ? const Color(0xFF1E293B) : const Color(0xFF111827),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: m.isUser ? null : Border.all(color: Colors.white12),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (m.fileNames.isNotEmpty)
+                                        Padding(
+                                          padding: EdgeInsets.only(bottom: m.text.isNotEmpty ? 6 : 0),
+                                          child: Wrap(
+                                            spacing: 6,
+                                            runSpacing: 4,
+                                            children: m.fileNames.map((fName) {
+                                              return Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.greenAccent.withOpacity(0.15),
+                                                  borderRadius: BorderRadius.circular(8),
+                                                ),
+                                                child: Row(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    const Icon(Icons.table_chart_outlined, size: 14, color: Colors.greenAccent),
+                                                    const SizedBox(width: 4),
+                                                    Text(fName, style: const TextStyle(fontSize: 12, color: Colors.greenAccent)),
+                                                  ],
+                                                ),
                                               );
-                                            },
+                                            }).toList(),
                                           ),
-                                          IconButton(
-                                            icon: Icon(
-                                              _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
-                                              size: 18,
-                                              color: Colors.blueAccent,
+                                        ),
+                                      if (m.imageBase64 != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(bottom: 8.0),
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(12),
+                                            child: Image.memory(
+                                              base64Decode(m.imageBase64!),
+                                              height: 180,
+                                              width: double.infinity,
+                                              fit: BoxFit.cover,
                                             ),
-                                            onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
                                           ),
-                                        ],
-                                      ),
-                                  ],
+                                        ),
+                                      if (m.isUser)
+                                        Column(
+                                          crossAxisAlignment: CrossAxisAlignment.end,
+                                          children: [
+                                            if (m.text.isNotEmpty)
+                                              SelectableText(
+                                                m.text,
+                                                style: const TextStyle(fontSize: 16, color: Colors.white),
+                                              ),
+                                            Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(Icons.copy_outlined, size: 16, color: Colors.white38),
+                                                  tooltip: 'Скопировать мой текст',
+                                                  constraints: const BoxConstraints(),
+                                                  padding: const EdgeInsets.only(top: 6, left: 6),
+                                                  onPressed: () => _copyToClipboard(m.text, 'Ваш запрос скопирован'),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        )
+                                      else
+                                        MarkdownBody(
+                                          data: m.text.isEmpty && _isLoading ? '...' : m.text,
+                                          selectable: true,
+                                          styleSheet: MarkdownStyleSheet(
+                                            p: const TextStyle(fontSize: 16, color: Color(0xFFE2E8F0), height: 1.45),
+                                            code: const TextStyle(
+                                              backgroundColor: Color(0xFF1E293B),
+                                              color: Color(0xFF38BDF8),
+                                              fontFamily: 'monospace',
+                                              fontSize: 13,
+                                            ),
+                                            codeblockPadding: const EdgeInsets.all(12),
+                                            codeblockDecoration: BoxDecoration(
+                                              color: const Color(0xFF0F172A),
+                                              borderRadius: BorderRadius.circular(10),
+                                              border: Border.all(color: Colors.white12),
+                                            ),
+                                          ),
+                                        ),
+
+                                      if (!m.isUser && codeBlocks.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 8),
+                                          child: Wrap(
+                                            spacing: 8,
+                                            children: codeBlocks.map((code) {
+                                              return ElevatedButton.icon(
+                                                style: ElevatedButton.styleFrom(
+                                                  backgroundColor: const Color(0xFF1E293B),
+                                                  foregroundColor: Colors.greenAccent,
+                                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                                ),
+                                                icon: const Icon(Icons.download_for_offline_outlined, size: 18),
+                                                label: const Text('Сохранить файл', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                                                onPressed: () => _saveCodeToFile(code),
+                                              );
+                                            }).toList(),
+                                          ),
+                                        ),
+
+                                      if (!m.isUser && m.text.isNotEmpty)
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.end,
+                                          children: [
+                                            if (m.modelUsed != null)
+                                              Padding(
+                                                padding: const EdgeInsets.only(right: 8),
+                                                child: Text(
+                                                  m.modelUsed!,
+                                                  style: const TextStyle(fontSize: 10, color: Colors.white38),
+                                                ),
+                                              ),
+                                            IconButton(
+                                              icon: const Icon(Icons.copy_outlined, size: 18, color: Colors.grey),
+                                              tooltip: 'Скопировать ответ',
+                                              onPressed: () => _copyToClipboard(m.text, 'Ответ скопирован'),
+                                            ),
+                                            IconButton(
+                                              icon: Icon(
+                                                _isSpeaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined,
+                                                size: 18,
+                                                color: Colors.blueAccent,
+                                              ),
+                                              onPressed: () => _isSpeaking ? _stopSpeaking() : _speakText(m.text),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             );
