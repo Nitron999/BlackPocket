@@ -35,6 +35,7 @@ class GeminiBlackPocketApp extends StatelessWidget {
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF2563EB),
           surface: Color(0xFF111827),
+          background: Color(0xFF030712),
         ),
       ),
       home: const GeminiMainScreen(),
@@ -285,18 +286,23 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     final prefs = await SharedPreferences.getInstance();
 
     final migrationTag = prefs.getString('bp_clean_migration');
-    if (migrationTag != 'v32_flash_38_strict') {
-      await prefs.setString('bp_clean_migration', 'v32_flash_38_strict');
+    if (migrationTag != 'v33_strict_diagnostic') {
+      await prefs.setString('bp_clean_migration', 'v33_strict_diagnostic');
       await prefs.setString('modelName', 'gemini-3.8-flash');
+      await prefs.setString('apiEndpoint', _defaultEndpoint);
     }
 
     setState(() {
       _apiKey = prefs.getString('apiKey') ?? _defaultApiKey;
       _modelName = prefs.getString('modelName') ?? _defaultModel;
-      if (_modelName.contains('1.5') || _modelName.contains('2.5') || _modelName.contains('lite')) {
+      if (_modelName.contains('1.5') || _modelName.contains('2.5') || _modelName.contains('3.6') || _modelName.contains('lite')) {
         _modelName = 'gemini-3.8-flash';
       }
       _apiEndpoint = prefs.getString('apiEndpoint') ?? _defaultEndpoint;
+      if (!_apiEndpoint.endsWith('/models') || !_apiEndpoint.contains('.com')) {
+        _apiEndpoint = _defaultEndpoint;
+      }
+
       _selectedAgentId = prefs.getString('selectedAgentId') ?? "excel_logist";
       _memoryFacts = prefs.getString('memoryFacts') ?? _memoryFacts;
       _speechRate = prefs.getDouble('speechRate') ?? 0.48;
@@ -754,7 +760,8 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
     _attachedDocs.clear();
 
     final session = _activeSession;
-    final botMessage = ChatMessage(text: '', isUser: false, modelUsed: _modelName);
+    final targetModel = _modelName.trim().isNotEmpty ? _modelName.trim() : "gemini-3.8-flash";
+    final botMessage = ChatMessage(text: '', isUser: false, modelUsed: targetModel);
     final previousHistory = session.messages.toList();
 
     final displayPrompt = text;
@@ -813,110 +820,99 @@ class _GeminiMainScreenState extends State<GeminiMainScreen> {
 
       final payloadContents = _buildContentsHistory(previousHistory, currentParts);
       final cleanKey = _apiKey.trim();
-      final endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
+      var endpointBase = _apiEndpoint.trim().replaceAll(RegExp(r'/$'), '');
+      if (!endpointBase.endsWith('/models')) {
+        endpointBase = "https://generativelanguage.googleapis.com/v1beta/models";
+      }
 
-      // ТОЛЬКО ДЕЙСТВУЮЩИЕ FLASH-МОДЕЛИ GOOGLE API
-      final modelsQueue = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-      ];
+      final streamUri = Uri.parse("$endpointBase/$targetModel:streamGenerateContent?alt=sse&key=$cleanKey");
 
       bool success = false;
+      String detailedError = "";
 
-      for (final modelToTry in modelsQueue) {
-        botMessage.modelUsed = modelToTry;
-        final streamUri = Uri.parse("$endpointBase/$modelToTry:streamGenerateContent?alt=sse&key=$cleanKey");
+      for (int attempt = 0; attempt < 2; attempt++) {
+        try {
+          final request = http.Request('POST', streamUri);
+          request.headers.addAll({
+            'Content-Type': 'application/json',
+            'x-goog-api-key': cleanKey,
+          });
+          request.body = jsonEncode({
+            "contents": payloadContents,
+            "systemInstruction": {
+              "parts": [
+                {"text": combinedSystemPrompt}
+              ]
+            },
+            "generationConfig": {
+              "temperature": 0.0,
+              "topP": 0.95
+            }
+          });
 
-        for (int attempt = 0; attempt < 2; attempt++) {
-          try {
-            final request = http.Request('POST', streamUri);
-            request.headers.addAll({
-              'Content-Type': 'application/json',
-              'x-goog-api-key': cleanKey,
-            });
-            request.body = jsonEncode({
-              "contents": payloadContents,
-              "systemInstruction": {
-                "parts": [
-                  {"text": combinedSystemPrompt}
-                ]
-              },
-              "generationConfig": {
-                "temperature": 0.0,
-                "topP": 0.95
-              }
-            });
+          final client = http.Client();
+          final streamedResponse = await client.send(request).timeout(const Duration(seconds: 40));
 
-            final client = http.Client();
-            final streamedResponse = await client.send(request).timeout(const Duration(seconds: 35));
+          if (streamedResponse.statusCode == 200) {
+            final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
+            String accumulated = '';
 
-            if (streamedResponse.statusCode == 200) {
-              final stream = streamedResponse.stream.transform(utf8.decoder).transform(const LineSplitter());
-              String accumulated = '';
-
-              await for (final line in stream) {
-                if (line.startsWith('data: ')) {
-                  final jsonStr = line.substring(6).trim();
-                  if (jsonStr == '[DONE]') continue;
-                  try {
-                    final dynamic data = jsonDecode(jsonStr);
-                    if (data != null &&
-                        data['candidates'] is List &&
-                        (data['candidates'] as List).isNotEmpty) {
-                      final candidate = data['candidates'][0];
-                      if (candidate['content'] != null &&
-                          candidate['content']['parts'] is List &&
-                          (candidate['content']['parts'] as List).isNotEmpty) {
-                        final chunk = candidate['content']['parts'][0]['text'] ?? '';
-                        accumulated += chunk.toString();
-                        setState(() {
-                          botMessage.text = accumulated;
-                        });
-                        _scrollToBottom();
-                      }
+            await for (final line in stream) {
+              if (line.startsWith('data: ')) {
+                final jsonStr = line.substring(6).trim();
+                if (jsonStr == '[DONE]') continue;
+                try {
+                  final dynamic data = jsonDecode(jsonStr);
+                  if (data != null &&
+                      data['candidates'] is List &&
+                      (data['candidates'] as List).isNotEmpty) {
+                    final candidate = data['candidates'][0];
+                    if (candidate['content'] != null &&
+                        candidate['content']['parts'] is List &&
+                        (candidate['content']['parts'] as List).isNotEmpty) {
+                      final chunk = candidate['content']['parts'][0]['text'] ?? '';
+                      accumulated += chunk.toString();
+                      setState(() {
+                        botMessage.text = accumulated;
+                      });
+                      _scrollToBottom();
                     }
-                  } catch (_) {}
-                }
+                  }
+                } catch (_) {}
               }
+            }
 
-              if (accumulated.isNotEmpty) {
-                success = true;
-                HapticFeedback.selectionClick();
-                _saveData();
-                _speakText(accumulated);
-                break;
-              }
-            } else if (streamedResponse.statusCode == 503) {
-              await Future.delayed(const Duration(seconds: 2));
-              continue;
-            } else if (streamedResponse.statusCode == 429) {
-              break;
-            } else {
-              final errBody = await streamedResponse.stream.bytesToString();
-              setState(() {
-                botMessage.text = "Ошибка Gemini API (${streamedResponse.statusCode}): $errBody";
-              });
+            if (accumulated.isNotEmpty) {
+              success = true;
+              HapticFeedback.selectionClick();
+              _saveData();
+              _speakText(accumulated);
               break;
             }
-          } on TimeoutException {
-            if (attempt == 1) break;
-            await Future.delayed(const Duration(seconds: 1));
-          } catch (_) {
-            if (attempt == 1) break;
+          } else {
+            final errBody = await streamedResponse.stream.bytesToString();
+            detailedError = "Google API Отказ (${streamedResponse.statusCode}):\n$errBody";
+            break;
           }
+        } on TimeoutException {
+          detailedError = "Таймаут соединения (40 сек). Сервер не ответил.";
+          if (attempt == 1) break;
+          await Future.delayed(const Duration(seconds: 1));
+        } catch (e) {
+          detailedError = "Сетевой сбой при отправке на $targetModel:\n$e";
+          if (attempt == 1) break;
+          await Future.delayed(const Duration(milliseconds: 500));
         }
-
-        if (success) break;
       }
 
       if (!success && botMessage.text.isEmpty) {
         setState(() {
-          botMessage.text = "Связь с сервером прервалась. Проверь VPN.";
+          botMessage.text = detailedError;
         });
       }
     } catch (e) {
       setState(() {
-        botMessage.text = "Сбой соединения: $e";
+        botMessage.text = "Критический сбой приложения: $e";
       });
     } finally {
       setState(() => _isLoading = false);
