@@ -36,7 +36,6 @@ class GeminiBlackPocketApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'BlackPocket AI',
-      debugShowCosmeticError: false,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
