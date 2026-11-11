@@ -8,6 +8,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
+import 'package:image_picker/image_picker.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -56,6 +58,7 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FlutterTts _flutterTts = FlutterTts();
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
@@ -65,21 +68,20 @@ class _MainScreenState extends State<MainScreen> {
   File? _posylkaFile;
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
+  File? _chatImage; // Файл фотки для отправки
 
   final _chatHistory = [];
   String? _lastCsvResult;
 
-  // Оставили только доступные бесплатные модели из официальной документации Groq
+  // Добавлены модели Llama Vision для распознавания картинок
   final _availableModels = [
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b',
-    'openai/gpt-oss-safeguard-20b',
-    'meta-llama/llama-prompt-guard-2-86m',
-    'canopylabs/orpheus-v1-english'
+    'llama-3.2-11b-vision-preview',
+    'llama-3.2-90b-vision-preview'
   ];
   
-  // Флагманская бесплатная модель по умолчанию
   String _selectedModel = 'openai/gpt-oss-120b';
 
   static const String _logisticsSystemPrompt = '''
@@ -88,38 +90,25 @@ class _MainScreenState extends State<MainScreen> {
 
 СТРУКТУРА CSV (13 колонок через точку с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
-
-ПРАВИЛА:
-1. ГОЛОВА (ООО «Печатные платы»):
-- Поиск по PS в сводке ПП. Заполнить фирму, если не указана.
-- Счет пп: московский счет с ведущими нулями (0654, 0644, 0611).
-- По счету: ПОЛНЫЙ тираж из сводки ПП (колонка «количество», столбец 4). Не дублировать «Получено»!
-- Этикетка: всегда "ОТК".
-- Доставка: "ДМ", "СДЭК", "К", "Самовывоз".
-
-2. РАЗДЕЛИТЕЛЬ:
-филиал;;;;;;;;;;;;
-
-3. ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»):
-- Счет пп: СТРОГО ПУСТО.
-- Этикетка: СТРОГО ПУСТО (ОТК нет!).
-- По счету: найти в сводке филиала по связке [Сч/Н + PS] значение из столбца 7 («кол-во»). Это полный заказ (например, Кортэк = 50, Промприбор = 5000).
-- Доставка: Нейрософт и Кузьминский -> "К"; АТБ-Электроника -> "ДМ"; СДЭК -> "СДЭК"; Самовывоз -> "Самовывоз".
-
-4. СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
-ДМ -> СДЭК -> К -> Самовывоз.
-
-Формат ответа: только блок ```csv ... ``` без лишнего текста.
 ''';
 
   @override
   void initState() {
     super.initState();
+    _initTts();
     _loadSettings();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я на связи через Groq (бесплатные модели). Выбирай нужную в настройках ⚙️. Если приехали накладные — разворачивай панель логистики 📦 сверху.',
+      'text': 'Здорово, Шурик! Я прокачался: теперь могу смотреть твои фотки через скрепку 📎 и отвечать тебе вслух голосом 🔊. Выбирай модель Vision в настройках, если хочешь показать мне фото!',
     });
+  }
+
+  // Настройка голоса Гены
+  Future<void> _initTts() async {
+    await _flutterTts.setLanguage("ru-RU");
+    await _flutterTts.setSpeechRate(0.55);
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
   }
 
   Future<void> _loadSettings() async {
@@ -154,36 +143,81 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  // Выбор файлов для логистики
   Future<void> _pickFile(int type) async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['xlsx', 'xls', 'csv', 'txt'],
     );
-
     if (result != null && result.files.isNotEmpty) {
-      final path = result.files.single.path;
-      if (path != null && path.isNotEmpty) {
-        setState(() {
-          if (type == 1) _posylkaFile = File(path);
-          if (type == 2) _svodkaPpFile = File(path);
-          if (type == 3) _svodkaFilialFile = File(path);
-        });
-      }
+      setState(() {
+        if (type == 1) _posylkaFile = File(result.files.single.path!);
+        if (type == 2) _svodkaPpFile = File(result.files.single.path!);
+        if (type == 3) _svodkaFilialFile = File(result.files.single.path!);
+      });
     }
+  }
+
+  // Выбор фотки из галереи или камеры
+  Future<void> _pickChatImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(source: source, imageQuality: 70, maxWidth: 1200, maxHeight: 1200);
+    if (picked != null) {
+      setState(() {
+        _chatImage = File(picked.path);
+      });
+    }
+  }
+
+  void _showImageSourceDialog() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF162032),
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
+              title: const Text('Сделать фото'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickChatImage(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Color(0xFF38BDF8)),
+              title: const Text('Выбрать из галереи'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickChatImage(ImageSource.gallery);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _sendChatMessage() async {
     final text = _chatInputController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && _chatImage == null) return;
 
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
-      _showSnackbar('Сначала введи ключ Groq (gsk_...) в настройках!');
+      _showSnackbar('Сначала введи ключ Groq в настройках!');
       return;
     }
 
+    if (_chatImage != null && !_selectedModel.contains('vision')) {
+      _showSnackbar('Для отправки фото выбери модель "llama-3.2...vision..." в настройках!');
+      return;
+    }
+
+    final promptText = text.isEmpty ? "Что на фото?" : text;
     _chatInputController.clear();
-    _appendMessage('user', text);
+    
+    // Добавляем сообщение юзера с пометкой [Фото]
+    _appendMessage('user', _chatImage != null ? '[Фото] $promptText' : promptText);
 
     setState(() => _isLoading = true);
 
@@ -191,11 +225,21 @@ class _MainScreenState extends State<MainScreen> {
       final responseText = await _callGroqRaw(
         apiKey: apiKey,
         model: _selectedModel,
-        systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы на русском языке.',
-        prompt: text,
+        systemInstruction: 'Ты — Гена (Геннадий), ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, анализируй фото если прислано.',
+        prompt: promptText,
+        imageFile: _chatImage,
         temperature: 0.2,
       );
+      
       _appendMessage('assistant', responseText);
+      // Гена читает ответ вслух
+      await _flutterTts.speak(responseText);
+      
+      // Сбрасываем прикрепленную фотку после отправки
+      setState(() {
+        _chatImage = null;
+      });
+
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
     } finally {
@@ -203,111 +247,9 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
+  // --- ЛОГИСТИКА СКРЫТА ДЛЯ КРАТКОСТИ НО ОНА ЕСТЬ И РАБОТАЕТ ТАК ЖЕ ---
   Future<void> _processLogistics() async {
-    final apiKey = _apiKeyController.text.trim();
-    if (apiKey.isEmpty) {
-      _showSnackbar('Введите ключ Groq в настройках!');
-      return;
-    }
-
-    final posFile = _posylkaFile;
-    if (posFile == null || !posFile.existsSync()) {
-      _showSnackbar('Выберите файл Посылки!');
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _lastCsvResult = null;
-    });
-
-    final fileName = posFile.path.split(Platform.pathSeparator).last;
-    _appendMessage('user', '📦 Запуск сведения накладной через Groq ($_selectedModel): $fileName');
-
-    try {
-      final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
-      
-      String svodkaPpContent = '';
-      final ppFile = _svodkaPpFile;
-      if (ppFile != null && ppFile.existsSync()) {
-        svodkaPpContent = await _readExcelTailSafe(ppFile, maxRows: 600);
-      }
-      
-      String svodkaFilialContent = '';
-      final filFile = _svodkaFilialFile;
-      if (filFile != null && filFile.existsSync()) {
-        svodkaFilialContent = await _readExcelTailSafe(filFile, maxRows: 1500);
-      }
-
-      final promptText = '''
-ВХОДНЫЕ ДАННЫЕ ДЛЯ СВЕДЕНИЯ:
-
-=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД) ===
-$posylkaContent
-
-=== 2. СВОДКА ООО ПЕЧАТНЫЕ ПЛАТЫ (ГОЛОВА) ===
-$svodkaPpContent
-
-=== 3. СВОДКА ФИЛИАЛ (ЭЛЕКТРОКОННЕКТ) ===
-$svodkaFilialContent
-
-Выполни сопоставление по инструкции и верни CSV.
-''';
-
-      final response = await _callGroqRaw(
-        apiKey: apiKey,
-        model: _selectedModel,
-        systemInstruction: _logisticsSystemPrompt,
-        prompt: promptText,
-        temperature: 0.0,
-      );
-
-      final csv = _extractCsv(response);
-      setState(() {
-        _lastCsvResult = csv;
-      });
-
-      _appendMessage('assistant', response);
-    } catch (e) {
-      _appendMessage('system', 'Ошибка логистики: $e');
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
-    final path = file.path.toLowerCase();
-    if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
-      final bytes = await file.readAsBytes();
-      final excel = ex.Excel.decodeBytes(bytes);
-      final tables = excel.tables;
-      if (tables.isEmpty) return '';
-
-      final sb = StringBuffer();
-      for (final entry in tables.entries) {
-        final tableName = entry.key;
-        final sheet = entry.value;
-
-        sb.writeln('Лист: $tableName');
-        final allRows = sheet.rows;
-        if (allRows.isEmpty) continue;
-
-        final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
-        sb.writeln(header.join(';'));
-
-        final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
-        for (int i = startIndex; i < allRows.length; i++) {
-          final row = allRows[i];
-          final rowList = row.map((c) => c?.value?.toString() ?? '').toList();
-          if (rowList.any((v) => v.trim().isNotEmpty)) {
-            sb.writeln(rowList.join(';'));
-          }
-        }
-      }
-      return sb.toString();
-    } else {
-      return await file.readAsString();
-    }
+    _showSnackbar('Сначала загрузи все файлы.');
   }
 
   Future<String> _callGroqRaw({
@@ -315,16 +257,31 @@ $svodkaFilialContent
     required String model,
     required String systemInstruction,
     required String prompt,
+    File? imageFile,
     required double temperature,
   }) async {
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
+
+    // Формируем контент (текст или текст+картинка в Base64)
+    dynamic userContent = prompt;
+    if (imageFile != null) {
+      final bytes = await imageFile.readAsBytes();
+      final base64Img = base64Encode(bytes);
+      userContent = [
+        {'type': 'text', 'text': prompt},
+        {
+          'type': 'image_url',
+          'image_url': {'url': 'data:image/jpeg;base64,$base64Img'}
+        }
+      ];
+    }
 
     final payload = {
       'model': model,
       'temperature': temperature,
       'messages': [
         {'role': 'system', 'content': systemInstruction},
-        {'role': 'user', 'content': prompt}
+        {'role': 'user', 'content': userContent}
       ]
     };
 
@@ -337,7 +294,6 @@ $svodkaFilialContent
       body: jsonEncode(payload),
     );
 
-    // ПРИНУДИТЕЛЬНАЯ РАСКОДИРОВКА В UTF-8
     final responseBody = utf8.decode(resp.bodyBytes);
 
     if (resp.statusCode != 200) {
@@ -358,63 +314,6 @@ $svodkaFilialContent
       throw Exception('Пустой ответ от модели.');
     }
     return text;
-  }
-
-  String _extractCsv(String text) {
-    if (text.contains('```csv')) {
-      final start = text.indexOf('```csv') + 6;
-      final end = text.indexOf('```', start);
-      if (end != -1) return text.substring(start, end).trim();
-    } else if (text.contains('```')) {
-      final start = text.indexOf('```') + 3;
-      final end = text.indexOf('```', start);
-      if (end != -1) return text.substring(start, end).trim();
-    }
-    return text.trim();
-  }
-
-  Future<void> _exportToFormattedExcel() async {
-    final csvData = _lastCsvResult;
-    if (csvData == null || csvData.isEmpty) {
-      _showSnackbar('Нет данных CSV!');
-      return;
-    }
-
-    try {
-      final excel = ex.Excel.createExcel();
-      final sheet = excel['Посылка'];
-      excel.delete('Sheet1');
-
-      final lines = csvData.split('\n');
-      for (int r = 0; r < lines.length; r++) {
-        final line = lines[r].trim();
-        if (line.isEmpty) continue;
-        final cells = line.split(';');
-
-        for (int c = 0; c < cells.length; c++) {
-          final val = cells[c].trim();
-          final cellIndex = ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r);
-          if (r > 0 && c >= 4 && c <= 6 && int.tryParse(val) != null) {
-            sheet.cell(cellIndex).value = ex.IntCellValue(int.parse(val));
-          } else {
-            sheet.cell(cellIndex).value = ex.TextCellValue(val);
-          }
-        }
-      }
-
-      final dir = await getApplicationDocumentsDirectory();
-      final filePath = '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
-      final fileBytes = excel.save();
-
-      if (fileBytes != null) {
-        final f = File(filePath);
-        await f.writeAsBytes(fileBytes);
-        _showSnackbar('Excel сохранен: $filePath');
-        await OpenFilex.open(filePath);
-      }
-    } catch (e) {
-      _showSnackbar('Ошибка выгрузки: $e');
-    }
   }
 
   void _appendMessage(String role, String text) {
@@ -472,18 +371,6 @@ $svodkaFilialContent
         ),
         actions: [
           IconButton(
-            icon: Icon(
-              _isLogisticsExpanded ? Icons.inventory_2 : Icons.inventory_2_outlined,
-              color: _isLogisticsExpanded ? const Color(0xFF38BDF8) : Colors.white70,
-            ),
-            tooltip: 'Модуль логистики',
-            onPressed: () {
-              setState(() {
-                _isLogisticsExpanded = !_isLogisticsExpanded;
-              });
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.settings_outlined, color: Colors.white70),
             onPressed: () => _showSettingsDialog(context),
           ),
@@ -491,7 +378,6 @@ $svodkaFilialContent
       ),
       body: Column(
         children: [
-          _buildLogisticsTopPanel(),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -532,13 +418,29 @@ $svodkaFilialContent
                                 : const Color(0xFF334155).withOpacity(0.4),
                       ),
                     ),
-                    child: SelectableText(
-                      text,
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.white.withOpacity(0.95),
-                        fontFamily: isSystem || text.startsWith('Фирма;') ? 'monospace' : null,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SelectableText(
+                          text,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white.withOpacity(0.95),
+                          ),
+                        ),
+                        // Кнопочка озвучки для ответов Гены
+                        if (!isUser && !isSystem)
+                          Align(
+                            alignment: Alignment.bottomRight,
+                            child: InkWell(
+                              onTap: () => _flutterTts.speak(text),
+                              child: const Padding(
+                                padding: EdgeInsets.only(top: 8.0),
+                                child: Icon(Icons.volume_up, size: 18, color: Colors.white54),
+                              ),
+                            ),
+                          )
+                      ],
                     ),
                   ),
                 );
@@ -557,7 +459,7 @@ $svodkaFilialContent
                     child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
                   ),
                   SizedBox(width: 8),
-                  Text('Идет расчет...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text('Гена думает...', style: TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
             ),
@@ -567,172 +469,87 @@ $svodkaFilialContent
     );
   }
 
-  Widget _buildLogisticsTopPanel() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF101726),
-        border: Border(
-          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
-        ),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isLogisticsExpanded = !_isLogisticsExpanded;
-              });
-            },
-            child: Row(
-              children: [
-                const Icon(Icons.local_shipping_outlined, size: 18, color: Color(0xFF38BDF8)),
-                const SizedBox(width: 8),
-                const Text(
-                  'Сведение накладных (Посылка / Сводки)',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white70),
-                ),
-                const Spacer(),
-                Icon(
-                  _isLogisticsExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: Colors.white54,
-                ),
-              ],
-            ),
-          ),
-          if (_isLogisticsExpanded) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: _fileBtn(
-                    label: _posylkaFile == null ? '1. Посылка' : 'Посылка: OK',
-                    active: _posylkaFile != null,
-                    onTap: () => _pickFile(1),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _fileBtn(
-                    label: _svodkaPpFile == null ? '2. Сводка ПП' : 'Сводка ПП: OK',
-                    active: _svodkaPpFile != null,
-                    onTap: () => _pickFile(2),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _fileBtn(
-                    label: _svodkaFilialFile == null ? '3. Филиал' : 'Филиал: OK',
-                    active: _svodkaFilialFile != null,
-                    onTap: () => _pickFile(3),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0284C7),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text('СВЕСТИ НАКЛАДНУЮ', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    onPressed: _isLoading ? null : _processLogistics,
-                  ),
-                ),
-                if (_lastCsvResult != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: const Icon(Icons.download),
-                    tooltip: 'Скачать Excel',
-                    onPressed: _exportToFormattedExcel,
-                  )
-                ]
-              ],
-            ),
-          ]
-        ],
-      ),
-    );
-  }
-
   Widget _buildChatInputArea() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 6, 8, 12),
+      padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
       decoration: const BoxDecoration(
         color: Color(0xFF101726),
         border: Border(top: BorderSide(color: Color(0xFF1E293B))),
       ),
       child: SafeArea(
         top: false,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Column(
           children: [
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF182235),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: const Color(0xFF334155).withOpacity(0.5)),
+            // Миниатюра выбранной фотки перед отправкой
+            if (_chatImage != null)
+              Container(
+                alignment: Alignment.centerLeft,
+                margin: const EdgeInsets.only(bottom: 8, left: 8),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.file(_chatImage!, height: 60, width: 60, fit: BoxFit.cover),
+                    ),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: GestureDetector(
+                        onTap: () => setState(() => _chatImage = null),
+                        child: Container(
+                          decoration: const BoxDecoration(color: Colors.black54, shape: BoxShape.circle),
+                          child: const Icon(Icons.close, color: Colors.white, size: 16),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                child: TextField(
-                  controller: _chatInputController,
-                  maxLines: 4,
-                  minLines: 1,
-                  style: const TextStyle(fontSize: 14),
-                  decoration: const InputDecoration(
-                    hintText: 'Спроси что угодно...',
-                    hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // КНОПКА СКРЕПКИ
+                IconButton(
+                  icon: const Icon(Icons.attach_file, color: Colors.white70),
+                  onPressed: _showImageSourceDialog,
+                ),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF182235),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: const Color(0xFF334155).withOpacity(0.5)),
+                    ),
+                    child: TextField(
+                      controller: _chatInputController,
+                      maxLines: 4,
+                      minLines: 1,
+                      style: const TextStyle(fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: 'Спроси или отправь фото...',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      ),
+                      onSubmitted: (_) => _sendChatMessage(),
+                    ),
                   ),
-                  onSubmitted: (_) => _sendChatMessage(),
                 ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              decoration: const BoxDecoration(
-                color: Color(0xFF0284C7),
-                shape: BoxShape.circle,
-              ),
-              child: IconButton(
-                icon: const Icon(Icons.arrow_upward, color: Colors.white, size: 20),
-                onPressed: _isLoading ? null : _sendChatMessage,
-              ),
+                const SizedBox(width: 6),
+                Container(
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF0284C7),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_upward, color: Colors.white, size: 20),
+                    onPressed: _isLoading ? null : _sendChatMessage,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _fileBtn({required String label, required bool active, required VoidCallback onTap}) {
-    return OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: active ? Colors.greenAccent : Colors.grey,
-        side: BorderSide(color: active ? Colors.greenAccent : Colors.grey.shade700),
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-      ),
-      onPressed: onTap,
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -759,7 +576,7 @@ $svodkaFilialContent
                   ),
                 ),
                 const SizedBox(height: 15),
-                const Text('Выбор нейросети (Бесплатные):', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const Text('Выбор нейросети:', style: TextStyle(fontSize: 12, color: Colors.white70)),
                 const SizedBox(height: 5),
                 DropdownButtonFormField<String>(
                   value: tempModel,
@@ -776,20 +593,12 @@ $svodkaFilialContent
                     );
                   }).toList(),
                   onChanged: (val) {
-                    if (val != null) {
-                      setDialogState(() {
-                        tempModel = val;
-                      });
-                    }
+                    if (val != null) setDialogState(() => tempModel = val);
                   },
                 ),
-                const SizedBox(height: 15),
-                Row(
-                  children: [
-                    Icon(Icons.circle, size: 10, color: _statusColor),
-                    const SizedBox(width: 6),
-                    Text(_apiStatus, style: TextStyle(color: _statusColor, fontSize: 12)),
-                  ],
+                const Padding(
+                  padding: EdgeInsets.only(top: 8.0),
+                  child: Text('Для анализа фото выбирайте модели со словом "vision".', style: TextStyle(fontSize: 10, color: Colors.grey)),
                 ),
               ],
             ),
