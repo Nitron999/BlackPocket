@@ -50,17 +50,20 @@ class BlackPocketApp extends StatelessWidget {
 class ChatMessage {
   String role;
   String text;
+  String? imagePath; // Сохраняем путь к картинке в сообщении
 
-  ChatMessage({required this.role, required this.text});
+  ChatMessage({required this.role, required this.text, this.imagePath});
 
   Map<String, dynamic> toJson() => {
         'role': role,
         'text': text,
+        'imagePath': imagePath,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         role: json['role'] ?? 'assistant',
         text: json['text'] ?? '',
+        imagePath: json['imagePath'],
       );
 }
 
@@ -135,6 +138,28 @@ class _MainScreenState extends State<MainScreen> {
 
 СТРУКТУРА CSV (13 колонок через точку с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
+
+ПРАВИЛА:
+1. ГОЛОВА (ООО «Печатные платы»):
+- Поиск по PS в сводке ПП. Заполнить фирму, если не указана.
+- Счет пп: московский счет с ведущими нулями (0654, 0644, 0611).
+- По счету: ПОЛНЫЙ тираж из сводки ПП (колонка «количество», столбец 4). Не дублировать «Получено»!
+- Этикетка: всегда "ОТК".
+- Доставка: "ДМ", "СДЭК", "К", "Самовывоз".
+
+2. РАЗДЕЛИТЕЛЬ:
+филиал;;;;;;;;;;;;
+
+3. ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»):
+- Счет пп: СТРОГО ПУСТО.
+- Этикетка: СТРОГО ПУСТО (ОТК нет!).
+- По счету: найти в сводке филиала по связке [Сч/Н + PS] значение из столбца 7 («кол-во»). Это полный заказ (например, Кортэк = 50, Промприбор = 5000).
+- Доставка: Нейрософт и Кузьминский -> "К"; АТБ-Электроника -> "ДМ"; СДЭК -> "СДЭК"; Самовывоз -> "Самовывоз".
+
+4. СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
+ДМ -> СДЭК -> К -> Самовывоз.
+
+Формат ответа: только блок ```csv ... ``` без лишнего текста.
 ''';
 
   @override
@@ -263,7 +288,6 @@ class _MainScreenState extends State<MainScreen> {
     _saveChats();
   }
 
-  // Проверка валидности Groq ключа прямо из настроек
   Future<void> _validateAndSaveKey(String key, String model) async {
     final trimmedKey = key.trim();
     if (trimmedKey.isEmpty) {
@@ -389,10 +413,17 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     final promptText = text.isEmpty ? "Что на фото?" : text;
+    final imagePathToSave = _chatImage?.path;
+    
     _chatInputController.clear();
-    _appendMessage('user', _chatImage != null ? '[Фото] $promptText' : promptText);
+    // Передаем путь к картинке в сообщение, чтобы она осталась висеть в чате
+    _appendMessage('user', promptText, imagePath: imagePathToSave);
 
-    setState(() => _isLoading = true);
+    final activeImage = _chatImage;
+    setState(() {
+      _chatImage = null; // Сбрасываем превью внизу ввода
+      _isLoading = true;
+    });
 
     try {
       final historyList = _currentSession?.messages ?? [];
@@ -402,16 +433,12 @@ class _MainScreenState extends State<MainScreen> {
         model: _selectedModel,
         systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы на русском языке.',
         messages: historyList,
-        imageFile: _chatImage,
+        imageFile: activeImage,
         temperature: 0.2,
       );
       
       _appendMessage('assistant', responseText);
       await _speak(responseText);
-      
-      setState(() {
-        _chatImage = null;
-      });
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
     } finally {
@@ -492,38 +519,46 @@ $svodkaFilialContent
     }
   }
 
+  // Защищенное чтение Excel с проверкой на null и пустые ячейки
   Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
-    final path = file.path.toLowerCase();
-    if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
-      final bytes = await file.readAsBytes();
-      final excel = ex.Excel.decodeBytes(bytes);
-      final tables = excel.tables;
-      if (tables.isEmpty) return '';
+    try {
+      final path = file.path.toLowerCase();
+      if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
+        final bytes = await file.readAsBytes();
+        final excel = ex.Excel.decodeBytes(bytes);
+        final tables = excel.tables;
+        if (tables.isEmpty) return '';
 
-      final sb = StringBuffer();
-      for (final entry in tables.entries) {
-        final tableName = entry.key;
-        final sheet = entry.value;
+        final sb = StringBuffer();
+        for (final entry in tables.entries) {
+          final tableName = entry.key;
+          final sheet = entry.value;
 
-        sb.writeln('Лист: $tableName');
-        final allRows = sheet.rows;
-        if (allRows.isEmpty) continue;
+          sb.writeln('Лист: $tableName');
+          final allRows = sheet.rows;
+          if (allRows.isEmpty) continue;
 
-        final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
-        sb.writeln(header.join(';'));
+          // Безопасное чтение заголовка
+          final firstRow = allRows.first;
+          final header = firstRow.map((c) => c?.value?.toString() ?? '').toList();
+          sb.writeln(header.join(';'));
 
-        final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
-        for (int i = startIndex; i < allRows.length; i++) {
-          final row = allRows[i];
-          final rowList = row.map((c) => c?.value?.toString() ?? '').toList();
-          if (rowList.any((v) => v.trim().isNotEmpty)) {
-            sb.writeln(rowList.join(';'));
+          final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
+          for (int i = startIndex; i < allRows.length; i++) {
+            final row = allRows[i];
+            if (row.isEmpty) continue;
+            final rowList = row.map((c) => c?.value?.toString() ?? '').toList();
+            if (rowList.any((v) => v.trim().isNotEmpty)) {
+              sb.writeln(rowList.join(';'));
+            }
           }
         }
+        return sb.toString();
+      } else {
+        return await file.readAsString();
       }
-      return sb.toString();
-    } else {
-      return await file.readAsString();
+    } catch (e) {
+      throw Exception('Ошибка чтения файла Excel: $e');
     }
   }
 
@@ -721,10 +756,10 @@ $svodkaFilialContent
     }
   }
 
-  void _appendMessage(String role, String text) {
+  void _appendMessage(String role, String text, {String? imagePath}) {
     if (_currentSession == null) return;
     setState(() {
-      _currentSession!.messages.add(ChatMessage(role: role, text: text));
+      _currentSession!.messages.add(ChatMessage(role: role, text: text, imagePath: imagePath));
       if (_currentSession!.messages.length == 2 && role == 'user') {
         _currentSession!.title = text.length > 20 ? '${text.substring(0, 20)}...' : text;
       }
@@ -820,6 +855,7 @@ $svodkaFilialContent
                 final isUser = role == 'user';
                 final isSystem = role == 'system';
                 final text = m.text;
+                final imgPath = m.imagePath;
 
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -852,6 +888,15 @@ $svodkaFilialContent
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Если к сообщению прикреплено фото — показываем его прямо в чате
+                        if (imgPath != null && File(imgPath).existsSync())
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8.0),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Image.file(File(imgPath), height: 180, width: double.infinity, fit: BoxFit.cover),
+                            ),
+                          ),
                         SelectableText(
                           text,
                           style: const TextStyle(
@@ -915,7 +960,7 @@ $svodkaFilialContent
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.between,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('История чатов', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                     ElevatedButton.icon(
@@ -1211,7 +1256,6 @@ $svodkaFilialContent
                   ),
                 ),
                 const SizedBox(height: 10),
-                // Индикатор статуса и проверки ключа
                 Row(
                   children: [
                     Container(
