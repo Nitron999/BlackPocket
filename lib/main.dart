@@ -69,17 +69,20 @@ class _MainScreenState extends State<MainScreen> {
   final _chatHistory = [];
   String? _lastCsvResult;
 
-  // Список актуальных моделей Groq
+  // Список АКТУАЛЬНЫХ моделей из документации Groq
   final _availableModels = [
-    'mixtral-8x7b-32768',
-    'llama-3.1-8b-instant',
-    'gemma2-9b-it',
-    'llama-3.2-3b-preview',
-    'llama-3.2-1b-preview',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'qwen/qwen3.8-27b',
+    'meta-models/muse-spark-open',
+    'minimaxai/minimax-m2.7',
+    'canopylabs/orpheus-v1-english',
     'llama-3.3-70b-versatile',
-    'llama3-8b-8192'
+    'llama-3.1-8b-instant'
   ];
-  String _selectedModel = 'mixtral-8x7b-32768';
+  
+  // Ставим флагманскую бесплатную модель по умолчанию
+  String _selectedModel = 'openai/gpt-oss-120b';
 
   static const String _logisticsSystemPrompt = '''
 Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
@@ -117,14 +120,14 @@ class _MainScreenState extends State<MainScreen> {
     _loadSettings();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я на связи через Groq. Теперь ты можешь выбрать нейросеть вручную в настройках ⚙️. Если приехали накладные — разворачивай сверху панель логистики 📦.',
+      'text': 'Здорово, Шурик! Я подтянул актуальные API-ключи и модели Groq. Выбирай любую GPT-OSS или Qwen в настройках ⚙️. Если приехали накладные — разворачивай панель логистики 📦 сверху.',
     });
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel = prefs.getString('groq_model') ?? 'mixtral-8x7b-32768';
+    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
     
     if (key.isNotEmpty) {
       setState(() {
@@ -313,7 +316,7 @@ $svodkaFilialContent
     }
   }
 
-  // Универсальный метод вызова API Groq с передаваемой моделью
+  // Универсальный метод вызова API Groq
   Future<String> _callGroqRaw({
     required String apiKey,
     required String model,
