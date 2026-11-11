@@ -288,7 +288,7 @@ $svodkaFilialContent
     }
   }
 
-  // Универсальный метод вызова API Groq (Llama 3 70B)
+  // Универсальный метод вызова API Groq с актуальной моделью
   Future<String> _callGroqRaw({
     required String apiKey,
     required String systemInstruction,
@@ -298,7 +298,8 @@ $svodkaFilialContent
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
     final payload = {
-      'model': 'llama3-70b-8192',
+      // ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ ПОДДЕРЖИВАЕМУЮ МОДЕЛЬ GROQ
+      'model': 'llama-3.3-70b-versatile',
       'temperature': temperature,
       'messages': [
         {'role': 'system', 'content': systemInstruction},
