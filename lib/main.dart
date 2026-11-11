@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,8 +99,7 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  
-  static const platform = MethodChannel('samples.flutter.dev/tts');
+  final FlutterTts _flutterTts = FlutterTts();
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
@@ -160,12 +160,21 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    _initTts();
     _loadSettingsAndChats();
+  }
+
+  Future<void> _initTts() async {
+    await _flutterTts.setLanguage("ru-RU");
+    await _flutterTts.setSpeechRate(0.55);
+    await _flutterTts.setVolume(1.0);
+    await _flutterTts.setPitch(1.0);
   }
 
   Future<void> _speak(String text) async {
     try {
-      await platform.invokeMethod('speak', {'text': text});
+      await _flutterTts.stop();
+      await _flutterTts.speak(text);
     } catch (_) {}
   }
 
@@ -638,6 +647,7 @@ $svodkaFilialContent
     final messages = _currentSession?.messages ?? [];
 
     return Scaffold(
+      resizeToAvoidBottomInset: true, // Чат автоматически сдвигается вверх при открытии клавиатуры
       appBar: AppBar(
         backgroundColor: const Color(0xFF101726),
         elevation: 0,
@@ -751,7 +761,7 @@ $svodkaFilialContent
                               onTap: () => _speak(text),
                               child: const Padding(
                                 padding: EdgeInsets.only(top: 8.0),
-                                child: Icon(Icons.volume_up, size: 20, color: Colors.white60),
+                                child: Icon(Icons.volume_up, size: 20, color: Color(0xFF38BDF8)), // Ярко-голубая активная иконка
                               ),
                             ),
                           )
