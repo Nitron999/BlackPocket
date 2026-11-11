@@ -69,19 +69,22 @@ class ChatMessage {
 class ChatSession {
   String id;
   String title;
-  List<ChatMessage> messages;
+  dynamic messages;
 
   ChatSession({required this.id, required this.title, required this.messages});
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'messages': messages.map((m) => m.toJson()).toList(),
-      };
+  Map<String, dynamic> toJson() {
+    var rawList = messages as List;
+    return {
+      'id': id,
+      'title': title,
+      'messages': rawList.map((m) => m.toJson()).toList(),
+    };
+  }
 
   factory ChatSession.fromJson(Map<String, dynamic> json) {
-    final rawMsgs = json['messages'] as List? ?? [];
-    final parsedMsgs = rawMsgs
+    var rawMsgs = json['messages'] as List? ?? [];
+    var parsedMsgs = rawMsgs
         .map((m) => ChatMessage.fromJson(Map<String, dynamic>.from(m)))
         .toList();
     return ChatSession(
@@ -103,7 +106,7 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  
+
   static const MethodChannel _ttsChannel = MethodChannel('blackpocket/native_tts');
 
   bool _isLoading = false;
@@ -117,11 +120,11 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaFilialFile;
   File? _chatImage;
 
-  List<ChatSession> _sessions = [];
+  var _sessions = [];
   ChatSession? _currentSession;
   String? _lastCsvResult;
 
-  final List<String> _availableModels = [
+  final _availableModels = [
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b',
@@ -130,7 +133,7 @@ class _MainScreenState extends State<MainScreen> {
     'canopylabs/orpheus-v1-english',
     'llama-3.2-11b-vision-preview'
   ];
-  
+
   String _selectedModel = 'openai/gpt-oss-120b';
 
   static const String _logisticsSystemPrompt = '''
@@ -179,7 +182,7 @@ class _MainScreenState extends State<MainScreen> {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
     final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
-    
+
     if (key.isNotEmpty) {
       _apiKeyController.text = key;
       setState(() {
@@ -187,7 +190,7 @@ class _MainScreenState extends State<MainScreen> {
         _isKeyWorking = true;
       });
     }
-    
+
     if (_availableModels.contains(savedModel)) {
       setState(() {
         _selectedModel = savedModel;
@@ -197,7 +200,7 @@ class _MainScreenState extends State<MainScreen> {
     final chatsJson = prefs.getString('chat_sessions');
     if (chatsJson != null) {
       try {
-        final List decoded = jsonDecode(chatsJson);
+        final decoded = jsonDecode(chatsJson) as List;
         setState(() {
           _sessions = decoded
               .map((e) => ChatSession.fromJson(Map<String, dynamic>.from(e)))
@@ -213,7 +216,7 @@ class _MainScreenState extends State<MainScreen> {
       );
     } else {
       setState(() {
-        _currentSession = _sessions.first;
+        _currentSession = _sessions.first as ChatSession;
       });
     }
   }
@@ -283,7 +286,7 @@ class _MainScreenState extends State<MainScreen> {
       if (_sessions.isEmpty) {
         _createNewChat();
       } else if (_currentSession == session) {
-        _currentSession = _sessions.first;
+        _currentSession = _sessions.first as ChatSession;
       }
     });
     _saveChats();
@@ -429,7 +432,7 @@ class _MainScreenState extends State<MainScreen> {
 
     final promptText = text.isEmpty ? "Что на фото?" : text;
     final imagePathToSave = _chatImage?.path;
-    
+
     _chatInputController.clear();
     _appendMessage(
       'user',
@@ -444,8 +447,8 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     try {
-      final historyList = _currentSession?.messages ?? [];
-      
+      final historyList = _currentSession?.messages as List? ?? [];
+
       final responseText = await _callGroqWithHistory(
         apiKey: apiKey,
         model: _selectedModel,
@@ -455,7 +458,7 @@ class _MainScreenState extends State<MainScreen> {
         imageFile: activeImage,
         temperature: 0.2,
       );
-      
+
       _appendMessage('assistant', responseText);
       await _speak(responseText);
     } catch (e) {
@@ -491,13 +494,13 @@ class _MainScreenState extends State<MainScreen> {
 
     try {
       final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
-      
+
       String svodkaPpContent = '';
       final ppFile = _svodkaPpFile;
       if (ppFile != null && ppFile.existsSync()) {
         svodkaPpContent = await _readExcelTailSafe(ppFile, maxRows: 600);
       }
-      
+
       String svodkaFilialContent = '';
       final filFile = _svodkaFilialFile;
       if (filFile != null && filFile.existsSync()) {
@@ -588,19 +591,19 @@ $svodkaFilialContent
     required String apiKey,
     required String model,
     required String systemInstruction,
-    required List<ChatMessage> messages,
+    required dynamic messages,
     File? imageFile,
     required double temperature,
   }) async {
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
-    final List> formattedMessages = [
-      {'role': 'system', 'content': systemInstruction}
-    ];
+    var formattedMessages = [];
+    formattedMessages.add({'role': 'system', 'content': systemInstruction});
 
-    for (int i = 0; i < messages.length; i++) {
-      final msg = messages[i];
-      if (i == messages.length - 1 && msg.role == 'user' && imageFile != null) {
+    var msgList = messages as List;
+    for (int i = 0; i < msgList.length; i++) {
+      var msg = msgList[i] as ChatMessage;
+      if (i == msgList.length - 1 && msg.role == 'user' && imageFile != null) {
         final bytes = await imageFile.readAsBytes();
         final base64Img = base64Encode(bytes);
         formattedMessages.add({
@@ -783,10 +786,11 @@ $svodkaFilialContent
   void _appendMessage(String role, String text, {String? imagePath}) {
     if (_currentSession == null) return;
     setState(() {
-      _currentSession!.messages.add(
+      var msgs = _currentSession!.messages as List;
+      msgs.add(
         ChatMessage(role: role, text: text, imagePath: imagePath),
       );
-      if (_currentSession!.messages.length == 2 && role == 'user') {
+      if (msgs.length == 2 && role == 'user') {
         _currentSession!.title =
             text.length > 20 ? '${text.substring(0, 20)}...' : text;
       }
@@ -814,7 +818,7 @@ $svodkaFilialContent
 
   @override
   Widget build(BuildContext context) {
-    final messages = _currentSession?.messages ?? [];
+    final rawMessages = _currentSession?.messages as List? ?? [];
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -892,9 +896,9 @@ $svodkaFilialContent
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              itemCount: messages.length,
+              itemCount: rawMessages.length,
               itemBuilder: (context, idx) {
-                final m = messages[idx];
+                final m = rawMessages[idx] as ChatMessage;
                 final role = m.role;
                 final isUser = role == 'user';
                 final isSystem = role == 'system';
@@ -1050,7 +1054,7 @@ $svodkaFilialContent
                   child: ListView.builder(
                     itemCount: _sessions.length,
                     itemBuilder: (context, index) {
-                      final session = _sessions[index];
+                      final session = _sessions[index] as ChatSession;
                       final isSelected = session == _currentSession;
                       return Container(
                         margin: const EdgeInsets.symmetric(vertical: 4),
@@ -1369,7 +1373,7 @@ $svodkaFilialContent
 
   void _showSettingsDialog(BuildContext context) {
     String tempModel = _selectedModel;
-    
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
