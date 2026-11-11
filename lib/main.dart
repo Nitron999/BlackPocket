@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,7 +77,9 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final FlutterTts _flutterTts = FlutterTts();
+  
+  // Встроенный нативный канал для озвучки без сторонних плагинов
+  static const platform = MethodChannel('samples.flutter.dev/tts');
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
@@ -139,15 +140,13 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _initTts();
     _loadSettingsAndChats();
   }
 
-  Future<void> _initTts() async {
-    await _flutterTts.setLanguage("ru-RU");
-    await _flutterTts.setSpeechRate(0.55);
-    await _flutterTts.setVolume(1.0);
-    await _flutterTts.setPitch(1.0);
+  Future<void> _speak(String text) async {
+    try {
+      await platform.invokeMethod('speak', {'text': text});
+    } catch (_) {}
   }
 
   Future<void> _loadSettingsAndChats() async {
@@ -346,7 +345,7 @@ class _MainScreenState extends State<MainScreen> {
       );
       
       _appendMessage('assistant', responseText);
-      await _flutterTts.speak(responseText);
+      await _speak(responseText);
       
       setState(() {
         _chatImage = null;
@@ -423,7 +422,7 @@ $svodkaFilialContent
       });
 
       _appendMessage('assistant', response);
-      await _flutterTts.speak("Накладная успешно сведена, Шурик!");
+      await _speak("Накладная успешно сведена, Шурик!");
     } catch (e) {
       _appendMessage('system', 'Ошибка логистики: $e');
     } finally {
@@ -647,7 +646,6 @@ $svodkaFilialContent
           ],
         ),
         actions: [
-          // ИКОНКА УПРАВЛЕНИЯ ЧАТАМИ И ИСТОРИЕЙ
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
             tooltip: 'История чатов',
@@ -720,7 +718,7 @@ $svodkaFilialContent
                         SelectableText(
                           text,
                           style: const TextStyle(
-                            fontSize: 16, // УВЕЛИЧЕННЫЙ ШРИФТ
+                            fontSize: 16, // Увеличенный комфортный шрифт
                             color: Colors.white,
                           ),
                         ),
@@ -728,7 +726,7 @@ $svodkaFilialContent
                           Align(
                             alignment: Alignment.bottomRight,
                             child: InkWell(
-                              onTap: () => _flutterTts.speak(text),
+                              onTap: () => _speak(text),
                               child: const Padding(
                                 padding: EdgeInsets.only(top: 8.0),
                                 child: Icon(Icons.volume_up, size: 20, color: Colors.white60),
@@ -1006,7 +1004,7 @@ $svodkaFilialContent
                       controller: _chatInputController,
                       maxLines: 4,
                       minLines: 1,
-                      style: const TextStyle(fontSize: 16), // КРУПНЫЙ ТЕКСТ ВВОДА
+                      style: const TextStyle(fontSize: 16),
                       decoration: const InputDecoration(
                         hintText: 'Спроси или отправь фото...',
                         hintStyle: TextStyle(color: Colors.white38, fontSize: 15),
