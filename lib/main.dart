@@ -66,7 +66,6 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  // Никаких угловых скобок, чтобы не ломался парсер терминала
   final _chatHistory = [];
   String? _lastCsvResult;
 
@@ -311,13 +310,13 @@ $svodkaFilialContent
       url,
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer \$apiKey',
+        'Authorization': 'Bearer $apiKey',
       },
       body: jsonEncode(payload),
     );
 
     if (resp.statusCode != 200) {
-      throw Exception('Ошибка API Groq (\${resp.statusCode}): \${resp.body}');
+      throw Exception('Ошибка API Groq (${resp.statusCode}): ${resp.body}');
     }
 
     final data = jsonDecode(resp.body) as Map?;
@@ -379,17 +378,17 @@ $svodkaFilialContent
       }
 
       final dir = await getApplicationDocumentsDirectory();
-      final filePath = '\${dir.path}/Посылка_Сведение_\${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final filePath = '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
       final fileBytes = excel.save();
 
       if (fileBytes != null) {
         final f = File(filePath);
         await f.writeAsBytes(fileBytes);
-        _showSnackbar('Excel сохранен: \$filePath');
+        _showSnackbar('Excel сохранен: $filePath');
         await OpenFilex.open(filePath);
       }
     } catch (e) {
-      _showSnackbar('Ошибка выгрузки: \$e');
+      _showSnackbar('Ошибка выгрузки: $e');
     }
   }
 
