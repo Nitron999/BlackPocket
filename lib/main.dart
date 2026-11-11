@@ -105,7 +105,7 @@ class _MainScreenState extends State<MainScreen> {
     _loadApiKey();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я переехал на мощные сервера Groq. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
+      'text': 'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
     });
   }
 
@@ -298,8 +298,8 @@ $svodkaFilialContent
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
     final payload = {
-      // ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ ПОДДЕРЖИВАЕМУЮ МОДЕЛЬ GROQ
-      'model': 'llama-3.3-70b-versatile',
+      // ИСПРАВЛЕНО НА АКТУАЛЬНУЮ И РАБОЧУЮ МОДЕЛЬ GROQ
+      'model': 'llama-3.1-70b-versatile',
       'temperature': temperature,
       'messages': [
         {'role': 'system', 'content': systemInstruction},
