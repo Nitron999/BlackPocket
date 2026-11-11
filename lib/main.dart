@@ -558,7 +558,7 @@ $svodkaFilialContent
   }) async {
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
-    List> formattedMessages = [
+    List<Object> formattedMessages = [
       {'role': 'system', 'content': systemInstruction}
     ];
 
