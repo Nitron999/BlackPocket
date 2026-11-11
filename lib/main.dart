@@ -69,6 +69,18 @@ class _MainScreenState extends State<MainScreen> {
   final _chatHistory = [];
   String? _lastCsvResult;
 
+  // Список актуальных моделей Groq
+  final _availableModels = [
+    'mixtral-8x7b-32768',
+    'llama-3.1-8b-instant',
+    'gemma2-9b-it',
+    'llama-3.2-3b-preview',
+    'llama-3.2-1b-preview',
+    'llama-3.3-70b-versatile',
+    'llama3-8b-8192'
+  ];
+  String _selectedModel = 'mixtral-8x7b-32768';
+
   static const String _logisticsSystemPrompt = '''
 Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
 Температура: 0.0. Без домыслов и гаданий.
@@ -102,16 +114,18 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _loadApiKey();
+    _loadSettings();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
+      'text': 'Здорово, Шурик! Я на связи через Groq. Теперь ты можешь выбрать нейросеть вручную в настройках ⚙️. Если приехали накладные — разворачивай сверху панель логистики 📦.',
     });
   }
 
-  Future<void> _loadApiKey() async {
+  Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
+    final savedModel = prefs.getString('groq_model') ?? 'mixtral-8x7b-32768';
+    
     if (key.isNotEmpty) {
       setState(() {
         _apiKeyController.text = key;
@@ -119,12 +133,21 @@ class _MainScreenState extends State<MainScreen> {
         _statusColor = Colors.greenAccent;
       });
     }
+    
+    if (_availableModels.contains(savedModel)) {
+      setState(() {
+        _selectedModel = savedModel;
+      });
+    }
   }
 
-  Future<void> _saveApiKey(String key) async {
+  Future<void> _saveSettings(String key, String model) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('groq_api_key', key.trim());
+    await prefs.setString('groq_model', model);
+    
     setState(() {
+      _selectedModel = model;
       _apiStatus = key.trim().isNotEmpty ? 'API подключен (Groq)' : 'Ключ не настроен';
       _statusColor = key.trim().isNotEmpty ? Colors.greenAccent : Colors.orangeAccent;
     });
@@ -167,6 +190,7 @@ class _MainScreenState extends State<MainScreen> {
     try {
       final responseText = await _callGroqRaw(
         apiKey: apiKey,
+        model: _selectedModel,
         systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы.',
         prompt: text,
         temperature: 0.2,
@@ -199,7 +223,7 @@ class _MainScreenState extends State<MainScreen> {
     });
 
     final fileName = posFile.path.split(Platform.pathSeparator).last;
-    _appendMessage('user', '📦 Запуск сведения накладной через Groq: $fileName');
+    _appendMessage('user', '📦 Запуск сведения накладной через Groq ($_selectedModel): $fileName');
 
     try {
       final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
@@ -233,6 +257,7 @@ $svodkaFilialContent
 
       final response = await _callGroqRaw(
         apiKey: apiKey,
+        model: _selectedModel,
         systemInstruction: _logisticsSystemPrompt,
         prompt: promptText,
         temperature: 0.0,
@@ -288,9 +313,10 @@ $svodkaFilialContent
     }
   }
 
-  // Универсальный метод вызова API Groq с актуальной моделью
+  // Универсальный метод вызова API Groq с передаваемой моделью
   Future<String> _callGroqRaw({
     required String apiKey,
+    required String model,
     required String systemInstruction,
     required String prompt,
     required double temperature,
@@ -298,8 +324,7 @@ $svodkaFilialContent
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
 
     final payload = {
-      // ИСПРАВЛЕНО НА АКТУАЛЬНУЮ И РАБОЧУЮ МОДЕЛЬ GROQ
-      'model': 'llama-3.1-70b-versatile',
+      'model': model,
       'temperature': temperature,
       'messages': [
         {'role': 'system', 'content': systemInstruction},
@@ -708,44 +733,76 @@ $svodkaFilialContent
   }
 
   void _showSettingsDialog(BuildContext context) {
+    String tempModel = _selectedModel;
+    
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF162032),
-        title: const Text('Настройки API (Groq)'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _apiKeyController,
-              decoration: const InputDecoration(
-                labelText: 'Ключ Groq API (gsk_...)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF162032),
+            title: const Text('Настройки API (Groq)'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.circle, size: 10, color: _statusColor),
-                const SizedBox(width: 6),
-                Text(_apiStatus, style: TextStyle(color: _statusColor, fontSize: 12)),
+                TextField(
+                  controller: _apiKeyController,
+                  decoration: const InputDecoration(
+                    labelText: 'Ключ Groq API (gsk_...)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 15),
+                const Text('Выбор нейросети:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const SizedBox(height: 5),
+                DropdownButtonFormField<String>(
+                  value: tempModel,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                  ),
+                  dropdownColor: const Color(0xFF1E293B),
+                  items: _availableModels.map((m) {
+                    return DropdownMenuItem(
+                      value: m,
+                      child: Text(m, style: const TextStyle(fontSize: 13)),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setDialogState(() {
+                        tempModel = val;
+                      });
+                    }
+                  },
+                ),
+                const SizedBox(height: 15),
+                Row(
+                  children: [
+                    Icon(Icons.circle, size: 10, color: _statusColor),
+                    const SizedBox(width: 6),
+                    Text(_apiStatus, style: TextStyle(color: _statusColor, fontSize: 12)),
+                  ],
+                ),
               ],
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            child: const Text('Отмена'),
-            onPressed: () => Navigator.pop(ctx),
-          ),
-          ElevatedButton(
-            child: const Text('Сохранить'),
-            onPressed: () {
-              _saveApiKey(_apiKeyController.text);
-              Navigator.pop(ctx);
-            },
-          ),
-        ],
+            actions: [
+              TextButton(
+                child: const Text('Отмена'),
+                onPressed: () => Navigator.pop(ctx),
+              ),
+              ElevatedButton(
+                child: const Text('Сохранить'),
+                onPressed: () {
+                  _saveSettings(_apiKeyController.text, tempModel);
+                  Navigator.pop(ctx);
+                },
+              ),
+            ],
+          );
+        }
       ),
     );
   }
