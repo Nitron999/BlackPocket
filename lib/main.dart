@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
 import 'package:image_picker/image_picker.dart';
-import 'package:text_to_speech/text_to_speech.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -105,7 +104,7 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
-  final TextToSpeech _tts = TextToSpeech();
+  static const MethodChannel _ttsChannel = MethodChannel('blackpocket/native_tts');
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
@@ -167,20 +166,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _initTts();
     _loadSettingsAndChats();
-  }
-
-  void _initTts() {
-    _tts.setLanguage("ru-RU");
-    _tts.setRate(1.0);
-    _tts.setPitch(1.0);
   }
 
   Future<void> _speak(String text) async {
     try {
-      _tts.stop();
-      _tts.speak(text);
+      await _ttsChannel.invokeMethod('speak', {'text': text});
     } catch (_) {}
   }
 
