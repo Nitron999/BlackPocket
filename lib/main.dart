@@ -544,37 +544,46 @@ $svodkaFilialContent
     }
   }
 
+  // Защищенный метод безопасного чтения Excel без падений на null ячейках
   Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
     try {
       final path = file.path.toLowerCase();
       if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
         final bytes = await file.readAsBytes();
         final excel = ex.Excel.decodeBytes(bytes);
-        final tables = excel.tables;
-        if (tables.isEmpty) return '';
+        if (excel.tables.isEmpty) return '';
 
         final sb = StringBuffer();
-        for (final entry in tables.entries) {
+        for (final entry in excel.tables.entries) {
           final tableName = entry.key;
           final sheet = entry.value;
 
           sb.writeln('Лист: $tableName');
-          final allRows = sheet.rows;
-          if (allRows.isEmpty) continue;
+          final maxR = sheet.maxRows;
+          final maxC = sheet.maxColumns;
+          if (maxR <= 0 || maxC <= 0) continue;
 
-          final firstRow = allRows.first;
-          final header =
-              firstRow.map((c) => c?.value?.toString() ?? '').toList();
-          sb.writeln(header.join(';'));
+          // Безопасное чтение заголовка (строка 0)
+          var headerList = [];
+          for (int c = 0; c < maxC; c++) {
+            var cell = sheet.cell(ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: 0));
+            headerList.add(cell.value?.toString().replaceAll(';', ' ') ?? '');
+          }
+          sb.writeln(headerList.join(';'));
 
-          final startIndex =
-              allRows.length > maxRows ? (allRows.length - maxRows) : 1;
-          for (int i = startIndex; i < allRows.length; i++) {
-            final row = allRows[i];
-            if (row.isEmpty) continue;
-            final rowList = row.map((c) => c?.value?.toString() ?? '').toList();
-            if (rowList.any((v) => v.trim().isNotEmpty)) {
-              sb.writeln(rowList.join(';'));
+          // Безопасный обход последних maxRows строк
+          final startRow = maxR > (maxRows + 1) ? (maxR - maxRows) : 1;
+          for (int r = startRow; r < maxR; r++) {
+            var rowValues = [];
+            bool hasData = false;
+            for (int c = 0; c < maxC; c++) {
+              var cell = sheet.cell(ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r));
+              var val = cell.value?.toString().replaceAll(';', ' ').trim() ?? '';
+              if (val.isNotEmpty) hasData = true;
+              rowValues.add(val);
+            }
+            if (hasData) {
+              sb.writeln(rowValues.join(';'));
             }
           }
         }
