@@ -46,24 +46,45 @@ class BlackPocketApp extends StatelessWidget {
   }
 }
 
+class ChatMessage {
+  String role;
+  String text;
+
+  ChatMessage({required this.role, required this.text});
+
+  Map<String, dynamic> toJson() => {
+        'role': role,
+        'text': text,
+      };
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
+        role: json['role'] ?? 'assistant',
+        text: json['text'] ?? '',
+      );
+}
+
 class ChatSession {
   String id;
   String title;
-  List> messages;
+  List<ChatMessage> messages;
 
   ChatSession({required this.id, required this.title, required this.messages});
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
-        'messages': messages,
+        'messages': messages.map((m) => m.toJson()).toList(),
       };
 
-  factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
-        id: json['id'],
-        title: json['title'],
-        messages: List>.from(json['messages']),
-      );
+  factory ChatSession.fromJson(Map<String, dynamic> json) {
+    var rawMsgs = json['messages'] as List? ?? [];
+    List<ChatMessage> parsedMsgs = rawMsgs.map((m) => ChatMessage.fromJson(m)).toList();
+    return ChatSession(
+      id: json['id'] ?? '',
+      title: json['title'] ?? 'Чат',
+      messages: parsedMsgs,
+    );
+  }
 }
 
 class MainScreen extends StatefulWidget {
@@ -169,10 +190,12 @@ class _MainScreenState extends State<MainScreen> {
 
     final chatsJson = prefs.getString('chat_sessions');
     if (chatsJson != null) {
-      final List decoded = jsonDecode(chatsJson);
-      setState(() {
-        _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
-      });
+      try {
+        final List decoded = jsonDecode(chatsJson);
+        setState(() {
+          _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
+        });
+      } catch (_) {}
     }
 
     if (_sessions.isEmpty) {
@@ -195,10 +218,10 @@ class _MainScreenState extends State<MainScreen> {
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title: 'Чат от ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
       messages: [
-        {
-          'role': 'assistant',
-          'text': initMessage ?? 'Здорово, Шурик! Новый чат готов к работе. Чем зайдемся?',
-        }
+        ChatMessage(
+          role: 'assistant',
+          text: initMessage ?? 'Здорово, Шурик! Новый чат готов к работе. Чем зайдемся?',
+        )
       ],
     );
     setState(() {
@@ -587,7 +610,7 @@ $svodkaFilialContent
   void _appendMessage(String role, String text) {
     if (_currentSession == null) return;
     setState(() {
-      _currentSession!.messages.add({'role': role, 'text': text});
+      _currentSession!.messages.add(ChatMessage(role: role, text: text));
       if (_currentSession!.messages.length == 2 && role == 'user') {
         _currentSession!.title = text.length > 20 ? '${text.substring(0, 20)}...' : text;
       }
@@ -678,10 +701,10 @@ $svodkaFilialContent
               itemCount: messages.length,
               itemBuilder: (context, idx) {
                 final m = messages[idx];
-                final role = m['role']?.toString() ?? 'assistant';
+                final role = m.role;
                 final isUser = role == 'user';
                 final isSystem = role == 'system';
-                final text = m['text']?.toString() ?? '';
+                final text = m.text;
 
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
