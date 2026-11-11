@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
 import 'package:image_picker/image_picker.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -98,13 +99,14 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  
-  static const platform = MethodChannel('samples.flutter.dev/tts');
+  final FlutterTts _flutterTts = FlutterTts();
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
   String _apiStatus = 'Ключ не настроен';
   Color _statusColor = Colors.orangeAccent;
+  bool _isKeyValidating = false;
+  bool? _isKeyWorking;
 
   File? _posylkaFile;
   File? _svodkaPpFile;
@@ -133,39 +135,28 @@ class _MainScreenState extends State<MainScreen> {
 
 СТРУКТУРА CSV (13 колонок через точку с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
-
-ПРАВИЛА:
-1. ГОЛОВА (ООО «Печатные платы»):
-- Поиск по PS в сводке ПП. Заполнить фирму, если не указана.
-- Счет пп: московский счет с ведущими нулями (0654, 0644, 0611).
-- По счету: ПОЛНЫЙ тираж из сводки ПП (колонка «количество», столбец 4). Не дублировать «Получено»!
-- Этикетка: всегда "ОТК".
-- Доставка: "ДМ", "СДЭК", "К", "Самовывоз".
-
-2. РАЗДЕЛИТЕЛЬ:
-филиал;;;;;;;;;;;;
-
-3. ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»):
-- Счет пп: СТРОГО ПУСТО.
-- Этикетка: СТРОГО ПУСТО (ОТК нет!).
-- По счету: найти в сводке филиала по связке [Сч/Н + PS] значение из столбца 7 («кол-во»). Это полный заказ (например, Кортэк = 50, Промприбор = 5000).
-- Доставка: Нейрософт и Кузьминский -> "К"; АТБ-Электроника -> "ДМ"; СДЭК -> "СДЭК"; Самовывоз -> "Самовывоз".
-
-4. СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
-ДМ -> СДЭК -> К -> Самовывоз.
-
-Формат ответа: только блок ```csv ... ``` без лишнего текста.
 ''';
 
   @override
   void initState() {
     super.initState();
+    _initTts();
     _loadSettingsAndChats();
+  }
+
+  Future<void> _initTts() async {
+    try {
+      await _flutterTts.setLanguage("ru-RU");
+      await _flutterTts.setSpeechRate(0.55);
+      await _flutterTts.setVolume(1.0);
+      await _flutterTts.setPitch(1.0);
+    } catch (_) {}
   }
 
   Future<void> _speak(String text) async {
     try {
-      await platform.invokeMethod('speak', {'text': text});
+      await _flutterTts.stop();
+      await _flutterTts.speak(text);
     } catch (_) {}
   }
 
@@ -175,10 +166,11 @@ class _MainScreenState extends State<MainScreen> {
     final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
     
     if (key.isNotEmpty) {
+      _apiKeyController.text = key;
       setState(() {
-        _apiKeyController.text = key;
         _apiStatus = 'API подключен (Groq)';
         _statusColor = Colors.greenAccent;
+        _isKeyWorking = true;
       });
     }
     
@@ -271,16 +263,62 @@ class _MainScreenState extends State<MainScreen> {
     _saveChats();
   }
 
-  Future<void> _saveSettings(String key, String model) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('groq_api_key', key.trim());
-    await prefs.setString('groq_model', model);
-    
+  // Проверка валидности Groq ключа прямо из настроек
+  Future<void> _validateAndSaveKey(String key, String model) async {
+    final trimmedKey = key.trim();
+    if (trimmedKey.isEmpty) {
+      setState(() {
+        _isKeyWorking = false;
+        _apiStatus = 'Ключ не введен';
+        _statusColor = Colors.orangeAccent;
+      });
+      return;
+    }
+
     setState(() {
-      _selectedModel = model;
-      _apiStatus = key.trim().isNotEmpty ? 'API подключен (Groq)' : 'Ключ не настроен';
-      _statusColor = key.trim().isNotEmpty ? Colors.greenAccent : Colors.orangeAccent;
+      _isKeyValidating = true;
     });
+
+    try {
+      final url = Uri.parse('https://api.groq.com/openai/v1/models');
+      final resp = await http.get(
+        url,
+        headers: {'Authorization': 'Bearer $trimmedKey'},
+      );
+
+      if (resp.statusCode == 200) {
+        setState(() {
+          _isKeyWorking = true;
+          _apiStatus = 'Ключ активен и проверен';
+          _statusColor = Colors.greenAccent;
+        });
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('groq_api_key', trimmedKey);
+        await prefs.setString('groq_model', model);
+        setState(() {
+          _selectedModel = model;
+        });
+        _showSnackbar('Ключ успешно проверен и сохранен!');
+      } else {
+        setState(() {
+          _isKeyWorking = false;
+          _apiStatus = 'Ошибка: неверный ключ';
+          _statusColor = Colors.redAccent;
+        });
+        _showSnackbar('Ошибка валидации: неверный API ключ!');
+      }
+    } catch (e) {
+      setState(() {
+        _isKeyWorking = false;
+        _apiStatus = 'Ошибка сети';
+        _statusColor = Colors.redAccent;
+      });
+      _showSnackbar('Ошибка сети при проверке ключа.');
+    } finally {
+      setState(() {
+        _isKeyValidating = false;
+      });
+    }
   }
 
   Future<void> _pickFile(int type) async {
@@ -357,11 +395,13 @@ class _MainScreenState extends State<MainScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final responseText = await _callGroqRaw(
+      final historyList = _currentSession?.messages ?? [];
+      
+      final responseText = await _callGroqWithHistory(
         apiKey: apiKey,
         model: _selectedModel,
         systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы на русском языке.',
-        prompt: promptText,
+        messages: historyList,
         imageFile: _chatImage,
         temperature: 0.2,
       );
@@ -485,6 +525,80 @@ $svodkaFilialContent
     } else {
       return await file.readAsString();
     }
+  }
+
+  Future<String> _callGroqWithHistory({
+    required String apiKey,
+    required String model,
+    required String systemInstruction,
+    required List<ChatMessage> messages,
+    File? imageFile,
+    required double temperature,
+  }) async {
+    final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
+
+    List> formattedMessages = [
+      {'role': 'system', 'content': systemInstruction}
+    ];
+
+    for (int i = 0; i < messages.length; i++) {
+      final msg = messages[i];
+      if (i == messages.length - 1 && msg.role == 'user' && imageFile != null) {
+        final bytes = await imageFile.readAsBytes();
+        final base64Img = base64Encode(bytes);
+        formattedMessages.add({
+          'role': 'user',
+          'content': [
+            {'type': 'text', 'text': msg.text},
+            {
+              'type': 'image_url',
+              'image_url': {'url': 'data:image/jpeg;base64,$base64Img'}
+            }
+          ]
+        });
+      } else {
+        formattedMessages.add({
+          'role': msg.role == 'user' ? 'user' : 'assistant',
+          'content': msg.text
+        });
+      }
+    }
+
+    final payload = {
+      'model': model,
+      'temperature': temperature,
+      'messages': formattedMessages,
+    };
+
+    final resp = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Authorization': 'Bearer $apiKey',
+      },
+      body: jsonEncode(payload),
+    );
+
+    final responseBody = utf8.decode(resp.bodyBytes);
+
+    if (resp.statusCode != 200) {
+      throw Exception('Ошибка API Groq (${resp.statusCode}): $responseBody');
+    }
+
+    final data = jsonDecode(responseBody) as Map?;
+    final choices = data?['choices'] as List?;
+    if (choices == null || choices.isEmpty) {
+      throw Exception('Groq не вернул ответ.');
+    }
+
+    final firstChoice = choices[0] as Map?;
+    final message = firstChoice?['message'] as Map?;
+    final text = message?['content'] as String?;
+
+    if (text == null || text.isEmpty) {
+      throw Exception('Пустой ответ от модели.');
+    }
+    return text;
   }
 
   Future<String> _callGroqRaw({
@@ -801,7 +915,7 @@ $svodkaFilialContent
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.between,
                   children: [
                     const Text('История чатов', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                     ElevatedButton.icon(
@@ -1096,6 +1210,37 @@ $svodkaFilialContent
                     border: OutlineInputBorder(),
                   ),
                 ),
+                const SizedBox(height: 10),
+                // Индикатор статуса и проверки ключа
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _isKeyWorking == true
+                            ? Colors.greenAccent
+                            : _isKeyWorking == false
+                                ? Colors.redAccent
+                                : Colors.orangeAccent,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      _apiStatus,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: _isKeyWorking == true
+                            ? Colors.greenAccent
+                            : _isKeyWorking == false
+                                ? Colors.redAccent
+                                : Colors.orangeAccent,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 15),
                 const Text('Выбор нейросети:', style: TextStyle(fontSize: 12, color: Colors.white70)),
                 const SizedBox(height: 5),
@@ -1125,11 +1270,17 @@ $svodkaFilialContent
                 onPressed: () => Navigator.pop(ctx),
               ),
               ElevatedButton(
-                child: const Text('Сохранить'),
-                onPressed: () {
-                  _saveSettings(_apiKeyController.text, tempModel);
-                  Navigator.pop(ctx);
-                },
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                child: _isKeyValidating
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Сохранить и проверить'),
+                onPressed: _isKeyValidating
+                    ? null
+                    : () async {
+                        await _validateAndSaveKey(_apiKeyController.text, tempModel);
+                        Navigator.pop(ctx);
+                        setState(() {});
+                      },
               ),
             ],
           );
