@@ -69,19 +69,17 @@ class _MainScreenState extends State<MainScreen> {
   final _chatHistory = [];
   String? _lastCsvResult;
 
-  // Список АКТУАЛЬНЫХ моделей из документации Groq
+  // Оставили только доступные бесплатные модели из официальной документации Groq
   final _availableModels = [
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b',
-    'meta-models/muse-spark-open',
-    'minimaxai/minimax-m2.7',
-    'canopylabs/orpheus-v1-english',
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant'
+    'openai/gpt-oss-safeguard-20b',
+    'meta-llama/llama-prompt-guard-2-86m',
+    'canopylabs/orpheus-v1-english'
   ];
   
-  // Ставим флагманскую бесплатную модель по умолчанию
+  // Флагманская бесплатная модель по умолчанию
   String _selectedModel = 'openai/gpt-oss-120b';
 
   static const String _logisticsSystemPrompt = '''
@@ -120,7 +118,7 @@ class _MainScreenState extends State<MainScreen> {
     _loadSettings();
     _chatHistory.add({
       'role': 'assistant',
-      'text': 'Здорово, Шурик! Я подтянул актуальные API-ключи и модели Groq. Выбирай любую GPT-OSS или Qwen в настройках ⚙️. Если приехали накладные — разворачивай панель логистики 📦 сверху.',
+      'text': 'Здорово, Шурик! Я на связи через Groq (бесплатные модели). Выбирай нужную в настройках ⚙️. Если приехали накладные — разворачивай панель логистики 📦 сверху.',
     });
   }
 
@@ -174,7 +172,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // Обычный чат
   Future<void> _sendChatMessage() async {
     final text = _chatInputController.text.trim();
     if (text.isEmpty) return;
@@ -194,7 +191,7 @@ class _MainScreenState extends State<MainScreen> {
       final responseText = await _callGroqRaw(
         apiKey: apiKey,
         model: _selectedModel,
-        systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы.',
+        systemInstruction: 'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы на русском языке.',
         prompt: text,
         temperature: 0.2,
       );
@@ -206,7 +203,6 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // Сведение логистических таблиц
   Future<void> _processLogistics() async {
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
@@ -296,11 +292,9 @@ $svodkaFilialContent
         final allRows = sheet.rows;
         if (allRows.isEmpty) continue;
 
-        // Заголовок
         final header = allRows.first.map((c) => c?.value?.toString() ?? '').toList();
         sb.writeln(header.join(';'));
 
-        // Хвост
         final startIndex = allRows.length > maxRows ? (allRows.length - maxRows) : 1;
         for (int i = startIndex; i < allRows.length; i++) {
           final row = allRows[i];
@@ -316,7 +310,6 @@ $svodkaFilialContent
     }
   }
 
-  // Универсальный метод вызова API Groq
   Future<String> _callGroqRaw({
     required String apiKey,
     required String model,
@@ -338,17 +331,20 @@ $svodkaFilialContent
     final resp = await http.post(
       url,
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
         'Authorization': 'Bearer $apiKey',
       },
       body: jsonEncode(payload),
     );
 
+    // ПРИНУДИТЕЛЬНАЯ РАСКОДИРОВКА В UTF-8
+    final responseBody = utf8.decode(resp.bodyBytes);
+
     if (resp.statusCode != 200) {
-      throw Exception('Ошибка API Groq (${resp.statusCode}): ${resp.body}');
+      throw Exception('Ошибка API Groq (${resp.statusCode}): $responseBody');
     }
 
-    final data = jsonDecode(resp.body) as Map?;
+    final data = jsonDecode(responseBody) as Map?;
     final choices = data?['choices'] as List?;
     if (choices == null || choices.isEmpty) {
       throw Exception('Groq не вернул ответ.');
@@ -463,7 +459,13 @@ $svodkaFilialContent
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('BlackPocket AI', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                Text('Гена • на связи', style: TextStyle(fontSize: 11, color: Colors.greenAccent)),
+                Row(
+                  children: [
+                    Icon(Icons.bolt, color: Colors.greenAccent, size: 14),
+                    SizedBox(width: 2),
+                    Text('Онлайн', style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.w500)),
+                  ],
+                ),
               ],
             ),
           ],
@@ -555,7 +557,7 @@ $svodkaFilialContent
                     child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
                   ),
                   SizedBox(width: 8),
-                  Text('Гена думает...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text('Идет расчет...', style: TextStyle(fontSize: 12, color: Colors.grey)),
                 ],
               ),
             ),
@@ -691,7 +693,7 @@ $svodkaFilialContent
                   minLines: 1,
                   style: const TextStyle(fontSize: 14),
                   decoration: const InputDecoration(
-                    hintText: 'Спроси что угодно у Гены...',
+                    hintText: 'Спроси что угодно...',
                     hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
                     border: InputBorder.none,
                     contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -757,7 +759,7 @@ $svodkaFilialContent
                   ),
                 ),
                 const SizedBox(height: 15),
-                const Text('Выбор нейросети:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                const Text('Выбор нейросети (Бесплатные):', style: TextStyle(fontSize: 12, color: Colors.white70)),
                 const SizedBox(height: 5),
                 DropdownButtonFormField<String>(
                   value: tempModel,
