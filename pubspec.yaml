@@ -1,4 +1,4 @@
-name: blackpocket_ai
+name: black_pocket
 description: "BlackPocket AI Personal Assistant & Logistics Hub"
 publish_to: 'none'
 
@@ -18,7 +18,6 @@ dependencies:
   path_provider: ^2.1.2
   open_filex: ^4.4.0
   image_picker: ^1.1.2
-  text_to_speech: ^0.2.7
 
 dev_dependencies:
   flutter_test:
