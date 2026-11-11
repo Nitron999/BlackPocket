@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
 import 'package:image_picker/image_picker.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -50,7 +49,7 @@ class BlackPocketApp extends StatelessWidget {
 class ChatMessage {
   String role;
   String text;
-  String? imagePath; // Сохраняем путь к картинке в сообщении
+  String? imagePath;
 
   ChatMessage({required this.role, required this.text, this.imagePath});
 
@@ -102,7 +101,8 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final FlutterTts _flutterTts = FlutterTts();
+  
+  static const platform = MethodChannel('samples.flutter.dev/tts');
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
@@ -165,23 +165,12 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    _initTts();
     _loadSettingsAndChats();
-  }
-
-  Future<void> _initTts() async {
-    try {
-      await _flutterTts.setLanguage("ru-RU");
-      await _flutterTts.setSpeechRate(0.55);
-      await _flutterTts.setVolume(1.0);
-      await _flutterTts.setPitch(1.0);
-    } catch (_) {}
   }
 
   Future<void> _speak(String text) async {
     try {
-      await _flutterTts.stop();
-      await _flutterTts.speak(text);
+      await platform.invokeMethod('speak', {'text': text});
     } catch (_) {}
   }
 
@@ -416,12 +405,11 @@ class _MainScreenState extends State<MainScreen> {
     final imagePathToSave = _chatImage?.path;
     
     _chatInputController.clear();
-    // Передаем путь к картинке в сообщение, чтобы она осталась висеть в чате
     _appendMessage('user', promptText, imagePath: imagePathToSave);
 
     final activeImage = _chatImage;
     setState(() {
-      _chatImage = null; // Сбрасываем превью внизу ввода
+      _chatImage = null;
       _isLoading = true;
     });
 
@@ -519,7 +507,6 @@ $svodkaFilialContent
     }
   }
 
-  // Защищенное чтение Excel с проверкой на null и пустые ячейки
   Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
     try {
       final path = file.path.toLowerCase();
@@ -538,7 +525,6 @@ $svodkaFilialContent
           final allRows = sheet.rows;
           if (allRows.isEmpty) continue;
 
-          // Безопасное чтение заголовка
           final firstRow = allRows.first;
           final header = firstRow.map((c) => c?.value?.toString() ?? '').toList();
           sb.writeln(header.join(';'));
@@ -888,7 +874,6 @@ $svodkaFilialContent
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Если к сообщению прикреплено фото — показываем его прямо в чате
                         if (imgPath != null && File(imgPath).existsSync())
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8.0),
@@ -960,7 +945,7 @@ $svodkaFilialContent
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.between,
                   children: [
                     const Text('История чатов', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                     ElevatedButton.icon(
