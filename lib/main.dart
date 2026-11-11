@@ -47,6 +47,26 @@ class BlackPocketApp extends StatelessWidget {
   }
 }
 
+class ChatSession {
+  String id;
+  String title;
+  List> messages;
+
+  ChatSession({required this.id, required this.title, required this.messages});
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'messages': messages,
+      };
+
+  factory ChatSession.fromJson(Map<String, dynamic> json) => ChatSession(
+        id: json['id'],
+        title: json['title'],
+        messages: List>.from(json['messages']),
+      );
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -70,10 +90,10 @@ class _MainScreenState extends State<MainScreen> {
   File? _svodkaFilialFile;
   File? _chatImage;
 
-  final _chatHistory = [];
+  List<ChatSession> _sessions = [];
+  ChatSession? _currentSession;
   String? _lastCsvResult;
 
-  // Актуальные бесплатные модели Groq
   final _availableModels = [
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
@@ -120,11 +140,7 @@ class _MainScreenState extends State<MainScreen> {
   void initState() {
     super.initState();
     _initTts();
-    _loadSettings();
-    _chatHistory.add({
-      'role': 'assistant',
-      'text': 'Здорово, Шурик! Я на связи. Могу смотреть фото через скрепку 📎 и отвечать голосом 🔊. Если приехали накладные — разворачивай панель логистики 📦 сверху.',
-    });
+    _loadSettingsAndChats();
   }
 
   Future<void> _initTts() async {
@@ -134,7 +150,7 @@ class _MainScreenState extends State<MainScreen> {
     await _flutterTts.setPitch(1.0);
   }
 
-  Future<void> _loadSettings() async {
+  Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
     final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
@@ -152,6 +168,86 @@ class _MainScreenState extends State<MainScreen> {
         _selectedModel = savedModel;
       });
     }
+
+    final chatsJson = prefs.getString('chat_sessions');
+    if (chatsJson != null) {
+      final List decoded = jsonDecode(chatsJson);
+      setState(() {
+        _sessions = decoded.map((e) => ChatSession.fromJson(e)).toList();
+      });
+    }
+
+    if (_sessions.isEmpty) {
+      _createNewChat(initMessage: 'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.');
+    } else {
+      setState(() {
+        _currentSession = _sessions.first;
+      });
+    }
+  }
+
+  Future<void> _saveChats() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(_sessions.map((e) => e.toJson()).toList());
+    await prefs.setString('chat_sessions', encoded);
+  }
+
+  void _createNewChat({String? initMessage}) {
+    final newSession = ChatSession(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      title: 'Чат от ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
+      messages: [
+        {
+          'role': 'assistant',
+          'text': initMessage ?? 'Здорово, Шурик! Новый чат готов к работе. Чем зайдемся?',
+        }
+      ],
+    );
+    setState(() {
+      _sessions.insert(0, newSession);
+      _currentSession = newSession;
+    });
+    _saveChats();
+  }
+
+  void _renameChat(ChatSession session) {
+    TextEditingController titleController = TextEditingController(text: session.title);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF162032),
+        title: const Text('Переименовать чат'),
+        content: TextField(
+          controller: titleController,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Отмена')),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                session.title = titleController.text.trim().isEmpty ? 'Без названия' : titleController.text.trim();
+              });
+              _saveChats();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteChat(ChatSession session) {
+    setState(() {
+      _sessions.remove(session);
+      if (_sessions.isEmpty) {
+        _createNewChat();
+      } else if (_currentSession == session) {
+        _currentSession = _sessions.first;
+      }
+    });
+    _saveChats();
   }
 
   Future<void> _saveSettings(String key, String model) async {
@@ -327,7 +423,7 @@ $svodkaFilialContent
       });
 
       _appendMessage('assistant', response);
-      await _flutterTts.speak("Нкладная успешно сведена, Шурик!");
+      await _flutterTts.speak("Накладная успешно сведена, Шурик!");
     } catch (e) {
       _appendMessage('system', 'Ошибка логистики: $e');
     } finally {
@@ -491,9 +587,14 @@ $svodkaFilialContent
   }
 
   void _appendMessage(String role, String text) {
+    if (_currentSession == null) return;
     setState(() {
-      _chatHistory.add({'role': role, 'text': text});
+      _currentSession!.messages.add({'role': role, 'text': text});
+      if (_currentSession!.messages.length == 2 && role == 'user') {
+        _currentSession!.title = text.length > 20 ? '${text.substring(0, 20)}...' : text;
+      }
     });
+    _saveChats();
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -513,6 +614,8 @@ $svodkaFilialContent
 
   @override
   Widget build(BuildContext context) {
+    final messages = _currentSession?.messages ?? [];
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF101726),
@@ -528,12 +631,12 @@ $svodkaFilialContent
               child: const Icon(Icons.bolt, color: Color(0xFF38BDF8), size: 20),
             ),
             const SizedBox(width: 10),
-            const Column(
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('BlackPocket AI', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const Text('BlackPocket AI', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
                 Row(
-                  children: [
+                  children: const [
                     Icon(Icons.bolt, color: Colors.greenAccent, size: 14),
                     SizedBox(width: 2),
                     Text('Онлайн', style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontWeight: FontWeight.w500)),
@@ -544,6 +647,12 @@ $svodkaFilialContent
           ],
         ),
         actions: [
+          // ИКОНКА УПРАВЛЕНИЯ ЧАТАМИ И ИСТОРИЕЙ
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
+            tooltip: 'История чатов',
+            onPressed: () => _showChatsDrawer(context),
+          ),
           IconButton(
             icon: Icon(
               _isLogisticsExpanded ? Icons.inventory_2 : Icons.inventory_2_outlined,
@@ -569,9 +678,9 @@ $svodkaFilialContent
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              itemCount: _chatHistory.length,
+              itemCount: messages.length,
               itemBuilder: (context, idx) {
-                final m = _chatHistory[idx] as Map;
+                final m = messages[idx];
                 final role = m['role']?.toString() ?? 'assistant';
                 final isUser = role == 'user';
                 final isSystem = role == 'system';
@@ -580,8 +689,8 @@ $svodkaFilialContent
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 5),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    margin: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     constraints: BoxConstraints(
                       maxWidth: MediaQuery.of(context).size.width * 0.85,
                     ),
@@ -592,10 +701,10 @@ $svodkaFilialContent
                               ? const Color(0xFF7F1D1D)
                               : const Color(0xFF162032),
                       borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(14),
-                        topRight: const Radius.circular(14),
-                        bottomLeft: Radius.circular(isUser ? 14 : 2),
-                        bottomRight: Radius.circular(isUser ? 2 : 14),
+                        topLeft: const Radius.circular(16),
+                        topRight: const Radius.circular(16),
+                        bottomLeft: Radius.circular(isUser ? 16 : 4),
+                        bottomRight: Radius.circular(isUser ? 4 : 16),
                       ),
                       border: Border.all(
                         color: isUser
@@ -610,9 +719,9 @@ $svodkaFilialContent
                       children: [
                         SelectableText(
                           text,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.95),
+                          style: const TextStyle(
+                            fontSize: 16, // УВЕЛИЧЕННЫЙ ШРИФТ
+                            color: Colors.white,
                           ),
                         ),
                         if (!isUser && !isSystem)
@@ -622,7 +731,7 @@ $svodkaFilialContent
                               onTap: () => _flutterTts.speak(text),
                               child: const Padding(
                                 padding: EdgeInsets.only(top: 8.0),
-                                child: Icon(Icons.volume_up, size: 18, color: Colors.white54),
+                                child: Icon(Icons.volume_up, size: 20, color: Colors.white60),
                               ),
                             ),
                           )
@@ -635,22 +744,110 @@ $svodkaFilialContent
           ),
           if (_isLoading)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 4),
+              padding: EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 16,
+                    height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF38BDF8)),
                   ),
                   SizedBox(width: 8),
-                  Text('Гена думает...', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text('Гена думает...', style: TextStyle(fontSize: 14, color: Colors.grey)),
                 ],
               ),
             ),
           _buildChatInputArea(),
         ],
+      ),
+    );
+  }
+
+  void _showChatsDrawer(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF131B2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.between,
+                  children: [
+                    const Text('История чатов', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Новый чат'),
+                      onPressed: () {
+                        _createNewChat();
+                        Navigator.pop(ctx);
+                        setState(() {});
+                      },
+                    ),
+                  ],
+                ),
+                const Divider(color: Color(0xFF334155)),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _sessions.length,
+                    itemBuilder: (context, index) {
+                      final session = _sessions[index];
+                      final isSelected = session == _currentSession;
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: ListTile(
+                          title: Text(
+                            session.title,
+                            style: TextStyle(fontSize: 15, color: isSelected ? const Color(0xFF38BDF8) : Colors.white70),
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _currentSession = session;
+                            });
+                            Navigator.pop(ctx);
+                          },
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18, color: Colors.white54),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _renameChat(session);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete, size: 18, color: Colors.redAccent),
+                                onPressed: () {
+                                  _deleteChat(session);
+                                  setModalState(() {});
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -680,7 +877,7 @@ $svodkaFilialContent
                 const SizedBox(width: 8),
                 const Text(
                   'Сведение накладных (Посылка / Сводки)',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white70),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white70),
                 ),
                 const Spacer(),
                 Icon(
@@ -758,7 +955,7 @@ $svodkaFilialContent
 
   Widget _buildChatInputArea() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 12),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
       decoration: const BoxDecoration(
         color: Color(0xFF101726),
         border: Border(top: BorderSide(color: Color(0xFF1E293B))),
@@ -809,10 +1006,10 @@ $svodkaFilialContent
                       controller: _chatInputController,
                       maxLines: 4,
                       minLines: 1,
-                      style: const TextStyle(fontSize: 14),
+                      style: const TextStyle(fontSize: 16), // КРУПНЫЙ ТЕКСТ ВВОДА
                       decoration: const InputDecoration(
                         hintText: 'Спроси или отправь фото...',
-                        hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 15),
                         border: InputBorder.none,
                         contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                       ),
