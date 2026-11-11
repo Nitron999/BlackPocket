@@ -78,7 +78,6 @@ class _MainScreenState extends State<MainScreen> {
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   
-  // Встроенный нативный канал для озвучки без сторонних плагинов
   static const platform = MethodChannel('samples.flutter.dev/tts');
 
   bool _isLoading = false;
@@ -718,7 +717,7 @@ $svodkaFilialContent
                         SelectableText(
                           text,
                           style: const TextStyle(
-                            fontSize: 16, // Увеличенный комфортный шрифт
+                            fontSize: 16,
                             color: Colors.white,
                           ),
                         ),
@@ -778,7 +777,7 @@ $svodkaFilialContent
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.between,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text('История чатов', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                     ElevatedButton.icon(
