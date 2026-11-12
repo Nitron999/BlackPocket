@@ -148,32 +148,32 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _selectedModel = 'qwen/qwen3.8-27b';
 
   static const String _logisticsSystemPrompt = '''
-Помоги сопоставить данные из трех рабочих таблиц складского учета (ООО «Печатные платы» и филиал «ЭЛЕКТРОконнект») и оформи результат в виде CSV-таблицы.
+Сопоставь данные из трех таблиц складского учета (ООО «Печатные платы» и филиал «ЭЛЕКТРОконнект») и верни результат строго в формате CSV без лишнего текста.
 
-Формат итогового CSV (13 колонок, разделитель точка с запятой ';'):
+Первая строка CSV (заголовок из 13 колонок через точку с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
 
 Правила заполнения:
-1. Блок «Голова» (ООО «Печатные платы»):
-- Найди позицию по артикулу PS в сводке ПП и заполни название фирмы, если оно пустое.
-- Счет пп: укажи московский счет с ведущими нулями (например: 0654, 0644, 0611).
-- По счету: возьми полный тираж из сводки ПП (колонка «количество», 4-й столбец). Не дублируй значение из «Получено».
-- Этикетка: запиши "ОТК".
+1. Блок «Голова» (позиции до строки "филиал"):
+- Найди каждую позицию по артикулу PS в «Сводке ПП». Заполни название Фирмы, если в Посылке оно пустое.
+- Счет пп: московский счет из сводки ПП с ведущими нулями (например: 0654, 0644, 0611).
+- По счету: полный тираж из сводки ПП (колонка «количество»). Не путай с «Получено»!
+- Этикетка: всегда "ОТК".
 - Доставка: "ДМ", "СДЭК", "К" или "Самовывоз".
 
-2. Разделительная строка между блоками:
+2. Разделитель между блоками (ровно такая строка):
 филиал;;;;;;;;;;;;
 
-3. Блок «Филиал» (ООО «ЭЛЕКТРОконнект»):
-- Счет пп: оставь ячейку пустой.
-- Этикетка: оставь ячейку пустой (без ОТК).
-- По счету: найди в сводке филиала по связке [Сч/Н + PS] значение из 7-го столбца («кол-во»). Это полный объем заказа (например: Кортэк = 50, Промприбор = 5000).
-- Доставка: для Нейрософт и Кузьминский укажи "К"; для АТБ-Электроника укажи "ДМ"; для остальных — "СДЭК" или "Самовывоз" согласно таблице.
+3. Блок «Филиал» (позиции после строки "филиал"):
+- Счет пп: оставь пустым.
+- Этикетка: оставь пустым (без ОТК).
+- По счету: найди в «Сводке Филиал» по связке [Сч/Н + PS] полный объем заказа из колонки «кол-во».
+- Доставка: для Нейрософт и Кузьминский укажи "К"; для АТБ-Электроника укажи "ДМ"; для остальных укажи "СДЭК" или "Самовывоз" по данным сводки.
 
-4. Порядок сортировки внутри каждого блока:
+4. Сортировка внутри каждого блока:
 Сначала ДМ, затем СДЭК, затем К, затем Самовывоз.
 
-Выведи только готовый блок ```csv ... ``` без дополнительных комментариев.
+Выведи только готовый блок ```csv ... ``` без пояснений.
 ''';
 
   @override
@@ -546,13 +546,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       String finalPromptForApi = displayPrompt;
       String modelToUse = _selectedModel;
 
-      // Авто-роутинг моделей под тип контента:
       if (activeImage != null) {
         modelToUse = 'llama-3.2-11b-vision-preview';
       } else if (activeDoc != null && activeDoc.existsSync()) {
-        // Для документов используем Qwen 3.8 27B — она есть в твоём аккаунте и не отказывается от таблиц
         modelToUse = 'qwen/qwen3.8-27b';
-        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 6500);
+        final docContent = await _readAnyFileSafe(
+          activeDoc,
+          maxRows: 80,
+          maxChars: 6500,
+          onlyLastOtpravkaBlock: true,
+        );
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
@@ -597,7 +600,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _lastCsvResult = null;
     });
 
-    // Используем Qwen 3.8 27B: доступна на твоём аккаунте и без цензуры OpenAI на фамилии/счета
     const String logisticsModel = 'qwen/qwen3.8-27b';
 
     final fileName = posFile.path.split(Platform.pathSeparator).last;
@@ -607,8 +609,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      // Жестко держим размер до ~4500 токенов, чтобы уложиться в лимит 7000 ITPM у Qwen
-      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 80, maxChars: 3000);
+      // Берем строго последнюю секцию после последнего "ОТПРАВКА ..." из листа "Посылка"
+      final posylkaContent = await _readAnyFileSafe(
+        posFile,
+        maxRows: 120,
+        maxChars: 3500,
+        onlyLastOtpravkaBlock: true,
+        preferredSheetName: 'Посылка',
+      );
       final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
 
       String svodkaPpContent = '';
@@ -617,7 +625,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         svodkaPpContent = await _readAnyFileSafe(
           ppFile,
           maxRows: 80,
-          maxChars: 2500,
+          maxChars: 2800,
           filterTokens: filterTokens,
         );
       }
@@ -628,7 +636,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         svodkaFilialContent = await _readAnyFileSafe(
           filFile,
           maxRows: 80,
-          maxChars: 2500,
+          maxChars: 2800,
           filterTokens: filterTokens,
         );
       }
@@ -636,7 +644,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       final promptText = '''
 Таблицы для сопоставления:
 
-1. Таблица Посылка (текущий приход):
+1. Таблица Посылка (последний приход):
 $posylkaContent
 
 2. Сводка ООО Печатные платы (Голова):
@@ -672,16 +680,31 @@ $svodkaFilialContent
 
   Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
     final tokens = <String>{};
-    final stopWords = {'ооо', 'зао', 'оао', 'сдэк', 'самовывоз', 'отк', 'плата', 'платы', 'лист', 'посылка'};
+    final stopWords = {
+      'ооо',
+      'зао',
+      'оао',
+      'сдэк',
+      'самовывоз',
+      'отк',
+      'плата',
+      'платы',
+      'лист',
+      'посылка',
+      'филиал',
+      'отправка',
+      'приход',
+    };
     final lines = posylkaCsv.split('\n');
     for (int i = 1; i < lines.length; i++) {
       final parts = lines[i].split(';');
       for (final rawPart in parts) {
         final clean = rawPart.trim().toLowerCase();
         if (clean.length >= 3 && !stopWords.contains(clean)) {
-          if (RegExp(r'\d').hasMatch(clean) && RegExp(r'^[a-zа-я0-9\-/\.]+$').hasMatch(clean)) {
+          if (RegExp(r'\d').hasMatch(clean) &&
+              RegExp(r'^[a-zа-я0-9\-/\.]+$').hasMatch(clean)) {
             tokens.add(clean);
-            final digits = RegExp(r'\d{3,}').allMatches(clean).map((m) => m.group(0)!);
+            final digits = RegExp(r'\d{4,}').allMatches(clean).map((m) => m.group(0)!);
             tokens.addAll(digits);
           }
         }
@@ -695,6 +718,8 @@ $svodkaFilialContent
     int maxRows = 150,
     int maxChars = 6000,
     Set<String>? filterTokens,
+    bool onlyLastOtpravkaBlock = false,
+    String? preferredSheetName,
   }) async {
     String rawText = '';
     final path = file.path.toLowerCase();
@@ -704,6 +729,8 @@ $svodkaFilialContent
         file,
         maxRows: maxRows,
         filterTokens: filterTokens,
+        onlyLastOtpravkaBlock: onlyLastOtpravkaBlock,
+        preferredSheetName: preferredSheetName,
       );
     } else if (path.endsWith('.xls')) {
       try {
@@ -746,6 +773,8 @@ $svodkaFilialContent
     File file, {
     int maxRows = 150,
     Set<String>? filterTokens,
+    bool onlyLastOtpravkaBlock = false,
+    String? preferredSheetName,
   }) async {
     try {
       final bytes = await file.readAsBytes();
@@ -761,114 +790,173 @@ $svodkaFilialContent
           for (final t in si.findAllElements('t')) {
             textBuffer.write(t.innerText);
           }
-          sharedStrings.add(textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
+          sharedStrings.add(
+              textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
         }
       }
 
-      final sheetFiles = archive.files
-          .where((f) => f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
-          .toList()
-        ..sort((a, b) => a.name.compareTo(b.name));
+      // Находим правильный XML листа по имени из workbook.xml (чтобы не путать с листом Диаграммы)
+      ArchiveFile? targetSheetFile;
+      final wbFile = archive.findFile('xl/workbook.xml');
+      final relsFile = archive.findFile('xl/_rels/workbook.xml.rels');
 
-      if (sheetFiles.isEmpty) {
+      if (wbFile != null && relsFile != null) {
+        final wbDoc = XmlDocument.parse(
+            utf8.decode(wbFile.content as List<int>, allowMalformed: true));
+        final relsDoc = XmlDocument.parse(
+            utf8.decode(relsFile.content as List<int>, allowMalformed: true));
+
+        Map<String, String> rIdToTarget = {};
+        for (final rel in relsDoc.findAllElements('Relationship')) {
+          final id = rel.getAttribute('Id');
+          final target = rel.getAttribute('Target');
+          if (id != null && target != null) {
+            rIdToTarget[id] = target.startsWith('xl/') ? target : 'xl/$target';
+          }
+        }
+
+        for (final sheetEl in wbDoc.findAllElements('sheet')) {
+          final name = sheetEl.getAttribute('name') ?? '';
+          final rId = sheetEl.getAttribute('r:id');
+          final target = rId != null ? rIdToTarget[rId] : null;
+          if (target != null && target.contains('worksheets/')) {
+            final found = archive.findFile(target);
+            if (found != null) {
+              if (preferredSheetName != null &&
+                  name.toLowerCase().contains(preferredSheetName.toLowerCase())) {
+                targetSheetFile = found;
+                break;
+              }
+              targetSheetFile ??= found;
+            }
+          }
+        }
+      }
+
+      if (targetSheetFile == null) {
+        final sheetFiles = archive.files
+            .where((f) =>
+                f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+        if (sheetFiles.isNotEmpty) {
+          targetSheetFile = sheetFiles.first;
+        }
+      }
+
+      if (targetSheetFile == null) {
         return '[Пустая книга Excel]';
       }
 
-      final sb = StringBuffer();
-      final sheetsToRead = sheetFiles.take(1);
+      final sheetXmlStr =
+          utf8.decode(targetSheetFile.content as List<int>, allowMalformed: true);
+      final sheetDoc = XmlDocument.parse(sheetXmlStr);
+      final allRowElements = sheetDoc.findAllElements('row').toList();
 
-      for (final sheetFile in sheetsToRead) {
-        final sheetXmlStr = utf8.decode(sheetFile.content as List<int>, allowMalformed: true);
-        final sheetDoc = XmlDocument.parse(sheetXmlStr);
-        final allRowElements = sheetDoc.findAllElements('row').toList();
+      if (allRowElements.isEmpty) return '';
 
-        if (allRowElements.isEmpty) continue;
+      List<String> parsedRows = [];
 
-        List<String> parsedRows = [];
+      for (final rowEl in allRowElements) {
+        final cells = rowEl.findAllElements('c').toList();
+        if (cells.isEmpty) continue;
 
-        for (final rowEl in allRowElements) {
-          final cells = rowEl.findAllElements('c').toList();
-          if (cells.isEmpty) continue;
+        Map<int, String> rowMap = {};
+        int maxColIdx = 0;
 
-          Map<int, String> rowMap = {};
-          int maxColIdx = 0;
+        for (final c in cells) {
+          final ref = c.getAttribute('r') ?? '';
+          final colIdx = _columnLettersToIndex(ref);
+          if (colIdx > 14) continue;
+          if (colIdx > maxColIdx) maxColIdx = colIdx;
 
-          for (final c in cells) {
-            final ref = c.getAttribute('r') ?? '';
-            final colIdx = _columnLettersToIndex(ref);
-            if (colIdx > 14) continue;
-            if (colIdx > maxColIdx) maxColIdx = colIdx;
+          final type = c.getAttribute('t');
+          String cellVal = '';
 
-            final type = c.getAttribute('t');
-            String cellVal = '';
-
-            if (type == 's') {
-              final vEl = c.findElements('v').firstOrNull;
-              final idx = int.tryParse(vEl?.innerText ?? '');
-              if (idx != null && idx >= 0 && idx < sharedStrings.length) {
-                cellVal = sharedStrings[idx];
-              }
-            } else if (type == 'inlineStr') {
-              final tEl = c.findAllElements('t').firstOrNull;
-              cellVal = tEl?.innerText ?? '';
-            } else {
-              final vEl = c.findElements('v').firstOrNull;
-              cellVal = vEl?.innerText ?? '';
+          if (type == 's') {
+            final vEl = c.findElements('v').firstOrNull;
+            final idx = int.tryParse(vEl?.innerText ?? '');
+            if (idx != null && idx >= 0 && idx < sharedStrings.length) {
+              cellVal = sharedStrings[idx];
             }
-
-            cellVal = cellVal.replaceAll(';', ' ').replaceAll('\n', ' ').trim();
-            rowMap[colIdx] = cellVal;
+          } else if (type == 'inlineStr') {
+            final tEl = c.findAllElements('t').firstOrNull;
+            cellVal = tEl?.innerText ?? '';
+          } else {
+            final vEl = c.findElements('v').firstOrNull;
+            cellVal = vEl?.innerText ?? '';
           }
 
-          List<String> rowValues = [];
-          bool hasAnyData = false;
-          for (int i = 0; i <= maxColIdx; i++) {
-            final v = rowMap[i] ?? '';
-            if (v.isNotEmpty) hasAnyData = true;
-            rowValues.add(v);
-          }
-
-          while (rowValues.isNotEmpty && rowValues.last.isEmpty) {
-            rowValues.removeLast();
-          }
-
-          if (hasAnyData && rowValues.isNotEmpty) {
-            parsedRows.add(rowValues.join(';'));
-          }
+          cellVal = cellVal.replaceAll(';', ' ').replaceAll('\n', ' ').trim();
+          rowMap[colIdx] = cellVal;
         }
 
-        if (parsedRows.isEmpty) continue;
+        List<String> rowValues = [];
+        bool hasAnyData = false;
+        for (int i = 0; i <= maxColIdx; i++) {
+          final v = rowMap[i] ?? '';
+          if (v.isNotEmpty) hasAnyData = true;
+          rowValues.add(v);
+        }
 
-        sb.writeln(parsedRows.first);
+        while (rowValues.isNotEmpty && rowValues.last.isEmpty) {
+          rowValues.removeLast();
+        }
 
-        if (filterTokens != null && filterTokens.isNotEmpty) {
-          int matchedCount = 0;
-          for (int i = 1; i < parsedRows.length; i++) {
-            final rowLower = parsedRows[i].toLowerCase();
-            bool matches = false;
-            for (final token in filterTokens) {
-              if (rowLower.contains(token)) {
-                matches = true;
-                break;
-              }
-            }
-            if (matches) {
-              sb.writeln(parsedRows[i]);
-              matchedCount++;
-              if (matchedCount >= maxRows) break;
+        if (hasAnyData && rowValues.isNotEmpty) {
+          parsedRows.add(rowValues.join(';'));
+        }
+      }
+
+      if (parsedRows.isEmpty) return '';
+
+      final sb = StringBuffer();
+      sb.writeln(parsedRows.first); // Заголовок таблицы
+
+      if (onlyLastOtpravkaBlock) {
+        // Ищем последнюю строку с "ОТПРАВКА", чтобы не тянуть прошлые дни
+        int lastOtpravkaIdx = -1;
+        for (int i = parsedRows.length - 1; i >= 1; i--) {
+          if (parsedRows[i].toUpperCase().contains('ОТПРАВКА')) {
+            lastOtpravkaIdx = i;
+            break;
+          }
+        }
+        final startIdx = lastOtpravkaIdx != -1
+            ? lastOtpravkaIdx
+            : (parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1);
+        for (int i = startIdx; i < parsedRows.length; i++) {
+          sb.writeln(parsedRows[i]);
+        }
+      } else if (filterTokens != null && filterTokens.isNotEmpty) {
+        int matchedCount = 0;
+        for (int i = 1; i < parsedRows.length; i++) {
+          final rowLower = parsedRows[i].toLowerCase();
+          bool matches = false;
+          for (final token in filterTokens) {
+            if (rowLower.contains(token)) {
+              matches = true;
+              break;
             }
           }
-          if (matchedCount == 0) {
-            final fallbackStart = parsedRows.length > 26 ? (parsedRows.length - 25) : 1;
-            for (int i = fallbackStart; i < parsedRows.length; i++) {
-              sb.writeln(parsedRows[i]);
-            }
+          if (matches) {
+            sb.writeln(parsedRows[i]);
+            matchedCount++;
+            if (matchedCount >= maxRows) break;
           }
-        } else {
-          final startIdx = parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
-          for (int i = startIdx; i < parsedRows.length; i++) {
+        }
+        if (matchedCount == 0) {
+          final fallbackStart =
+              parsedRows.length > 26 ? (parsedRows.length - 25) : 1;
+          for (int i = fallbackStart; i < parsedRows.length; i++) {
             sb.writeln(parsedRows[i]);
           }
+        }
+      } else {
+        final startIdx =
+            parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
+        for (int i = startIdx; i < parsedRows.length; i++) {
+          sb.writeln(parsedRows[i]);
         }
       }
 
@@ -1052,18 +1140,21 @@ $svodkaFilialContent
   }
 
   String _extractCsv(String text) {
-    if (text.contains('```csv')) {
-      final start = text.indexOf('```csv') + 6;
-      final end = text.indexOf('```', start);
-      if (end != -1) return text.substring(start, end).trim();
-    } else if (text.contains('```')) {
-      final start = text.indexOf('```') + 3;
-      final end = text.indexOf('```', start);
-      if (end != -1) return text.substring(start, end).trim();
+    String clean = text.trim();
+    if (clean.contains('```csv')) {
+      final start = clean.indexOf('```csv') + 6;
+      final end = clean.indexOf('```', start);
+      clean = end != -1 ? clean.substring(start, end) : clean.substring(start);
+    } else if (clean.contains('```')) {
+      final start = clean.indexOf('```') + 3;
+      final end = clean.indexOf('```', start);
+      clean = end != -1 ? clean.substring(start, end) : clean.substring(start);
     }
-    return text.trim();
+    // Убираем возможные остатки маркеров разметки
+    return clean.replaceAll('```csv', '').replaceAll('```', '').trim();
   }
 
+  // Выгрузка в оформленный Excel с твоими шрифтами, ширинами и цветами (Tahoma 18 Bold)
   Future<void> _exportToFormattedExcel() async {
     final csvData = _lastCsvResult;
     if (csvData == null || csvData.isEmpty) {
@@ -1076,21 +1167,92 @@ $svodkaFilialContent
       final sheet = excel['Посылка'];
       excel.delete('Sheet1');
 
-      final lines = csvData.split('\n');
-      for (int r = 0; r < lines.length; r++) {
-        final line = lines[r].trim();
-        if (line.isEmpty) continue;
-        final cells = line.split(';');
+      // Настраиваем ширину колонок как в эталонном файле Посылка 26 2.xlsx
+      final colWidths = [
+        52.0, // A: Фирма
+        16.0, // B: PS
+        15.0, // C: Счет пп
+        15.0, // D: Сч/Н
+        15.0, // E: По счету
+        18.0, // F: Получено
+        16.0, // G: Отгрузить
+        14.0, // H: Этикетка
+        15.0, // I: на складе!
+        14.0, // J: долг
+        18.0, // K: Доставка
+        32.0, // L: Расходная накладная
+        22.0, // M: Major
+      ];
 
-        for (int c = 0; c < cells.length; c++) {
-          final val = cells[c].trim();
+      for (int i = 0; i < colWidths.length; i++) {
+        sheet.setColumnWidth(i, colWidths[i]);
+      }
+
+      final borderThin = ex.Border(
+        borderStyle: ex.BorderStyle.Thin,
+        borderColorHex: ex.ExcelColor.fromHexString('#FF808080'),
+      );
+
+      final lines = csvData
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty && !l.startsWith('```'))
+          .toList();
+
+      for (int r = 0; r < lines.length; r++) {
+        final cells = lines[r].split(';');
+        final isHeader = r == 0;
+        final firstColLower = cells.isNotEmpty ? cells[0].trim().toLowerCase() : '';
+        final deliveryVal = cells.length > 10 ? cells[10].trim().toLowerCase() : '';
+
+        final isFilialDivider = firstColLower == 'филиал';
+        final isSamovyvoz = deliveryVal.contains('самовывоз');
+
+        for (int c = 0; c < 13; c++) {
+          final val = c < cells.length ? cells[c].trim() : '';
           final cellIndex =
               ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r);
-          if (r > 0 && c >= 4 && c <= 6 && int.tryParse(val) != null) {
-            sheet.cell(cellIndex).value = ex.IntCellValue(int.parse(val));
+          final cell = sheet.cell(cellIndex);
+
+          if (!isHeader && !isFilialDivider && c >= 4 && c <= 6 && int.tryParse(val) != null) {
+            cell.value = ex.IntCellValue(int.parse(val));
           } else {
-            sheet.cell(cellIndex).value = ex.TextCellValue(val);
+            cell.value = ex.TextCellValue(val);
           }
+
+          // Определяем цвета заливки и шрифта
+          ex.ExcelColor? bgColor;
+          ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
+
+          if (isHeader) {
+            bgColor = ex.ExcelColor.fromHexString('#FFD9E1F2');
+          } else if (isFilialDivider) {
+            bgColor = ex.ExcelColor.fromHexString('#FFFF0000');
+            fontColor = ex.ExcelColor.fromHexString('#FFFFFFFF');
+          } else if (isSamovyvoz) {
+            bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
+          }
+
+          // В колонке "Отгрузить" (индекс 6) и "Доставка" (индекс 10) выделяем красным шрифтом как в твоем шаблоне
+          if (!isHeader && !isFilialDivider && (c == 6 || c == 10)) {
+            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+          }
+
+          cell.cellStyle = ex.CellStyle(
+            fontFamily: 'Tahoma',
+            fontSize: 18,
+            bold: true,
+            fontColorHex: fontColor,
+            backgroundColorHex: bgColor ?? ex.ExcelColor.none,
+            horizontalAlign: (c >= 1 && c <= 10)
+                ? ex.HorizontalAlign.Center
+                : ex.HorizontalAlign.Left,
+            verticalAlign: ex.VerticalAlign.Center,
+            leftBorder: borderThin,
+            rightBorder: borderThin,
+            topBorder: borderThin,
+            bottomBorder: borderThin,
+          );
         }
       }
 
