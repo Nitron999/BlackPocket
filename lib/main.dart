@@ -538,6 +538,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return trimmed;
   }
 
+  String _extractDigitsOnly(String raw) {
+    final match = RegExp(r'\d+').firstMatch(raw.trim());
+    return match?.group(0) ?? '';
+  }
+
+  bool _isOtpravkaHeaderCell(String text) {
+    final up = text
+        .toUpperCase()
+        .replaceAll('O', 'О')
+        .replaceAll('T', 'Т')
+        .replaceAll('P', 'Р')
+        .replaceAll('A', 'А')
+        .replaceAll('B', 'В')
+        .replaceAll('K', 'К')
+        .replaceAll('H', 'Н')
+        .replaceAll('X', 'Х');
+    return up.contains('ОТПРАВК') || up.contains('ПРИХОД');
+  }
+
   String _mapDeliveryKeyword(String rawText) {
     final low = rawText.toLowerCase();
     if (low.contains('доставка москва') || low == 'дм') return 'ДМ';
@@ -589,11 +608,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
       int startRowIdx = 0;
       for (int i = posRows.length - 1; i >= 0; i--) {
-        final rowJoined = posRows[i].join(' ').toUpperCase();
-        if (rowJoined.contains('ОТПРАВКА')) {
+        final rowJoined = posRows[i].join(' ');
+        if (_isOtpravkaHeaderCell(rowJoined)) {
           startRowIdx = i;
           for (final cell in posRows[i]) {
-            if (cell.toUpperCase().contains('ОТПРАВКА')) {
+            if (_isOtpravkaHeaderCell(cell)) {
               _lastOtpravkaHeader = cell.trim();
               break;
             }
@@ -711,15 +730,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         String currentFirm = '';
         String currentDelivery = '';
 
-        for (int i = 12; i < filRows.length; i++) {
+        for (int i = 5; i < filRows.length; i++) {
           final r = filRows[i];
           final colA = r.isNotEmpty ? _cleanNumStr(r[0]) : '';
           final colB = r.length > 1 ? r[1].trim() : '';
           final psVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
           final qtyVal = r.length > 7 ? _cleanNumStr(r[7]) : '';
 
-          if (colA.isNotEmpty && RegExp(r'^\d+$').hasMatch(colA)) {
-            currentSchn = colA;
+          final extractedSchn = _extractDigitsOnly(colA);
+          if (extractedSchn.isNotEmpty && extractedSchn.length >= 4 && extractedSchn.length <= 6) {
+            currentSchn = extractedSchn;
             if (colB.isNotEmpty) {
               currentFirm = colB;
             }
@@ -773,6 +793,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             item.dostavka = info['dostavka']!;
           }
         }
+        if (item.poSchetu.isEmpty) {
+          item.poSchetu = item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
+        }
         item.etiketka = 'ОТК';
         if (item.dostavka.isEmpty) {
           final fLow = item.firm.toLowerCase();
@@ -791,7 +814,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         item.schetPp = '';
         item.etiketka = '';
 
-        final info = filBySchnPs['${item.schN}_${item.ps}'] ?? filByPs[item.ps];
+        final cleanSchn = _extractDigitsOnly(item.schN);
+        final info = filBySchnPs['${cleanSchn}_${item.ps}'] ??
+            filBySchnPs['${item.schN}_${item.ps}'] ??
+            filByPs[item.ps];
+
         if (info != null) {
           if ((info['poSchetu'] ?? '').isNotEmpty) {
             item.poSchetu = info['poSchetu']!;
@@ -799,6 +826,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           if (item.dostavka.isEmpty && (info['dostavka'] ?? '').isNotEmpty) {
             item.dostavka = info['dostavka']!;
           }
+        }
+
+        // Если в сводке не нашлось По счету — подставляем из Получено (например, 1)
+        if (item.poSchetu.isEmpty) {
+          item.poSchetu = item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
         }
 
         final fLow = item.firm.toLowerCase();
@@ -982,7 +1014,7 @@ $finalCsv
   }
 
   // =========================================================================
-  // ВЫГРУЗКА В EXCEL: ЖИРНЫЕ ГРАНИЦЫ (THICK) ПО ВСЕМУ ЛИСТУ + ЭТАЛОННЫЕ ЦВЕТА
+  // ВЫГРУЗКА В EXCEL: ТАХОМА 18 / 16 BOLD БЕЗ СЖАТИЯ + ЖИРНЫЕ ГРАНИЦЫ THICK
   // =========================================================================
 
   ex.CellStyle _buildCellStyle({
@@ -1058,7 +1090,7 @@ $finalCsv
       excel.delete('Sheet1');
 
       final colWidths = [
-        48.0, // A: Фирма (Tahoma 18)
+        56.0, // A: Фирма (Tahoma 18 без автосжатия)
         15.0, // B: PS (Tahoma 16)
         13.0, // C: Счет пп
         14.0, // D: Сч/Н
@@ -1125,7 +1157,7 @@ $finalCsv
             ex.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow));
         dateCell.value = ex.TextCellValue(_lastOtpravkaHeader);
         dateCell.cellStyle = _buildCellStyle(
-          fontSize: 13,
+          fontSize: 14,
           fontHex: '#FF9C0006',
           hAlign: ex.HorizontalAlign.Left,
         );
@@ -1177,7 +1209,7 @@ $finalCsv
           continue;
         }
 
-        sheet.setRowHeight(currentRow, 26);
+        sheet.setRowHeight(currentRow, 28);
 
         for (int c = 0; c < 13; c++) {
           final val = c < cells.length ? cells[c].trim() : '';
