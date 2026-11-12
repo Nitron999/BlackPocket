@@ -139,14 +139,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _lastCsvResult;
 
   final _availableModels = [
-    'meta-llama/llama-4-scout-17b-16e-instruct',
     'qwen/qwen3.8-27b',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'llama-3.2-11b-vision-preview',
   ];
 
-  String _selectedModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  String _selectedModel = 'qwen/qwen3.8-27b';
 
   static const String _logisticsSystemPrompt = '''
 Помоги сопоставить данные из трех рабочих таблиц складского учета (ООО «Печатные платы» и филиал «ЭЛЕКТРОконнект») и оформи результат в виде CSV-таблицы.
@@ -233,8 +232,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel =
-        prefs.getString('groq_model') ?? 'meta-llama/llama-4-scout-17b-16e-instruct';
+    final savedModel = prefs.getString('groq_model') ?? 'qwen/qwen3.8-27b';
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
 
     setState(() {
@@ -550,13 +548,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
       // Авто-роутинг моделей под тип контента:
       if (activeImage != null) {
-        if (!modelToUse.contains('vision') && !modelToUse.contains('llama-4')) {
-          modelToUse = 'llama-3.2-11b-vision-preview';
-        }
+        modelToUse = 'llama-3.2-11b-vision-preview';
       } else if (activeDoc != null && activeDoc.existsSync()) {
-        // Для документов используем Llama 4 Scout — не отказывается от таблиц с фамилиями и счетами
-        modelToUse = 'meta-llama/llama-4-scout-17b-16e-instruct';
-        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 7500);
+        // Для документов используем Qwen 3.8 27B — она есть в твоём аккаунте и не отказывается от таблиц
+        modelToUse = 'qwen/qwen3.8-27b';
+        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 6500);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
@@ -601,8 +597,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _lastCsvResult = null;
     });
 
-    // Используем Llama 4 Scout: не срабатывает ложный цензор на фамилии и счета в накладных
-    const String logisticsModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
+    // Используем Qwen 3.8 27B: доступна на твоём аккаунте и без цензуры OpenAI на фамилии/счета
+    const String logisticsModel = 'qwen/qwen3.8-27b';
 
     final fileName = posFile.path.split(Platform.pathSeparator).last;
     _appendMessage(
@@ -611,7 +607,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 80, maxChars: 3500);
+      // Жестко держим размер до ~4500 токенов, чтобы уложиться в лимит 7000 ITPM у Qwen
+      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 80, maxChars: 3000);
       final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
 
       String svodkaPpContent = '';
@@ -620,7 +617,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         svodkaPpContent = await _readAnyFileSafe(
           ppFile,
           maxRows: 80,
-          maxChars: 3000,
+          maxChars: 2500,
           filterTokens: filterTokens,
         );
       }
@@ -631,7 +628,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         svodkaFilialContent = await _readAnyFileSafe(
           filFile,
           maxRows: 80,
-          maxChars: 3000,
+          maxChars: 2500,
           filterTokens: filterTokens,
         );
       }
