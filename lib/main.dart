@@ -166,9 +166,17 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
+
+  // Контроллеры для Панели 2: Электроконнект Мейджер Экспресс
   final TextEditingController _majorFirmController = TextEditingController();
   final TextEditingController _majorWeightController = TextEditingController(text: '1');
   final TextEditingController _majorPlacesController = TextEditingController(text: '1');
+
+  // Контроллеры для Панели 3: Платы Мейджер Экспресс
+  final TextEditingController _platyFirmController = TextEditingController();
+  final TextEditingController _platyWeightController = TextEditingController(text: '1');
+  final TextEditingController _platyPlacesController = TextEditingController(text: '1');
+
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
 
@@ -177,6 +185,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
   bool _isMajorExpanded = false;
+  bool _isPlatyExpanded = false;
   String _apiStatus = 'Ключ не настроен';
   bool _isKeyValidating = false;
   bool? _isKeyWorking;
@@ -194,6 +203,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _lastCsvResult;
   String _lastOtpravkaHeader = '';
   String? _lastGeneratedMajorScriptPath;
+  String? _lastGeneratedPlatyScriptPath;
 
   final _availableModels = [
     'qwen/qwen3.8-27b',
@@ -223,6 +233,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _majorFirmController.dispose();
     _majorWeightController.dispose();
     _majorPlacesController.dispose();
+    _platyFirmController.dispose();
+    _platyWeightController.dispose();
+    _platyPlacesController.dispose();
     super.dispose();
   }
 
@@ -536,7 +549,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================================
-  // МОДУЛЬ 2: ЭЛЕКТРОКОННЕКТ МЕЙДЖЕР ЭКСПРЕСС (ЧИСТЫЙ КОД .PY)
+  // МОДУЛИ 2 И 3: MAJOR EXPRESS (ЭЛЕКТРОКОННЕКТ И ПЛАТЫ)
   // =========================================================================
 
   String _sanitizeFilename(String raw) {
@@ -550,10 +563,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   String _buildMajorExpressPythonScript({
+    required String login,
+    required String password,
+    required String shipperName,
     required String consigneeName,
     required String weight,
     required String places,
   }) {
+    final escapedShipper = shipperName.replaceAll("'", "\\'");
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
     final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
     final safePlaces = places.trim().isEmpty ? '1' : places.trim();
@@ -564,8 +581,8 @@ import datetime
 import time
 from playwright.sync_api import sync_playwright
 
-LOGIN = "Electroconnect"
-PASSWORD = "Y2501212e4e5d62"
+LOGIN = "$login"
+PASSWORD = "$password"
 
 def main():
     try:
@@ -619,14 +636,14 @@ def main():
             print("2. Заполняю данные...")
 
             # =========================================================
-            # 1. ОТПРАВИТЕЛЬ: ООО «ЭЛЕКТРОконнект» Москва
+            # 1. ОТПРАВИТЕЛЬ: $escapedShipper
             # =========================================================
-            print("-> Фиксирую отправителя: ООО «ЭЛЕКТРОконнект» Москва...")
+            print("-> Фиксирую отправителя: $escapedShipper...")
             shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
             shipper_inp.click()
             shipper_inp.press("ControlOrMeta+A")
             shipper_inp.press("Backspace")
-            shipper_inp.fill("ООО «ЭЛЕКТРОконнект» Москва")
+            shipper_inp.fill("$escapedShipper")
             page.wait_for_timeout(1500)
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
@@ -730,6 +747,7 @@ if __name__ == "__main__":
 ''';
   }
 
+  // Генерация для Панели 2: Электроконнект Мейджер Экспресс
   Future<void> _generateMajorExpressScript() async {
     final firmName = _majorFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -746,6 +764,9 @@ if __name__ == "__main__":
 
     try {
       final scriptContent = _buildMajorExpressPythonScript(
+        login: 'Electroconnect',
+        password: 'Y2501212e4e5d62',
+        shipperName: 'ООО «ЭЛЕКТРОконнект» Москва',
         consigneeName: firmName,
         weight: weight,
         places: places,
@@ -775,19 +796,76 @@ if __name__ == "__main__":
         '🚚 Электроконнект Мейджер Экспресс: $firmName ($weight кг, $places мест)',
       );
 
-      // В чат выводим ТОЛЬКО чистый код без лишних шапок и кавычек
       _appendMessage('assistant', scriptContent);
       _showSnackbar('Файл $safeFileName сформирован!');
-      await _speak('Скрипт Мейджер Экспресс для фирмы $firmName готов, Шурик!');
+      await _speak('Скрипт Электроконнект для фирмы $firmName готов, Шурик!');
 
-      await _shareLastMajorScript();
+      await _shareScriptByPath(filePath);
     } catch (e) {
       _showSnackbar('Ошибка создания скрипта: $e');
     }
   }
 
-  Future<void> _shareLastMajorScript() async {
-    final path = _lastGeneratedMajorScriptPath;
+  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat)
+  Future<void> _generatePlatyMajorExpressScript() async {
+    final firmName = _platyFirmController.text.trim();
+    if (firmName.isEmpty) {
+      _showSnackbar('Впиши название фирмы-получателя!');
+      return;
+    }
+
+    final weight = _platyWeightController.text.trim().isEmpty
+        ? '1'
+        : _platyWeightController.text.trim();
+    final places = _platyPlacesController.text.trim().isEmpty
+        ? '1'
+        : _platyPlacesController.text.trim();
+
+    try {
+      final scriptContent = _buildMajorExpressPythonScript(
+        login: 'Palat',
+        password: 'Z250121e9a7a762',
+        shipperName: 'ООО «Печатные платы»',
+        consigneeName: firmName,
+        weight: weight,
+        places: places,
+      );
+
+      final dir = await getApplicationDocumentsDirectory();
+      final safeFileName = '${_sanitizeFilename(firmName)}.py';
+      final filePath = '${dir.path}/$safeFileName';
+
+      final f = File(filePath);
+      await f.writeAsString(scriptContent, encoding: utf8);
+
+      try {
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        if (downloadDir.existsSync()) {
+          final publicFile = File('${downloadDir.path}/$safeFileName');
+          await publicFile.writeAsString(scriptContent, encoding: utf8);
+        }
+      } catch (_) {}
+
+      setState(() {
+        _lastGeneratedPlatyScriptPath = filePath;
+      });
+
+      _appendMessage(
+        'user',
+        '📦 Платы Мейджер Экспресс: $firmName ($weight кг, $places мест)',
+      );
+
+      _appendMessage('assistant', scriptContent);
+      _showSnackbar('Файл $safeFileName сформирован!');
+      await _speak('Скрипт Платы для фирмы $firmName готов, Шурик!');
+
+      await _shareScriptByPath(filePath);
+    } catch (e) {
+      _showSnackbar('Ошибка создания скрипта: $e');
+    }
+  }
+
+  Future<void> _shareScriptByPath(String? path) async {
     if (path == null || !File(path).existsSync()) {
       _showSnackbar('Сначала сформируй скрипт!');
       return;
@@ -1900,6 +1978,7 @@ $finalCsv
         children: [
           _buildLogisticsTopPanel(),
           _buildMajorExpressTopPanel(),
+          _buildPlatyMajorExpressTopPanel(),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -2419,7 +2498,167 @@ $finalCsv
                     ),
                     icon: const Icon(Icons.share),
                     tooltip: 'Поделиться / Сохранить .py',
-                    onPressed: _shareLastMajorScript,
+                    onPressed: () =>
+                        _shareScriptByPath(_lastGeneratedMajorScriptPath),
+                  ),
+                ]
+              ],
+            ),
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlatyMajorExpressTopPanel() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A101C),
+        border: Border(
+          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isPlatyExpanded = !_isPlatyExpanded;
+              });
+            },
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.developer_board_outlined,
+                  size: 18,
+                  color: Colors.purpleAccent,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Платы Мейджер Экспресс',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white70,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _isPlatyExpanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down,
+                  size: 18,
+                  color: Colors.white54,
+                ),
+              ],
+            ),
+          ),
+          if (_isPlatyExpanded) ...[
+            const SizedBox(height: 10),
+            TextField(
+              controller: _platyFirmController,
+              style: const TextStyle(fontSize: 14, color: Colors.white),
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Фирма-получатель (например: ООО "Нейрософт")',
+                labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                filled: true,
+                fillColor: const Color(0xFF182235),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _platyWeightController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Вес (кг)',
+                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF182235),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _platyPlacesController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Мест',
+                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF182235),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF7E22CE),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.code, size: 18),
+                    label: const Text(
+                      'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    onPressed: _generatePlatyMajorExpressScript,
+                  ),
+                ),
+                if (_lastGeneratedPlatyScriptPath != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF16A34A),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Поделиться / Сохранить .py',
+                    onPressed: () =>
+                        _shareScriptByPath(_lastGeneratedPlatyScriptPath),
                   ),
                 ]
               ],
