@@ -404,7 +404,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
 
     try {
-      final url = Uri.parse('https://api.groq.com/openai/v1/models');
+      final url = Uri.https('api.groq.com', '/openai/v1/models');
       final resp = await http.get(
         url,
         headers: {'Authorization': 'Bearer $trimmedKey'},
@@ -1389,7 +1389,7 @@ $finalCsv
     File? imageFile,
     required double temperature,
   }) async {
-    final url = Uri.parse('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)');
+    final url = Uri.https('api.groq.com', '/openai/v1/chat/completions');
 
     var formattedMessages = [];
     formattedMessages.add({'role': 'system', 'content': systemInstruction});
