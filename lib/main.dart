@@ -248,7 +248,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _platyWeightController = TextEditingController(text: '1');
     _platyPlacesController = TextEditingController(text: '1');
     _platyDescController = TextEditingController(text: 'платы');
-    _platyInfoController = TextEditingController(text: 'УПД');
+    _platyInfoController = TextEditingController(text: 'с/ч');
 
     WidgetsBinding.instance.addObserver(this);
     _loadSettingsAndChats();
@@ -354,10 +354,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
 
     if (_sessions.isEmpty) {
-      _createNewChat(
-        initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панели сверху 📦.',
-      );
+      _createNewChat();
     } else {
       setState(() {
         _currentSession = _sessions.first as ChatSession;
@@ -371,18 +368,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     await prefs.setString('chat_sessions', encoded);
   }
 
-  void _createNewChat({String? initMessage}) {
+  void _createNewChat() {
     final newSession = ChatSession(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title:
           'Чат от ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      messages: [
-        ChatMessage(
-          role: 'assistant',
-          text: initMessage ??
-              'Здорово, Шурик! Новый чат готов к работе. Чем займемся?',
-        )
-      ],
+      messages: <ChatMessage>[],
     );
     setState(() {
       _sessions.insert(0, newSession);
@@ -879,7 +870,7 @@ if __name__ == "__main__":
     }
   }
 
-  // Генерация для Панели 3: Платы Мейджер Экспресс (ООО«Печатные платы» — без пробела, как в адресной книге)
+  // Генерация для Панели 3: Платы Мейджер Экспресс (ООО«Печатные платы» и по умолчанию "с/ч")
   Future<void> _generatePlatyMajorExpressScript() async {
     final firmName = _platyFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -903,7 +894,7 @@ if __name__ == "__main__":
         ? 'платы'
         : _platyDescController.text.trim();
     final pickupInfo = _platyInfoController.text.trim().isEmpty
-        ? 'УПД'
+        ? 'с/ч'
         : _platyInfoController.text.trim();
 
     try {
@@ -1953,7 +1944,7 @@ $finalCsv
           fileName: fileName,
         ),
       );
-      if (msgs.length == 2 && role == 'user') {
+      if (msgs.length == 1 && role == 'user') {
         _currentSession!.title =
             text.length > 20 ? '${text.substring(0, 20)}...' : text;
       }
@@ -2351,11 +2342,11 @@ $finalCsv
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: const Color(0xFF101726),
+        color: const Color(0xFF111A2B),
         border: Border(
-          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
         ),
       ),
       child: Column(
@@ -2370,16 +2361,16 @@ $finalCsv
               children: [
                 const Icon(
                   Icons.local_shipping_outlined,
-                  size: 18,
+                  size: 22,
                   color: Color(0xFF38BDF8),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 const Text(
                   'Сведение накладных (Посылка / Сводки)',
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white70,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
                 ),
                 const Spacer(),
@@ -2387,14 +2378,14 @@ $finalCsv
                   _isLogisticsExpanded
                       ? Icons.keyboard_arrow_up
                       : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: Colors.white54,
+                  size: 22,
+                  color: Colors.white70,
                 ),
               ],
             ),
           ),
           if (_isLogisticsExpanded) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -2430,7 +2421,7 @@ $finalCsv
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0284C7),
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
@@ -2470,11 +2461,11 @@ $finalCsv
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1422),
+        color: const Color(0xFF0E1626),
         border: Border(
-          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
         ),
       ),
       child: Column(
@@ -2492,16 +2483,16 @@ $finalCsv
               children: [
                 const Icon(
                   Icons.send_time_extension_outlined,
-                  size: 18,
+                  size: 22,
                   color: Colors.amberAccent,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 const Text(
                   'Электроконнект Мейджер Экспресс',
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white70,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
                 ),
                 const Spacer(),
@@ -2509,14 +2500,14 @@ $finalCsv
                   _isMajorExpanded
                       ? Icons.keyboard_arrow_up
                       : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: Colors.white54,
+                  size: 22,
+                  color: Colors.white70,
                 ),
               ],
             ),
           ),
           if (_isMajorExpanded) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             _miniInputField(
               controller: _majorFirmController,
               label: 'Фирма-получатель (например: ООО "Нейрософт")',
@@ -2579,7 +2570,7 @@ $finalCsv
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFD97706),
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
@@ -2620,11 +2611,11 @@ $finalCsv
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A101C),
+        color: const Color(0xFF0B1220),
         border: Border(
-          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
         ),
       ),
       child: Column(
@@ -2642,16 +2633,16 @@ $finalCsv
               children: [
                 const Icon(
                   Icons.developer_board_outlined,
-                  size: 18,
+                  size: 22,
                   color: Colors.purpleAccent,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 const Text(
                   'Платы Мейджер Экспресс',
                   style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white70,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
                 ),
                 const Spacer(),
@@ -2659,14 +2650,14 @@ $finalCsv
                   _isPlatyExpanded
                       ? Icons.keyboard_arrow_up
                       : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: Colors.white54,
+                  size: 22,
+                  color: Colors.white70,
                 ),
               ],
             ),
           ),
           if (_isPlatyExpanded) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             _miniInputField(
               controller: _platyFirmController,
               label: 'Фирма-получатель (например: ООО "Нейрософт")',
@@ -2729,7 +2720,7 @@ $finalCsv
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF7E22CE),
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      padding: const EdgeInsets.symmetric(vertical: 11),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),
