@@ -168,14 +168,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _chatInputController = TextEditingController();
 
   // Контроллеры для Панели 2: Электроконнект Мейджер Экспресс
-  final TextEditingController _majorFirmController = TextEditingController();
-  final TextEditingController _majorWeightController = TextEditingController(text: '1');
-  final TextEditingController _majorPlacesController = TextEditingController(text: '1');
+  late final TextEditingController _majorFirmController;
+  late final TextEditingController _majorDateController;
+  late final TextEditingController _majorTimeController;
+  late final TextEditingController _majorWeightController;
+  late final TextEditingController _majorPlacesController;
+  late final TextEditingController _majorDescController;
+  late final TextEditingController _majorInfoController;
 
   // Контроллеры для Панели 3: Платы Мейджер Экспресс
-  final TextEditingController _platyFirmController = TextEditingController();
-  final TextEditingController _platyWeightController = TextEditingController(text: '1');
-  final TextEditingController _platyPlacesController = TextEditingController(text: '1');
+  late final TextEditingController _platyFirmController;
+  late final TextEditingController _platyDateController;
+  late final TextEditingController _platyTimeController;
+  late final TextEditingController _platyWeightController;
+  late final TextEditingController _platyPlacesController;
+  late final TextEditingController _platyDescController;
+  late final TextEditingController _platyInfoController;
 
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
@@ -214,9 +222,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   String _selectedModel = 'qwen/qwen3.8-27b';
 
+  String _todayFormatted() {
+    final now = DateTime.now();
+    final d = now.day.toString().padLeft(2, '0');
+    final m = now.month.toString().padLeft(2, '0');
+    return '$d.$m.${now.year}';
+  }
+
   @override
   void initState() {
     super.initState();
+    final today = _todayFormatted();
+
+    _majorFirmController = TextEditingController();
+    _majorDateController = TextEditingController(text: today);
+    _majorTimeController = TextEditingController(text: '14:00-18:00');
+    _majorWeightController = TextEditingController(text: '1');
+    _majorPlacesController = TextEditingController(text: '1');
+    _majorDescController = TextEditingController(text: 'платы');
+    _majorInfoController = TextEditingController(text: 'УПД');
+
+    _platyFirmController = TextEditingController();
+    _platyDateController = TextEditingController(text: today);
+    _platyTimeController = TextEditingController(text: '14:00-18:00');
+    _platyWeightController = TextEditingController(text: '1');
+    _platyPlacesController = TextEditingController(text: '1');
+    _platyDescController = TextEditingController(text: 'платы');
+    _platyInfoController = TextEditingController(text: 'УПД');
+
     WidgetsBinding.instance.addObserver(this);
     _loadSettingsAndChats();
     _inputFocusNode.addListener(() {
@@ -230,12 +263,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _inputFocusNode.dispose();
+
     _majorFirmController.dispose();
+    _majorDateController.dispose();
+    _majorTimeController.dispose();
     _majorWeightController.dispose();
     _majorPlacesController.dispose();
+    _majorDescController.dispose();
+    _majorInfoController.dispose();
+
     _platyFirmController.dispose();
+    _platyDateController.dispose();
+    _platyTimeController.dispose();
     _platyWeightController.dispose();
     _platyPlacesController.dispose();
+    _platyDescController.dispose();
+    _platyInfoController.dispose();
+
     super.dispose();
   }
 
@@ -567,12 +611,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     required String password,
     String? shipperName,
     required String consigneeName,
+    required String pickupDate,
+    required String pickupTime,
     required String weight,
     required String places,
+    required String description,
+    required String pickupInfo,
   }) {
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
+    final safeDate = pickupDate.trim().isEmpty ? _todayFormatted() : pickupDate.trim();
+    final safeTimeFull = pickupTime.trim().isEmpty ? '14:00-18:00' : pickupTime.trim();
+    final timePrefixMatch = RegExp(r'^\d{1,2}').firstMatch(safeTimeFull);
+    final timeFilterCode = timePrefixMatch?.group(0) ?? '14';
+
     final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
     final safePlaces = places.trim().isEmpty ? '1' : places.trim();
+    final escapedDesc =
+        (description.trim().isEmpty ? 'платы' : description.trim()).replaceAll('"', '\\"');
+    final escapedInfo =
+        (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim()).replaceAll('"', '\\"');
 
     final shipperBlock = (shipperName != null && shipperName.isNotEmpty)
         ? '''
@@ -671,25 +728,24 @@ $shipperBlock
             page.wait_for_timeout(1000)
 
             # --- 3. Дата забора ---
-            today_str = datetime.date.today().strftime("%d.%m.%Y")
             date_inp = page.locator("#ctl00_MainPlaceHolder_o_deDateZabor_I")
             date_inp.click()
             date_inp.press("ControlOrMeta+A")
             date_inp.press("Backspace")
-            date_inp.fill(today_str)
+            date_inp.fill("$safeDate")
             page.keyboard.press("Enter")
             page.wait_for_timeout(500)
 
-            # --- 4. Время забора (14:00 - 18:00) ---
-            print("-> Устанавливаю интервал 14:00 - 18:00...")
+            # --- 4. Время забора ($safeTimeFull) ---
+            print("-> Устанавливаю интервал $safeTimeFull...")
             time_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlZakazTimeNum_I")
             time_inp.click()
             time_inp.press("ControlOrMeta+A")
             time_inp.press("Backspace")
-            time_inp.fill("14")
+            time_inp.fill("$timeFilterCode")
             page.wait_for_timeout(1500)
             try:
-                page.locator("[id*='ctl00_MainPlaceHolder_o_ddlZakazTimeNum_DDD'] td").filter(has_text="14").first.click(timeout=3000)
+                page.locator("[id*='ctl00_MainPlaceHolder_o_ddlZakazTimeNum_DDD'] td").filter(has_text="$timeFilterCode").first.click(timeout=3000)
             except Exception:
                 page.keyboard.press("ArrowDown")
                 page.keyboard.press("Enter")
@@ -699,17 +755,17 @@ $shipperBlock
             page.locator("#ctl00_MainPlaceHolder_o_tbWeight_I").fill("$safeWeight")
             page.locator("#ctl00_MainPlaceHolder_o_tbPlaceCount_I").fill("$safePlaces")
             
-            # Описание груза: "платы"
+            # Описание груза
             desc_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlDescription_I")
             desc_inp.click()
             desc_inp.press("ControlOrMeta+A")
             desc_inp.press("Backspace")
-            desc_inp.fill("платы")
+            desc_inp.fill("$escapedDesc")
             page.keyboard.press("Enter")
 
-            # Примечание (основание): "УПД"
+            # Информация для забора груза
             rem_inp = page.locator("#ctl00_MainPlaceHolder_o_tbRem")
-            rem_inp.fill("УПД")
+            rem_inp.fill("$escapedInfo")
 
             print("-> Все поля заполнены. Создаю заказ...")
             page.wait_for_timeout(1000)
@@ -760,12 +816,24 @@ if __name__ == "__main__":
       return;
     }
 
+    final pickupDate = _majorDateController.text.trim().isEmpty
+        ? _todayFormatted()
+        : _majorDateController.text.trim();
+    final pickupTime = _majorTimeController.text.trim().isEmpty
+        ? '14:00-18:00'
+        : _majorTimeController.text.trim();
     final weight = _majorWeightController.text.trim().isEmpty
         ? '1'
         : _majorWeightController.text.trim();
     final places = _majorPlacesController.text.trim().isEmpty
         ? '1'
         : _majorPlacesController.text.trim();
+    final desc = _majorDescController.text.trim().isEmpty
+        ? 'платы'
+        : _majorDescController.text.trim();
+    final pickupInfo = _majorInfoController.text.trim().isEmpty
+        ? 'УПД'
+        : _majorInfoController.text.trim();
 
     try {
       final scriptContent = _buildMajorExpressPythonScript(
@@ -773,8 +841,12 @@ if __name__ == "__main__":
         password: 'Y2501212e4e5d62',
         shipperName: 'ООО «ЭЛЕКТРОконнект» Москва',
         consigneeName: firmName,
+        pickupDate: pickupDate,
+        pickupTime: pickupTime,
         weight: weight,
         places: places,
+        description: desc,
+        pickupInfo: pickupInfo,
       );
 
       final dir = await getApplicationDocumentsDirectory();
@@ -798,7 +870,7 @@ if __name__ == "__main__":
 
       _appendMessage(
         'user',
-        '🚚 Электроконнект Мейджер Экспресс: $firmName ($weight кг, $places мест)',
+        '🚚 Электроконнект Мейджер Экспресс: $firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)',
       );
 
       _appendMessage('assistant', scriptContent);
@@ -811,7 +883,7 @@ if __name__ == "__main__":
     }
   }
 
-  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat — отправитель уже зафиксирован по умолчанию)
+  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat — отправитель зафиксирован по умолчанию)
   Future<void> _generatePlatyMajorExpressScript() async {
     final firmName = _platyFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -819,12 +891,24 @@ if __name__ == "__main__":
       return;
     }
 
+    final pickupDate = _platyDateController.text.trim().isEmpty
+        ? _todayFormatted()
+        : _platyDateController.text.trim();
+    final pickupTime = _platyTimeController.text.trim().isEmpty
+        ? '14:00-18:00'
+        : _platyTimeController.text.trim();
     final weight = _platyWeightController.text.trim().isEmpty
         ? '1'
         : _platyWeightController.text.trim();
     final places = _platyPlacesController.text.trim().isEmpty
         ? '1'
         : _platyPlacesController.text.trim();
+    final desc = _platyDescController.text.trim().isEmpty
+        ? 'платы'
+        : _platyDescController.text.trim();
+    final pickupInfo = _platyInfoController.text.trim().isEmpty
+        ? 'УПД'
+        : _platyInfoController.text.trim();
 
     try {
       final scriptContent = _buildMajorExpressPythonScript(
@@ -832,8 +916,12 @@ if __name__ == "__main__":
         password: 'Z250121e9a7a762',
         shipperName: null,
         consigneeName: firmName,
+        pickupDate: pickupDate,
+        pickupTime: pickupTime,
         weight: weight,
         places: places,
+        description: desc,
+        pickupInfo: pickupInfo,
       );
 
       final dir = await getApplicationDocumentsDirectory();
@@ -857,7 +945,7 @@ if __name__ == "__main__":
 
       _appendMessage(
         'user',
-        '📦 Платы Мейджер Экспресс: $firmName ($weight кг, $places мест)',
+        '📦 Платы Мейджер Экспресс: $firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)',
       );
 
       _appendMessage('assistant', scriptContent);
@@ -1887,6 +1975,32 @@ $finalCsv
     );
   }
 
+  Widget _miniInputField({
+    required TextEditingController controller,
+    required String label,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: keyboardType,
+      style: const TextStyle(fontSize: 13, color: Colors.white),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        labelStyle: const TextStyle(fontSize: 11, color: Colors.white54),
+        filled: true,
+        fillColor: const Color(0xFF182235),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 8,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final rawMessages = _currentSession?.messages as List? ?? [];
@@ -2373,6 +2487,9 @@ $finalCsv
             onTap: () {
               setState(() {
                 _isMajorExpanded = !_isMajorExpanded;
+                if (_isMajorExpanded && _majorDateController.text.trim().isEmpty) {
+                  _majorDateController.text = _todayFormatted();
+                }
               });
             },
             child: Row(
@@ -2403,72 +2520,60 @@ $finalCsv
             ),
           ),
           if (_isMajorExpanded) ...[
-            const SizedBox(height: 10),
-            TextField(
-              controller: _majorFirmController,
-              style: const TextStyle(fontSize: 14, color: Colors.white),
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Фирма-получатель (например: ООО "Нейрософт")',
-                labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                filled: true,
-                fillColor: const Color(0xFF182235),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 10,
-                ),
-              ),
-            ),
             const SizedBox(height: 8),
+            _miniInputField(
+              controller: _majorFirmController,
+              label: 'Фирма-получатель (например: ООО "Нейрософт")',
+            ),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _majorWeightController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      labelText: 'Вес (кг)',
-                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                      filled: true,
-                      fillColor: const Color(0xFF182235),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                    ),
+                  child: _miniInputField(
+                    controller: _majorDateController,
+                    label: 'Дата забора',
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
-                  child: TextField(
-                    controller: _majorPlacesController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      labelText: 'Мест',
-                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                      filled: true,
-                      fillColor: const Color(0xFF182235),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                    ),
+                  child: _miniInputField(
+                    controller: _majorTimeController,
+                    label: 'Время забора',
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: _miniInputField(
+                    controller: _majorWeightController,
+                    label: 'Вес, кг',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _miniInputField(
+                    controller: _majorPlacesController,
+                    label: 'Кол-во мест',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _miniInputField(
+                    controller: _majorDescController,
+                    label: 'Описание',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _miniInputField(
+              controller: _majorInfoController,
+              label: 'Информация для забора груза',
             ),
             const SizedBox(height: 8),
             Row(
@@ -2532,6 +2637,9 @@ $finalCsv
             onTap: () {
               setState(() {
                 _isPlatyExpanded = !_isPlatyExpanded;
+                if (_isPlatyExpanded && _platyDateController.text.trim().isEmpty) {
+                  _platyDateController.text = _todayFormatted();
+                }
               });
             },
             child: Row(
@@ -2562,72 +2670,60 @@ $finalCsv
             ),
           ),
           if (_isPlatyExpanded) ...[
-            const SizedBox(height: 10),
-            TextField(
-              controller: _platyFirmController,
-              style: const TextStyle(fontSize: 14, color: Colors.white),
-              decoration: InputDecoration(
-                isDense: true,
-                labelText: 'Фирма-получатель (например: ООО "Нейрософт")',
-                labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                filled: true,
-                fillColor: const Color(0xFF182235),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 10,
-                ),
-              ),
-            ),
             const SizedBox(height: 8),
+            _miniInputField(
+              controller: _platyFirmController,
+              label: 'Фирма-получатель (например: ООО "Нейрософт")',
+            ),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _platyWeightController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      labelText: 'Вес (кг)',
-                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                      filled: true,
-                      fillColor: const Color(0xFF182235),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                    ),
+                  child: _miniInputField(
+                    controller: _platyDateController,
+                    label: 'Дата забора',
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 Expanded(
-                  child: TextField(
-                    controller: _platyPlacesController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(fontSize: 14, color: Colors.white),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      labelText: 'Мест',
-                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
-                      filled: true,
-                      fillColor: const Color(0xFF182235),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                    ),
+                  child: _miniInputField(
+                    controller: _platyTimeController,
+                    label: 'Время забора',
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: _miniInputField(
+                    controller: _platyWeightController,
+                    label: 'Вес, кг',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _miniInputField(
+                    controller: _platyPlacesController,
+                    label: 'Кол-во мест',
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _miniInputField(
+                    controller: _platyDescController,
+                    label: 'Описание',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            _miniInputField(
+              controller: _platyInfoController,
+              label: 'Информация для забора груза',
             ),
             const SizedBox(height: 8),
             Row(
