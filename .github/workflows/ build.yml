@@ -34,9 +34,10 @@ jobs:
           sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 21/' android/app/build.gradle
 
-      - name: Add Camera and Mic Permissions to AndroidManifest
+      - name: Add Camera and Mic Permissions and App Name to AndroidManifest
         run: |
           sed -i '/<application/i \    <uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.CAMERA"/>\n    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="[^"]*"/android:label="Печатные платы"/' android/app/src/main/AndroidManifest.xml
 
       - name: Install dependencies
         run: flutter pub get
