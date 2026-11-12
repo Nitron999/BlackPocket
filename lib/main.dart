@@ -139,15 +139,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _lastCsvResult;
 
   final _availableModels = [
-    'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
     'qwen/qwen3.8-27b',
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
+    'meta-llama/llama-4-scout-17b-16e-instruct',
     'llama-3.2-11b-vision-preview',
   ];
 
-  String _selectedModel = 'openai/gpt-oss-120b';
+  String _selectedModel = 'openai/gpt-oss-20b';
 
   static const String _logisticsSystemPrompt = '''
 Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
@@ -235,7 +234,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
+    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-20b';
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
 
     setState(() {
@@ -549,17 +548,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       String finalPromptForApi = displayPrompt;
 
       if (activeDoc != null && activeDoc.existsSync()) {
-        // Ограничиваем размер файла до 13000 символов (~4000 токенов), чтобы не упираться в лимит Groq 7000 ITPM
         final docContent = await _readAnyFileSafe(activeDoc, maxRows: 120, maxChars: 13000);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
+      }
+
+      // Если прикреплено фото, а выбрана чисто текстовая модель — автоматически переключаем запрос на vision-модель
+      String modelToUse = _selectedModel;
+      if (activeImage != null &&
+          !modelToUse.contains('vision') &&
+          !modelToUse.contains('llama-4')) {
+        modelToUse = 'llama-3.2-11b-vision-preview';
       }
 
       final historyList = _currentSession?.messages as List? ?? [];
 
       final responseText = await _callGroqWithHistory(
         apiKey: apiKey,
-        model: _selectedModel,
+        model: modelToUse,
         systemInstruction:
             'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические, логистические и бытовые темы на русском языке.',
         messages: historyList,
@@ -602,13 +608,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      // 1. Читаем файл Посылки (обычно 5–50 строк)
       final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 100, maxChars: 6000);
-
-      // 2. Извлекаем из Посылки ключевые токены (номера PS и номера счетов) для умной фильтрации огромных сводок
       final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
 
-      // 3. Читаем из Сводки ПП только релевантные строки (сжимает 20000 токенов до ~1500!)
       String svodkaPpContent = '';
       final ppFile = _svodkaPpFile;
       if (ppFile != null && ppFile.existsSync()) {
@@ -620,7 +622,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         );
       }
 
-      // 4. Читаем из Сводки Филиала только релевантные строки
       String svodkaFilialContent = '';
       final filFile = _svodkaFilialFile;
       if (filFile != null && filFile.existsSync()) {
@@ -669,7 +670,6 @@ $svodkaFilialContent
     }
   }
 
-  // Извлекаем все коды PS (например, PS-1234, 12345) и номера счетов из файла Посылка
   Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
     final tokens = <String>{};
     final lines = posylkaCsv.split('\n');
@@ -678,10 +678,8 @@ $svodkaFilialContent
       for (final rawPart in parts) {
         final clean = rawPart.trim();
         if (clean.length >= 3) {
-          // Ищем номера PS или числовые коды счетов/позиций
           if (RegExp(r'^[A-Za-zА-Яа-я0-9\-/]+$').hasMatch(clean)) {
             tokens.add(clean.toLowerCase());
-            // Если есть формат типа PS-12345 или 1234/26, добавляем и цифровую часть
             final digits = RegExp(r'\d{3,}').allMatches(clean).map((m) => m.group(0)!);
             tokens.addAll(digits);
           }
@@ -776,8 +774,6 @@ $svodkaFilialContent
       }
 
       final sb = StringBuffer();
-
-      // Читаем только первый основной лист (или первые два, если их несколько), чтобы не тянуть мусорные справочники
       final sheetsToRead = sheetFiles.take(2);
 
       for (final sheetFile in sheetsToRead) {
@@ -802,7 +798,6 @@ $svodkaFilialContent
           for (final c in cells) {
             final ref = c.getAttribute('r') ?? '';
             final colIdx = _columnLettersToIndex(ref);
-            // Ограничиваем ширину таблицы первыми 20 колонками, чтобы отсечь пустое форматирование справа
             if (colIdx > 20) continue;
             if (colIdx > maxColIdx) maxColIdx = colIdx;
 
@@ -835,7 +830,6 @@ $svodkaFilialContent
             rowValues.add(v);
           }
 
-          // Убираем висячие пустые разделители в конце строки
           while (rowValues.isNotEmpty && rowValues.last.isEmpty) {
             rowValues.removeLast();
           }
@@ -847,11 +841,9 @@ $svodkaFilialContent
 
         if (parsedRows.isEmpty) continue;
 
-        // Всегда пишем заголовок
         sb.writeln(parsedRows.first);
 
         if (filterTokens != null && filterTokens.isNotEmpty) {
-          // Умная фильтрация: оставляем только строки, где встречаются PS или счета из Посылки
           int matchedCount = 0;
           for (int i = 1; i < parsedRows.length; i++) {
             final rowLower = parsedRows[i].toLowerCase();
@@ -868,7 +860,6 @@ $svodkaFilialContent
               if (matchedCount >= maxRows) break;
             }
           }
-          // Если по фильтрам ничего не нашлось, берем последние 40 строк как фоллбек
           if (matchedCount == 0) {
             final fallbackStart = parsedRows.length > 41 ? (parsedRows.length - 40) : 1;
             for (int i = fallbackStart; i < parsedRows.length; i++) {
@@ -914,7 +905,6 @@ $svodkaFilialContent
     formattedMessages.add({'role': 'system', 'content': systemInstruction});
 
     var msgList = messages as List;
-    // Берем не более 8 последних сообщений истории, чтобы не перегружать лимит токенов
     final startMsgIdx = msgList.length > 8 ? (msgList.length - 8) : 0;
 
     for (int i = startMsgIdx; i < msgList.length; i++) {
