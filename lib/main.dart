@@ -613,6 +613,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     required String places,
     required String description,
     required String pickupInfo,
+    required String appExeDir,
   }) {
     final escapedShipper = shipperName.replaceAll("'", "\\'");
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
@@ -627,18 +628,35 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         (description.trim().isEmpty ? 'платы' : description.trim()).replaceAll('"', '\\"');
     final escapedInfo =
         (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim()).replaceAll('"', '\\"');
+    final escapedAppDir = appExeDir.replaceAll('\\', '\\\\');
 
     return '''import os
 import sys
 import datetime
 import time
 import tempfile
-from pathlib import Path
+import subprocess
 from urllib.parse import urlparse, parse_qs, urlencode
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
 PASSWORD = "$password"
+APP_DIR = "$escapedAppDir"
+
+def find_sumatra_pdf():
+    candidates = [
+        os.path.join(APP_DIR, "SumatraPDF.exe"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "SumatraPDF.exe"),
+        r"C:\\SumatraPDF.exe",
+        r"C:\\SumatraPDF\\SumatraPDF.exe",
+        r"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe",
+        r"C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe",
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "SumatraPDF", "SumatraPDF.exe"),
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
 
 def main():
     try:
@@ -649,8 +667,7 @@ def main():
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
-                    "--no-sandbox",
-                    "--kiosk-printing"
+                    "--no-sandbox"
                 ]
             )
             context = browser.new_context(
@@ -820,32 +837,30 @@ def main():
                 except Exception as e_dl:
                     print(f"-> Ошибка загрузки PDF по data: {e_dl}")
 
-            # --- 7. Открываем чистый локальный PDF в новой вкладке этого же браузера и печатаем ---
+            # --- 7. Железная прямая печать через SumatraPDF.exe ---
             if pdf_bytes_holder:
                 tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
                 with open(tmp_pdf, "wb") as f_pdf:
                     f_pdf.write(pdf_bytes_holder[-1])
                 print(f"-> Чистый PDF сохранен: {tmp_pdf}")
 
-                try:
-                    pdf_uri = Path(tmp_pdf).as_uri()
-                    print("-> Открываю PDF в чистой вкладке и отправляю на принтер по умолчанию...")
-                    pdf_page = context.new_page()
-                    pdf_page.goto(pdf_uri)
-                    pdf_page.wait_for_timeout(2000)
-                    pdf_page.bring_to_front()
-                    pdf_page.mouse.click(500, 400)
-                    pdf_page.wait_for_timeout(400)
-                    pdf_page.keyboard.press("Control+p")
-                    pdf_page.wait_for_timeout(2000)
-                    print("-> Задание отправлено на печать в 100% размере A4!")
-                except Exception as pe:
-                    print(f"-> Ошибка печати ({pe}), распечатай вручную из открытого окна.")
+                sumatra_exe = find_sumatra_pdf()
+                if sumatra_exe:
+                    print(f"-> Печатаю через {sumatra_exe}...")
+                    subprocess.run([sumatra_exe, "-print-to-default", "-silent", tmp_pdf], check=False)
+                    print("-> ГОТОВО! Накладная мгновенно отправлена на принтер по умолчанию!")
+                    page.wait_for_timeout(2000)
+                    browser.close()
+                    return
+                else:
+                    print("-> [ВНИМАНИЕ] SumatraPDF.exe не найден рядом с программой!")
+                    print(f"-> Положи SumatraPDF.exe в папку: {APP_DIR}")
+                    if os.name == "nt":
+                        os.startfile(tmp_pdf)
             else:
-                print("-> Не удалось перехватить PDF автоматически, распечатай вручную из окна браузера.")
+                print("-> Не удалось скачать PDF автоматически, распечатай вручную из окна браузера.")
 
-            print("\\nГОТОВО! Проверяй принтер.")
-            input("Когда накладная распечатается, нажми ENTER в этой консоли, чтобы закрыть браузер...")
+            input("Нажми ENTER в этой консоли, чтобы закрыть браузер...")
             browser.close()
 
     except Exception as e:
@@ -902,6 +917,7 @@ if __name__ == "__main__":
         : _majorInfoController.text.trim();
 
     try {
+      final appExeDir = File(Platform.resolvedExecutable).parent.path;
       final scriptContent = _buildMajorExpressPythonScript(
         login: 'Electroconnect',
         password: 'Y2501212e4e5d62',
@@ -913,6 +929,7 @@ if __name__ == "__main__":
         places: places,
         description: desc,
         pickupInfo: pickupInfo,
+        appExeDir: appExeDir,
       );
 
       final dir = await getApplicationDocumentsDirectory();
@@ -978,6 +995,7 @@ if __name__ == "__main__":
         : _platyInfoController.text.trim();
 
     try {
+      final appExeDir = File(Platform.resolvedExecutable).parent.path;
       final scriptContent = _buildMajorExpressPythonScript(
         login: 'Palat',
         password: 'Z250121e9a7a762',
@@ -989,6 +1007,7 @@ if __name__ == "__main__":
         places: places,
         description: desc,
         pickupInfo: pickupInfo,
+        appExeDir: appExeDir,
       );
 
       final dir = await getApplicationDocumentsDirectory();
