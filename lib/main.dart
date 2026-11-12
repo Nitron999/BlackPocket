@@ -11,6 +11,7 @@ import 'package:excel/excel.dart' as ex;
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -535,7 +536,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================================
-  // МОДУЛЬ 2: ЭЛЕКТРОКОННЕКТ МЕЙДЖЕР ЭКСПРЕСС (ГЕНЕРАЦИЯ .PY ДЛЯ WINDOWS)
+  // МОДУЛЬ 2: ЭЛЕКТРОКОННЕКТ МЕЙДЖЕР ЭКСПРЕСС (ЧИСТЫЙ КОД .PY)
   // =========================================================================
 
   String _sanitizeFilename(String raw) {
@@ -757,42 +758,45 @@ if __name__ == "__main__":
       final f = File(filePath);
       await f.writeAsString(scriptContent, encoding: utf8);
 
+      try {
+        final downloadDir = Directory('/storage/emulated/0/Download');
+        if (downloadDir.existsSync()) {
+          final publicFile = File('${downloadDir.path}/$safeFileName');
+          await publicFile.writeAsString(scriptContent, encoding: utf8);
+        }
+      } catch (_) {}
+
       setState(() {
         _lastGeneratedMajorScriptPath = filePath;
       });
 
       _appendMessage(
         'user',
-        '🚚 Электроконнект Мейджер Экспресс: сформировать скрипт для «$firmName» (вес: $weight кг, мест: $places)',
+        '🚚 Электроконнект Мейджер Экспресс: $firmName ($weight кг, $places мест)',
       );
 
-      final botReply = '''
-✅ Скрипт Major Express для Windows готов!
-• Отправитель: ООО «ЭЛЕКТРОконнект» Москва
-• Получатель: $firmName
-• Параметры: вес $weight кг, мест $places, «платы», «УПД»
-• Файл: $safeFileName
-
-Нажми зелёную кнопку справа от «СФОРМИРОВАТЬ СКРИПТ», чтобы открыть/отправить файл `.py` на компьютер, или скопируй код ниже:
-
-```python
-$scriptContent
-```''';
-
-      _appendMessage('assistant', botReply);
+      // В чат выводим ТОЛЬКО чистый код без лишних шапок и кавычек
+      _appendMessage('assistant', scriptContent);
+      _showSnackbar('Файл $safeFileName сформирован!');
       await _speak('Скрипт Мейджер Экспресс для фирмы $firmName готов, Шурик!');
+
+      await _shareLastMajorScript();
     } catch (e) {
       _showSnackbar('Ошибка создания скрипта: $e');
     }
   }
 
-  Future<void> _openLastMajorScript() async {
+  Future<void> _shareLastMajorScript() async {
     final path = _lastGeneratedMajorScriptPath;
     if (path == null || !File(path).existsSync()) {
       _showSnackbar('Сначала сформируй скрипт!');
       return;
     }
-    await OpenFilex.open(path);
+    final fileName = path.split(Platform.pathSeparator).last;
+    await Share.shareXFiles(
+      [XFile(path, mimeType: 'text/x-python')],
+      text: fileName,
+    );
   }
 
   // =========================================================================
@@ -2414,8 +2418,8 @@ $finalCsv
                       foregroundColor: Colors.white,
                     ),
                     icon: const Icon(Icons.share),
-                    tooltip: 'Открыть / Отправить файл .py',
-                    onPressed: _openLastMajorScript,
+                    tooltip: 'Поделиться / Сохранить .py',
+                    onPressed: _shareLastMajorScript,
                   ),
                 ]
               ],
