@@ -872,9 +872,9 @@ if __name__ == "__main__":
     if (Platform.isWindows) {
       try {
         await Process.start(
-          'cmd',
-          ['/c', 'start', '""', 'cmd', '/k', 'python "$filePath"'],
-          runInShell: true,
+          'python',
+          [filePath],
+          mode: ProcessStartMode.detached,
         );
         _showSnackbar('Запускаю браузер Major Express ($safeFileName)...');
       } catch (e) {
