@@ -139,14 +139,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _lastCsvResult;
 
   final _availableModels = [
-    'openai/gpt-oss-20b',
     'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b',
     'meta-llama/llama-4-scout-17b-16e-instruct',
     'llama-3.2-11b-vision-preview',
   ];
 
-  String _selectedModel = 'openai/gpt-oss-20b';
+  String _selectedModel = 'openai/gpt-oss-120b';
 
   static const String _logisticsSystemPrompt = '''
 Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
@@ -234,7 +234,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-20b';
+    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
 
     setState(() {
@@ -270,7 +270,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_sessions.isEmpty) {
       _createNewChat(
         initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай файлы через скрепку или разворачивай сверху панель логистики 📦.',
+            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦.',
       );
     } else {
       setState(() {
@@ -546,19 +546,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     try {
       String finalPromptForApi = displayPrompt;
+      String modelToUse = _selectedModel;
 
-      if (activeDoc != null && activeDoc.existsSync()) {
+      // Авто-роутинг моделей под тип контента:
+      if (activeImage != null) {
+        // 1. Для картинок — vision-модель
+        if (!modelToUse.contains('vision') && !modelToUse.contains('llama-4')) {
+          modelToUse = 'llama-3.2-11b-vision-preview';
+        }
+      } else if (activeDoc != null && activeDoc.existsSync()) {
+        // 2. Для документов/таблиц через скрепку — экономичная и быстрая модель с высоким лимитом
+        modelToUse = 'openai/gpt-oss-20b';
         final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 7500);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
-
-      String modelToUse = _selectedModel;
-      if (activeImage != null &&
-          !modelToUse.contains('vision') &&
-          !modelToUse.contains('llama-4')) {
-        modelToUse = 'llama-3.2-11b-vision-preview';
-      }
+      // 3. Для обычного текста остается выбранная в настройках модель (_selectedModel)
 
       final historyList = _currentSession?.messages as List? ?? [];
 
@@ -600,10 +603,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _lastCsvResult = null;
     });
 
+    // Авто-роутинг для логистики: всегда используем оптимальную по токенам и скорости модель
+    const String logisticsModel = 'openai/gpt-oss-20b';
+
     final fileName = posFile.path.split(Platform.pathSeparator).last;
     _appendMessage(
       'user',
-      '📦 Запуск сведения накладной через Groq ($_selectedModel): $fileName',
+      '📦 Запуск сведения накладной (автовыбор: $logisticsModel): $fileName',
     );
 
     try {
@@ -649,7 +655,7 @@ $svodkaFilialContent
 
       final response = await _callGroqRaw(
         apiKey: apiKey,
-        model: _selectedModel,
+        model: logisticsModel,
         systemInstruction: _logisticsSystemPrompt,
         prompt: promptText,
         temperature: 0.0,
@@ -891,7 +897,6 @@ $svodkaFilialContent
     if (message == null) return '';
     final content = message['content']?.toString().trim() ?? '';
     if (content.isNotEmpty) return content;
-    // Фоллбек для рассуждающих моделей (gpt-oss / qwen), если они положили ответ в reasoning
     final reasoning = message['reasoning']?.toString().trim() ?? '';
     return reasoning;
   }
@@ -1016,7 +1021,6 @@ $svodkaFilialContent
       ]
     };
 
-    // Снижаем расход токенов на внутренние размышления для gpt-oss, чтобы ответ не обрезался
     if (model.contains('gpt-oss')) {
       payload['reasoning_effort'] = 'low';
     }
@@ -1823,7 +1827,7 @@ $svodkaFilialContent
                 ),
                 const SizedBox(height: 15),
                 const Text(
-                  'Выбор нейросети:',
+                  'Модель для обычного чата:',
                   style: TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 const SizedBox(height: 5),
