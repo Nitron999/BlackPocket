@@ -633,7 +633,8 @@ import sys
 import datetime
 import time
 import tempfile
-from urllib.parse import urljoin
+import subprocess
+from urllib.parse import urlparse, parse_qs, urlencode, urljoin
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
@@ -784,41 +785,78 @@ def main():
             print("-> Жду подготовку PDF на сервере...")
             page.wait_for_timeout(3000)
 
+            # Перехватываем чистый PDF по сети во время открытия страницы печати
+            pdf_bytes_holder = []
+            def handle_response(response):
+                try:
+                    ct = response.headers.get("content-type", "").lower()
+                    if "application/pdf" in ct or "invoicereportviewer.ashx" in response.url.lower():
+                        body = response.body()
+                        if body and body.startswith(b"%PDF"):
+                            pdf_bytes_holder.append(body)
+                except Exception:
+                    pass
+
+            page.on("response", handle_response)
+
             print("-> Открываю страницу печати накладной...")
             page.get_by_role("button", name="Печать", exact=True).click()
             page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(3000)
 
-            # --- 7. Скачиваем PDF напрямую через сессию и отправляем на принтер Windows ---
-            print("-> Скачиваю чистый PDF накладной для прямой печати...")
-            try:
-                pdf_src = page.evaluate("""() => {
-                    const el = document.querySelector('embed[src], iframe[src], object[data]');
-                    if (!el) return '';
-                    return el.getAttribute('src') || el.getAttribute('data') || '';
-                }""")
-                if pdf_src:
-                    full_pdf_url = urljoin(page.url, pdf_src)
-                    resp = context.request.get(full_pdf_url)
-                    if resp.ok:
-                        tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
-                        with open(tmp_pdf, "wb") as f_pdf:
-                            f_pdf.write(resp.body())
-                        print(f"-> PDF сохранен: {tmp_pdf}")
-                        if os.name == "nt":
-                            os.startfile(tmp_pdf, "print")
-                            print("-> Отправлено на системный принтер Windows!")
+            # Если перехватчик не успел — вытаскиваем чистый параметр data= (без &returnUrl) и качаем PDF
+            if not pdf_bytes_holder:
+                try:
+                    parsed = urlparse(page.url)
+                    qs = parse_qs(parsed.query)
+                    if "data" in qs and qs["data"]:
+                        clean_query = urlencode({"data": qs["data"][0]})
+                        direct_url = f"https://lke.major-express.ru/Handlers/InvoiceReportViewer.ashx?{clean_query}"
+                        print("-> Скачиваю PDF напрямую по параметру data...")
+                        resp = context.request.get(direct_url)
+                        if resp.ok and resp.body().startswith(b"%PDF"):
+                            pdf_bytes_holder.append(resp.body())
+                except Exception as e_dl:
+                    print(f"-> Ошибка загрузки PDF по data: {e_dl}")
+
+            # --- 7. Отправляем сохраненный PDF на принтер Windows в 100% размере A4 ---
+            if pdf_bytes_holder:
+                tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
+                with open(tmp_pdf, "wb") as f_pdf:
+                    f_pdf.write(pdf_bytes_holder[-1])
+                print(f"-> Чистый PDF сохранен: {tmp_pdf}")
+
+                if os.name == "nt":
+                    printed = False
+                    # Способ А: системная ассоциация print (если стоит SumatraPDF / Adobe Reader / Foxit)
+                    try:
+                        os.startfile(tmp_pdf, "print")
+                        printed = True
+                        print("-> Отправлено на принтер через системную печать Windows!")
+                    except Exception:
+                        pass
+
+                    # Способ Б: тихая печать через Chrome или Edge с --kiosk-printing
+                    if not printed:
+                        browsers = [
+                            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                        ]
+                        b_exe = next((bp for bp in browsers if os.path.exists(bp)), None)
+                        if b_exe:
+                            pdf_uri = "file:///" + tmp_pdf.replace("\\", "/")
+                            subprocess.Popen([b_exe, "--kiosk-printing", pdf_uri])
+                            print(f"-> Запущена автопечать через {os.path.basename(b_exe)}!")
                         else:
-                            print("-> Прямая печать доступна только на Windows.")
-                    else:
-                        print(f"-> Сервер не отдал PDF (код {resp.status}), распечатай вручную.")
-                else:
-                    print("-> Ссылка на PDF не найдена, распечатай вручную из окна браузера.")
-            except Exception as pe:
-                print(f"-> Ошибка прямой печати ({pe}), распечатай вручную из окна браузера.")
+                            os.startfile(tmp_pdf)
+                            print("-> PDF открыт на экране, нажми Ctrl+P.")
+            else:
+                print("-> Не удалось перехватить PDF автоматически, распечатай вручную из окна браузера.")
 
             print("\\nГОТОВО! Проверяй принтер.")
-            input("Когда закончишь, нажми ENTER в этой консоли, чтобы закрыть браузер...")
+            input("Когда накладная распечатается, нажми ENTER в этой консоли, чтобы закрыть браузер...")
             browser.close()
 
     except Exception as e:
