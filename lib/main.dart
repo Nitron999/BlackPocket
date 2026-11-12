@@ -102,10 +102,11 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _inputFocusNode = FocusNode();
 
   static const MethodChannel _ttsChannel = MethodChannel('blackpocket/native_tts');
 
@@ -114,6 +115,7 @@ class _MainScreenState extends State<MainScreen> {
   String _apiStatus = 'Ключ не настроен';
   bool _isKeyValidating = false;
   bool? _isKeyWorking;
+  bool _isVoiceEnabled = false; // Звук по умолчанию отключен, включается кнопкой вверху
 
   File? _posylkaFile;
   File? _svodkaPpFile;
@@ -169,12 +171,54 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadSettingsAndChats();
+    _inputFocusNode.addListener(() {
+      if (_inputFocusNode.hasFocus) {
+        _scrollToBottom(delayMs: 300);
+      }
+    });
   }
 
-  Future<void> _speak(String text) async {
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _inputFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    // При выезде экранной клавиатуры поджимаем чат вверх
+    final bottomInset = WidgetsBinding.instance.window.viewInsets.bottom;
+    if (bottomInset > 0) {
+      _scrollToBottom(delayMs: 150);
+    }
+  }
+
+  void _scrollToBottom({int delayMs = 100}) {
+    Future.delayed(Duration(milliseconds: delayMs), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _speak(String text, {bool force = false}) async {
+    if (!_isVoiceEnabled && !force) return;
     try {
       await _ttsChannel.invokeMethod('speak', {'text': text});
+    } catch (_) {}
+  }
+
+  Future<void> _stopVoice() async {
+    try {
+      await _ttsChannel.invokeMethod('stop');
     } catch (_) {}
   }
 
@@ -182,6 +226,11 @@ class _MainScreenState extends State<MainScreen> {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
     final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
+    final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
+
+    setState(() {
+      _isVoiceEnabled = savedVoice;
+    });
 
     if (key.isNotEmpty) {
       _apiKeyController.text = key;
@@ -460,7 +509,7 @@ class _MainScreenState extends State<MainScreen> {
       );
 
       _appendMessage('assistant', responseText);
-      await _speak(responseText);
+      await _speak(responseText); // Сработает, только если включен тумблер звука
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
     } finally {
@@ -544,46 +593,76 @@ $svodkaFilialContent
     }
   }
 
-  // Защищенный метод безопасного чтения Excel без падений на null ячейках
+  // Бронебойный парсер без вызова maxRows/maxColumns (исключает сбой Null Check)
   Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
     try {
       final path = file.path.toLowerCase();
       if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
         final bytes = await file.readAsBytes();
-        final excel = ex.Excel.decodeBytes(bytes);
-        if (excel.tables.isEmpty) return '';
+        
+        ex.Excel? excel;
+        try {
+          excel = ex.Excel.decodeBytes(bytes);
+        } catch (decodeErr) {
+          throw Exception('Файл поврежден или имеет нестандартный формат Excel: $decodeErr');
+        }
+
+        if (excel == null || excel.tables.isEmpty) {
+          return '';
+        }
 
         final sb = StringBuffer();
+
         for (final entry in excel.tables.entries) {
           final tableName = entry.key;
           final sheet = entry.value;
 
           sb.writeln('Лист: $tableName');
-          final maxR = sheet.maxRows;
-          final maxC = sheet.maxColumns;
-          if (maxR <= 0 || maxC <= 0) continue;
+          
+          final rows = sheet.rows;
+          if (rows.isEmpty) continue;
 
-          // Безопасное чтение заголовка (строка 0)
-          var headerList = [];
-          for (int c = 0; c < maxC; c++) {
-            var cell = sheet.cell(ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: 0));
-            headerList.add(cell.value?.toString().replaceAll(';', ' ') ?? '');
-          }
+          // Безопасное извлечение заголовка
+          List<String> headerList = [];
+          try {
+            final firstRow = rows.first;
+            for (final cell in firstRow) {
+              if (cell == null || cell.value == null) {
+                headerList.add('');
+              } else {
+                headerList.add(cell.value.toString().replaceAll(';', ' ').trim());
+              }
+            }
+          } catch (_) {}
           sb.writeln(headerList.join(';'));
 
-          // Безопасный обход последних maxRows строк
-          final startRow = maxR > (maxRows + 1) ? (maxR - maxRows) : 1;
-          for (int r = startRow; r < maxR; r++) {
-            var rowValues = [];
-            bool hasData = false;
-            for (int c = 0; c < maxC; c++) {
-              var cell = sheet.cell(ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r));
-              var val = cell.value?.toString().replaceAll(';', ' ').trim() ?? '';
-              if (val.isNotEmpty) hasData = true;
-              rowValues.add(val);
-            }
-            if (hasData) {
-              sb.writeln(rowValues.join(';'));
+          // Безопасное извлечение строк с конца таблицы
+          final totalRows = rows.length;
+          final startIdx = totalRows > (maxRows + 1) ? (totalRows - maxRows) : 1;
+
+          for (int r = startIdx; r < totalRows; r++) {
+            try {
+              final row = rows[r];
+              if (row.isEmpty) continue;
+
+              List<String> rowValues = [];
+              bool hasData = false;
+
+              for (final cell in row) {
+                if (cell == null || cell.value == null) {
+                  rowValues.add('');
+                } else {
+                  final str = cell.value.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim();
+                  if (str.isNotEmpty) hasData = true;
+                  rowValues.add(str);
+                }
+              }
+
+              if (hasData) {
+                sb.writeln(rowValues.join(';'));
+              }
+            } catch (_) {
+              continue;
             }
           }
         }
@@ -805,15 +884,7 @@ $svodkaFilialContent
       }
     });
     _saveChats();
-    Future.delayed(const Duration(milliseconds: 100), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+    _scrollToBottom();
   }
 
   void _showSnackbar(String text) {
@@ -871,6 +942,26 @@ $svodkaFilialContent
           ],
         ),
         actions: [
+          // Тумблер включения/выключения звука в AppBar
+          IconButton(
+            icon: Icon(
+              _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
+              color: _isVoiceEnabled ? const Color(0xFF38BDF8) : Colors.white38,
+            ),
+            tooltip: _isVoiceEnabled ? 'Звук включен' : 'Звук выключен',
+            onPressed: () async {
+              final newVal = !_isVoiceEnabled;
+              if (!newVal) {
+                await _stopVoice();
+              }
+              setState(() {
+                _isVoiceEnabled = newVal;
+              });
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setBool('is_voice_enabled', newVal);
+              _showSnackbar(newVal ? 'Автоозвучка включена' : 'Автоозвучка выключена');
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
             tooltip: 'История чатов',
@@ -972,7 +1063,7 @@ $svodkaFilialContent
                           Align(
                             alignment: Alignment.bottomRight,
                             child: InkWell(
-                              onTap: () => _speak(text),
+                              onTap: () => _speak(text, force: true), // Принудительно зачитать при ручном нажатии на динамик
                               child: const Padding(
                                 padding: EdgeInsets.only(top: 8.0),
                                 child: Icon(
@@ -1313,6 +1404,7 @@ $svodkaFilialContent
                       ),
                     ),
                     child: TextField(
+                      focusNode: _inputFocusNode,
                       controller: _chatInputController,
                       maxLines: 4,
                       minLines: 1,
