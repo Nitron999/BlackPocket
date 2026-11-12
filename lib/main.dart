@@ -139,43 +139,42 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String? _lastCsvResult;
 
   final _availableModels = [
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'qwen/qwen3.8-27b',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'qwen/qwen3.8-27b',
-    'meta-llama/llama-4-scout-17b-16e-instruct',
     'llama-3.2-11b-vision-preview',
   ];
 
-  String _selectedModel = 'openai/gpt-oss-120b';
+  String _selectedModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
   static const String _logisticsSystemPrompt = '''
-Ты — промышленный парсер и калькулятор логистических накладных для ООО «Печатные платы» (Москва) и ООО «ЭЛЕКТРОконнект» (Филиал Новосибирск).
-Температура: 0.0. Без домыслов и гаданий.
+Помоги сопоставить данные из трех рабочих таблиц складского учета (ООО «Печатные платы» и филиал «ЭЛЕКТРОконнект») и оформи результат в виде CSV-таблицы.
 
-СТРУКТУРА CSV (13 колонок через точку с запятой ';'):
+Формат итогового CSV (13 колонок, разделитель точка с запятой ';'):
 Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
 
-ПРАВИЛА:
-1. ГОЛОВА (ООО «Печатные платы»):
-- Поиск по PS в сводке ПП. Заполнить фирму, если не указана.
-- Счет пп: московский счет с ведущими нулями (0654, 0644, 0611).
-- По счету: ПОЛНЫЙ тираж из сводки ПП (колонка «количество», столбец 4). Не дублировать «Получено»!
-- Этикетка: всегда "ОТК".
-- Доставка: "ДМ", "СДЭК", "К", "Самовывоз".
+Правила заполнения:
+1. Блок «Голова» (ООО «Печатные платы»):
+- Найди позицию по артикулу PS в сводке ПП и заполни название фирмы, если оно пустое.
+- Счет пп: укажи московский счет с ведущими нулями (например: 0654, 0644, 0611).
+- По счету: возьми полный тираж из сводки ПП (колонка «количество», 4-й столбец). Не дублируй значение из «Получено».
+- Этикетка: запиши "ОТК".
+- Доставка: "ДМ", "СДЭК", "К" или "Самовывоз".
 
-2. РАЗДЕЛИТЕЛЬ:
+2. Разделительная строка между блоками:
 филиал;;;;;;;;;;;;
 
-3. ФИЛИАЛ (ООО «ЭЛЕКТРОконнект»):
-- Счет пп: СТРОГО ПУСТО.
-- Этикетка: СТРОГО ПУСТО (ОТК нет!).
-- По счету: найти в сводке филиала по связке [Сч/Н + PS] значение из столбца 7 («кол-во»). Это полный заказ (например, Кортэк = 50, Промприбор = 5000).
-- Доставка: Нейрософт и Кузьминский -> "К"; АТБ-Электроника -> "ДМ"; СДЭК -> "СДЭК"; Самовывоз -> "Самовывоз".
+3. Блок «Филиал» (ООО «ЭЛЕКТРОконнект»):
+- Счет пп: оставь ячейку пустой.
+- Этикетка: оставь ячейку пустой (без ОТК).
+- По счету: найди в сводке филиала по связке [Сч/Н + PS] значение из 7-го столбца («кол-во»). Это полный объем заказа (например: Кортэк = 50, Промприбор = 5000).
+- Доставка: для Нейрософт и Кузьминский укажи "К"; для АТБ-Электроника укажи "ДМ"; для остальных — "СДЭК" или "Самовывоз" согласно таблице.
 
-4. СОРТИРОВКА ВНУТРИ КАЖДОГО БЛОКА:
-ДМ -> СДЭК -> К -> Самовывоз.
+4. Порядок сортировки внутри каждого блока:
+Сначала ДМ, затем СДЭК, затем К, затем Самовывоз.
 
-Формат ответа: только блок ```csv ... ``` без лишнего текста.
+Выведи только готовый блок ```csv ... ``` без дополнительных комментариев.
 ''';
 
   @override
@@ -234,7 +233,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel = prefs.getString('groq_model') ?? 'openai/gpt-oss-120b';
+    final savedModel =
+        prefs.getString('groq_model') ?? 'meta-llama/llama-4-scout-17b-16e-instruct';
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
 
     setState(() {
@@ -550,18 +550,16 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
       // Авто-роутинг моделей под тип контента:
       if (activeImage != null) {
-        // 1. Для картинок — vision-модель
         if (!modelToUse.contains('vision') && !modelToUse.contains('llama-4')) {
           modelToUse = 'llama-3.2-11b-vision-preview';
         }
       } else if (activeDoc != null && activeDoc.existsSync()) {
-        // 2. Для документов/таблиц через скрепку — экономичная и быстрая модель с высоким лимитом
-        modelToUse = 'openai/gpt-oss-20b';
+        // Для документов используем Llama 4 Scout — не отказывается от таблиц с фамилиями и счетами
+        modelToUse = 'meta-llama/llama-4-scout-17b-16e-instruct';
         final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 7500);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
-      // 3. Для обычного текста остается выбранная в настройках модель (_selectedModel)
 
       final historyList = _currentSession?.messages as List? ?? [];
 
@@ -603,13 +601,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _lastCsvResult = null;
     });
 
-    // Авто-роутинг для логистики: всегда используем оптимальную по токенам и скорости модель
-    const String logisticsModel = 'openai/gpt-oss-20b';
+    // Используем Llama 4 Scout: не срабатывает ложный цензор на фамилии и счета в накладных
+    const String logisticsModel = 'meta-llama/llama-4-scout-17b-16e-instruct';
 
     final fileName = posFile.path.split(Platform.pathSeparator).last;
     _appendMessage(
       'user',
-      '📦 Запуск сведения накладной (автовыбор: $logisticsModel): $fileName',
+      '📦 Запуск сведения накладной ($logisticsModel): $fileName',
     );
 
     try {
@@ -639,18 +637,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
 
       final promptText = '''
-ВХОДНЫЕ ДАННЫЕ ДЛЯ СВЕДЕНИЯ:
+Таблицы для сопоставления:
 
-=== 1. ФАЙЛ ПОСЫЛКА (ТЕКУЩИЙ ПРИХОД) ===
+1. Таблица Посылка (текущий приход):
 $posylkaContent
 
-=== 2. СВОДКА ООО ПЕЧАТНЫЕ ПЛАТЫ (ГОЛОВА) ===
+2. Сводка ООО Печатные платы (Голова):
 $svodkaPpContent
 
-=== 3. СВОДКА ФИЛИАЛ (ЭЛЕКТРОКОННЕКТ) ===
+3. Сводка Филиал (ЭЛЕКТРОконнект):
 $svodkaFilialContent
 
-Выполни сопоставление по инструкции и верни CSV.
+Сформируй итоговую таблицу в формате CSV по правилам.
 ''';
 
       final response = await _callGroqRaw(
