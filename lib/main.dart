@@ -15,10 +15,12 @@ import 'package:share_plus/share_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  if (Platform.isAndroid || Platform.isIOS) {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+  }
   runApp(const PechatnyePlatyApp());
 }
 
@@ -305,6 +307,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _speak(String text, {bool force = false}) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     if (!_isVoiceEnabled && !force) return;
     try {
       await _ttsChannel.invokeMethod('speak', {'text': text});
@@ -312,6 +315,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _stopVoice() async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
     try {
       await _ttsChannel.invokeMethod('stop');
     } catch (_) {}
@@ -553,17 +557,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       builder: (ctx) => SafeArea(
         child: Wrap(
           children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
-              title: const Text('Сделать фото'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickChatImage(ImageSource.camera);
-              },
-            ),
+            if (Platform.isAndroid || Platform.isIOS)
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
+                title: const Text('Сделать фото'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickChatImage(ImageSource.camera);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Color(0xFF38BDF8)),
-              title: const Text('Выбрать фото из галереи'),
+              title: const Text('Выбрать изображение'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickChatImage(ImageSource.gallery);
@@ -795,7 +800,25 @@ if __name__ == "__main__":
 ''';
   }
 
-  // Генерация для Панели 2: Электроконнект Мейджер Экспресс (ООО «ЭЛЕКТРОконнект» Москва)
+  Future<void> _executeOrShareScript(String filePath, String safeFileName) async {
+    if (Platform.isWindows) {
+      try {
+        // Прямой запуск Python-скрипта в отдельном окне консоли на Windows
+        await Process.start(
+          'cmd',
+          ['/c', 'start', 'Major Express — $safeFileName', 'python', filePath],
+          runInShell: true,
+        );
+        _showSnackbar('Запускаю браузер Major Express ($safeFileName)...');
+      } catch (e) {
+        _showSnackbar('Ошибка запуска Python: $e. Проверь, установлен ли Python.');
+      }
+    } else {
+      await _shareScriptByPath(filePath);
+    }
+  }
+
+  // Генерация для Панели 2: Электроконнект Мейджер Экспресс
   Future<void> _generateMajorExpressScript() async {
     final firmName = _majorFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -838,18 +861,20 @@ if __name__ == "__main__":
 
       final dir = await getApplicationDocumentsDirectory();
       final safeFileName = '${_sanitizeFilename(firmName)}.py';
-      final filePath = '${dir.path}/$safeFileName';
+      final filePath = '${dir.path}${Platform.pathSeparator}$safeFileName';
 
       final f = File(filePath);
       await f.writeAsString(scriptContent, encoding: utf8);
 
-      try {
-        final downloadDir = Directory('/storage/emulated/0/Download');
-        if (downloadDir.existsSync()) {
-          final publicFile = File('${downloadDir.path}/$safeFileName');
-          await publicFile.writeAsString(scriptContent, encoding: utf8);
-        }
-      } catch (_) {}
+      if (Platform.isAndroid) {
+        try {
+          final downloadDir = Directory('/storage/emulated/0/Download');
+          if (downloadDir.existsSync()) {
+            final publicFile = File('${downloadDir.path}/$safeFileName');
+            await publicFile.writeAsString(scriptContent, encoding: utf8);
+          }
+        } catch (_) {}
+      }
 
       setState(() {
         _lastGeneratedMajorScriptPath = filePath;
@@ -861,16 +886,15 @@ if __name__ == "__main__":
       );
 
       _appendMessage('assistant', scriptContent);
-      _showSnackbar('Файл $safeFileName сформирован!');
       await _speak('Скрипт Электроконнект для фирмы $firmName готов, Шурик!');
 
-      await _shareScriptByPath(filePath);
+      await _executeOrShareScript(filePath, safeFileName);
     } catch (e) {
       _showSnackbar('Ошибка создания скрипта: $e');
     }
   }
 
-  // Генерация для Панели 3: Платы Мейджер Экспресс (ООО«Печатные платы» и по умолчанию "с/ч")
+  // Генерация для Панели 3: Платы Мейджер Экспресс
   Future<void> _generatePlatyMajorExpressScript() async {
     final firmName = _platyFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -913,18 +937,20 @@ if __name__ == "__main__":
 
       final dir = await getApplicationDocumentsDirectory();
       final safeFileName = '${_sanitizeFilename(firmName)}.py';
-      final filePath = '${dir.path}/$safeFileName';
+      final filePath = '${dir.path}${Platform.pathSeparator}$safeFileName';
 
       final f = File(filePath);
       await f.writeAsString(scriptContent, encoding: utf8);
 
-      try {
-        final downloadDir = Directory('/storage/emulated/0/Download');
-        if (downloadDir.existsSync()) {
-          final publicFile = File('${downloadDir.path}/$safeFileName');
-          await publicFile.writeAsString(scriptContent, encoding: utf8);
-        }
-      } catch (_) {}
+      if (Platform.isAndroid) {
+        try {
+          final downloadDir = Directory('/storage/emulated/0/Download');
+          if (downloadDir.existsSync()) {
+            final publicFile = File('${downloadDir.path}/$safeFileName');
+            await publicFile.writeAsString(scriptContent, encoding: utf8);
+          }
+        } catch (_) {}
+      }
 
       setState(() {
         _lastGeneratedPlatyScriptPath = filePath;
@@ -936,10 +962,9 @@ if __name__ == "__main__":
       );
 
       _appendMessage('assistant', scriptContent);
-      _showSnackbar('Файл $safeFileName сформирован!');
       await _speak('Скрипт Платы для фирмы $firmName готов, Шурик!');
 
-      await _shareScriptByPath(filePath);
+      await _executeOrShareScript(filePath, safeFileName);
     } catch (e) {
       _showSnackbar('Ошибка создания скрипта: $e');
     }
@@ -951,6 +976,10 @@ if __name__ == "__main__":
       return;
     }
     final fileName = path.split(Platform.pathSeparator).last;
+    if (Platform.isWindows) {
+      await _executeOrShareScript(path, fileName);
+      return;
+    }
     await Share.shareXFiles(
       [XFile(path, mimeType: 'text/x-python')],
       text: fileName,
@@ -1699,7 +1728,7 @@ $finalCsv
 
       final dir = await getApplicationDocumentsDirectory();
       final filePath =
-          '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+          '${dir.path}${Platform.pathSeparator}Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
       final fileBytes = excel.save();
 
       if (fileBytes != null) {
@@ -1991,6 +2020,7 @@ $finalCsv
   @override
   Widget build(BuildContext context) {
     final rawMessages = _currentSession?.messages as List? ?? [];
+    final isWin = Platform.isWindows;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -2011,9 +2041,9 @@ $finalCsv
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Печатные платы',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                Text(
+                  isWin ? 'Печатные платы (Windows)' : 'Печатные платы',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                 ),
                 Row(
                   children: const [
@@ -2034,25 +2064,26 @@ $finalCsv
           ],
         ),
         actions: [
-          IconButton(
-            icon: Icon(
-              _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
-              color: _isVoiceEnabled ? const Color(0xFF38BDF8) : Colors.white38,
+          if (!isWin)
+            IconButton(
+              icon: Icon(
+                _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
+                color: _isVoiceEnabled ? const Color(0xFF38BDF8) : Colors.white38,
+              ),
+              tooltip: _isVoiceEnabled ? 'Звук включен' : 'Звук выключен',
+              onPressed: () async {
+                final newVal = !_isVoiceEnabled;
+                if (!newVal) {
+                  await _stopVoice();
+                }
+                setState(() {
+                  _isVoiceEnabled = newVal;
+                });
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('is_voice_enabled', newVal);
+                _showSnackbar(newVal ? 'Автоозвучка включена' : 'Автоозвучка выключена');
+              },
             ),
-            tooltip: _isVoiceEnabled ? 'Звук включен' : 'Звук выключен',
-            onPressed: () async {
-              final newVal = !_isVoiceEnabled;
-              if (!newVal) {
-                await _stopVoice();
-              }
-              setState(() {
-                _isVoiceEnabled = newVal;
-              });
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('is_voice_enabled', newVal);
-              _showSnackbar(newVal ? 'Автоозвучка включена' : 'Автоозвучка выключена');
-            },
-          ),
           IconButton(
             icon: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
             tooltip: 'История чатов',
@@ -2176,7 +2207,7 @@ $finalCsv
                             color: Colors.white,
                           ),
                         ),
-                        if (!isUser && !isSystem)
+                        if (!isUser && !isSystem && !isWin)
                           Align(
                             alignment: Alignment.bottomRight,
                             child: InkWell(
@@ -2458,6 +2489,7 @@ $finalCsv
   }
 
   Widget _buildMajorExpressTopPanel() {
+    final isWin = Platform.isWindows;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
@@ -2575,10 +2607,10 @@ $finalCsv
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    icon: const Icon(Icons.code, size: 18),
-                    label: const Text(
-                      'СФОРМИРОВАТЬ СКРИПТ (.PY)',
-                      style: TextStyle(
+                    icon: Icon(isWin ? Icons.rocket_launch : Icons.code, size: 18),
+                    label: Text(
+                      isWin ? 'ЗАПУСТИТЬ В БРАУЗЕРЕ' : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -2593,8 +2625,8 @@ $finalCsv
                       backgroundColor: const Color(0xFF16A34A),
                       foregroundColor: Colors.white,
                     ),
-                    icon: const Icon(Icons.share),
-                    tooltip: 'Поделиться / Сохранить .py',
+                    icon: Icon(isWin ? Icons.play_arrow : Icons.share),
+                    tooltip: isWin ? 'Запустить повторно' : 'Поделиться / Сохранить .py',
                     onPressed: () =>
                         _shareScriptByPath(_lastGeneratedMajorScriptPath),
                   ),
@@ -2608,6 +2640,7 @@ $finalCsv
   }
 
   Widget _buildPlatyMajorExpressTopPanel() {
+    final isWin = Platform.isWindows;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeInOut,
@@ -2725,10 +2758,10 @@ $finalCsv
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    icon: const Icon(Icons.code, size: 18),
-                    label: const Text(
-                      'СФОРМИРОВАТЬ СКРИПТ (.PY)',
-                      style: TextStyle(
+                    icon: Icon(isWin ? Icons.rocket_launch : Icons.code, size: 18),
+                    label: Text(
+                      isWin ? 'ЗАПУСТИТЬ В БРАУЗЕРЕ' : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                      style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                       ),
@@ -2743,8 +2776,8 @@ $finalCsv
                       backgroundColor: const Color(0xFF16A34A),
                       foregroundColor: Colors.white,
                     ),
-                    icon: const Icon(Icons.share),
-                    tooltip: 'Поделиться / Сохранить .py',
+                    icon: Icon(isWin ? Icons.play_arrow : Icons.share),
+                    tooltip: isWin ? 'Запустить повторно' : 'Поделиться / Сохранить .py',
                     onPressed: () =>
                         _shareScriptByPath(_lastGeneratedPlatyScriptPath),
                   ),
