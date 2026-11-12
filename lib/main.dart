@@ -8,6 +8,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:excel/excel.dart' as ex;
+import 'package:archive/archive.dart';
+import 'package:xml/xml.dart';
 import 'package:image_picker/image_picker.dart';
 
 void main() {
@@ -50,19 +52,27 @@ class ChatMessage {
   final String role;
   final String text;
   final String? imagePath;
+  final String? fileName;
 
-  ChatMessage({required this.role, required this.text, this.imagePath});
+  ChatMessage({
+    required this.role,
+    required this.text,
+    this.imagePath,
+    this.fileName,
+  });
 
   Map<String, dynamic> toJson() => {
         'role': role,
         'text': text,
         'imagePath': imagePath,
+        'fileName': fileName,
       };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         role: json['role'] ?? 'assistant',
         text: json['text'] ?? '',
         imagePath: json['imagePath'],
+        fileName: json['fileName'],
       );
 }
 
@@ -115,12 +125,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _apiStatus = 'Ключ не настроен';
   bool _isKeyValidating = false;
   bool? _isKeyWorking;
-  bool _isVoiceEnabled = false; // Звук по умолчанию отключен, включается кнопкой вверху
+  bool _isVoiceEnabled = false;
 
   File? _posylkaFile;
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
+
+  // Прикрепления в чате (фото или файл)
   File? _chatImage;
+  File? _chatAttachedFile;
 
   var _sessions = [];
   ChatSession? _currentSession;
@@ -190,7 +203,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    // При выезде экранной клавиатуры поджимаем чат вверх
     final bottomInset = WidgetsBinding.instance.window.viewInsets.bottom;
     if (bottomInset > 0) {
       _scrollToBottom(delayMs: 150);
@@ -261,7 +273,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_sessions.isEmpty) {
       _createNewChat(
         initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, а если приехали накладные — разворачивай сверху панель логистики 📦.',
+            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай файлы через скрепку или разворачивай сверху панель логистики 📦.',
       );
     } else {
       setState(() {
@@ -436,14 +448,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (picked != null) {
       setState(() {
         _chatImage = File(picked.path);
+        _chatAttachedFile = null;
       });
     }
   }
 
-  void _showImageSourceDialog() {
+  Future<void> _pickChatDocument() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+    );
+
+    if (result != null && result.files.isNotEmpty) {
+      final path = result.files.single.path;
+      if (path != null && path.isNotEmpty) {
+        setState(() {
+          _chatAttachedFile = File(path);
+          _chatImage = null;
+        });
+      }
+    }
+  }
+
+  void _showAttachmentMenu() {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF162032),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
       builder: (ctx) => SafeArea(
         child: Wrap(
           children: [
@@ -457,10 +489,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
             ListTile(
               leading: const Icon(Icons.photo_library, color: Color(0xFF38BDF8)),
-              title: const Text('Выбрать из галереи'),
+              title: const Text('Выбрать фото из галереи'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickChatImage(ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file, color: Colors.greenAccent),
+              title: const Text('Прикрепить файл (Excel, CSV, TXT, и др.)'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickChatDocument();
               },
             ),
           ],
@@ -471,7 +511,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _sendChatMessage() async {
     final text = _chatInputController.text.trim();
-    if (text.isEmpty && _chatImage == null) return;
+    if (text.isEmpty && _chatImage == null && _chatAttachedFile == null) return;
 
     final apiKey = _apiKeyController.text.trim();
     if (apiKey.isEmpty) {
@@ -479,37 +519,59 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final promptText = text.isEmpty ? "Что на фото?" : text;
-    final imagePathToSave = _chatImage?.path;
+    final activeImage = _chatImage;
+    final activeDoc = _chatAttachedFile;
+
+    String displayPrompt = text;
+    if (displayPrompt.isEmpty) {
+      if (activeImage != null) {
+        displayPrompt = 'Что на фото?';
+      } else if (activeDoc != null) {
+        displayPrompt = 'Проанализируй прикрепленный файл.';
+      }
+    }
+
+    final docName = activeDoc?.path.split(Platform.pathSeparator).last;
 
     _chatInputController.clear();
     _appendMessage(
       'user',
-      promptText,
-      imagePath: imagePathToSave,
+      displayPrompt,
+      imagePath: activeImage?.path,
+      fileName: docName,
     );
 
-    final activeImage = _chatImage;
     setState(() {
       _chatImage = null;
+      _chatAttachedFile = null;
       _isLoading = true;
     });
 
     try {
+      String finalPromptForApi = displayPrompt;
+
+      // Если прикреплен документ — извлекаем его содержимое для ИИ
+      if (activeDoc != null && activeDoc.existsSync()) {
+        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 400);
+        finalPromptForApi =
+            '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
+      }
+
       final historyList = _currentSession?.messages as List? ?? [];
 
       final responseText = await _callGroqWithHistory(
         apiKey: apiKey,
         model: _selectedModel,
         systemInstruction:
-            'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические и бытовые темы на русском языке.',
+            'Ты — Гена (Геннадий), персональный ИИ-ассистент Александра (Шурика). Отвечай четко, по делу, с юмором где уместно, поддерживай любые технические, логистические и бытовые темы на русском языке.',
         messages: historyList,
+        overrideLastUserText: finalPromptForApi,
         imageFile: activeImage,
         temperature: 0.2,
       );
 
       _appendMessage('assistant', responseText);
-      await _speak(responseText); // Сработает, только если включен тумблер звука
+      await _speak(responseText);
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
     } finally {
@@ -542,18 +604,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      final posylkaContent = await _readExcelTailSafe(posFile, maxRows: 150);
+      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 150);
 
       String svodkaPpContent = '';
       final ppFile = _svodkaPpFile;
       if (ppFile != null && ppFile.existsSync()) {
-        svodkaPpContent = await _readExcelTailSafe(ppFile, maxRows: 600);
+        svodkaPpContent = await _readAnyFileSafe(ppFile, maxRows: 600);
       }
 
       String svodkaFilialContent = '';
       final filFile = _svodkaFilialFile;
       if (filFile != null && filFile.existsSync()) {
-        svodkaFilialContent = await _readExcelTailSafe(filFile, maxRows: 1500);
+        svodkaFilialContent = await _readAnyFileSafe(filFile, maxRows: 1500);
       }
 
       final promptText = '''
@@ -593,86 +655,164 @@ $svodkaFilialContent
     }
   }
 
-  // Бронебойный парсер без вызова maxRows/maxColumns (исключает сбой Null Check)
-  Future<String> _readExcelTailSafe(File file, {int maxRows = 500}) async {
-    try {
-      final path = file.path.toLowerCase();
-      if (path.endsWith('.xlsx') || path.endsWith('.xls')) {
+  // Прямой парсер XLSX через ZIP + XML (никогда не падает на Null check внутри стилей 1С)
+  Future<String> _readAnyFileSafe(File file, {int maxRows = 500}) async {
+    final path = file.path.toLowerCase();
+    if (path.endsWith('.xlsx')) {
+      return await _parseXlsxDirectlyViaXml(file, maxRows: maxRows);
+    } else if (path.endsWith('.xls')) {
+      // Попытка чтения старого формата .xls
+      try {
         final bytes = await file.readAsBytes();
-        
-        ex.Excel? excel;
-        try {
-          excel = ex.Excel.decodeBytes(bytes);
-        } catch (decodeErr) {
-          throw Exception('Файл поврежден или имеет нестандартный формат Excel: $decodeErr');
-        }
-
-        if (excel == null || excel.tables.isEmpty) {
-          return '';
-        }
-
+        final excel = ex.Excel.decodeBytes(bytes);
         final sb = StringBuffer();
-
         for (final entry in excel.tables.entries) {
-          final tableName = entry.key;
-          final sheet = entry.value;
-
-          sb.writeln('Лист: $tableName');
-          
-          final rows = sheet.rows;
-          if (rows.isEmpty) continue;
-
-          // Безопасное извлечение заголовка
-          List<String> headerList = [];
-          try {
-            final firstRow = rows.first;
-            for (final cell in firstRow) {
-              if (cell == null || cell.value == null) {
-                headerList.add('');
-              } else {
-                headerList.add(cell.value.toString().replaceAll(';', ' ').trim());
-              }
-            }
-          } catch (_) {}
-          sb.writeln(headerList.join(';'));
-
-          // Безопасное извлечение строк с конца таблицы
-          final totalRows = rows.length;
-          final startIdx = totalRows > (maxRows + 1) ? (totalRows - maxRows) : 1;
-
-          for (int r = startIdx; r < totalRows; r++) {
-            try {
-              final row = rows[r];
-              if (row.isEmpty) continue;
-
-              List<String> rowValues = [];
-              bool hasData = false;
-
-              for (final cell in row) {
-                if (cell == null || cell.value == null) {
-                  rowValues.add('');
-                } else {
-                  final str = cell.value.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim();
-                  if (str.isNotEmpty) hasData = true;
-                  rowValues.add(str);
-                }
-              }
-
-              if (hasData) {
-                sb.writeln(rowValues.join(';'));
-              }
-            } catch (_) {
-              continue;
+          sb.writeln('Лист: ${entry.key}');
+          for (final row in entry.value.rows) {
+            final vals = row.map((c) => c?.value?.toString() ?? '').toList();
+            if (vals.any((v) => v.trim().isNotEmpty)) {
+              sb.writeln(vals.join(';'));
             }
           }
         }
         return sb.toString();
-      } else {
-        return await file.readAsString();
+      } catch (_) {
+        return '[Файл .xls старого бинарного формата — пересохраните в .xlsx или .csv]';
       }
-    } catch (e) {
-      throw Exception('Ошибка чтения файла Excel: $e');
+    } else {
+      // Чтение текстовых форматов (CSV, TXT, JSON, LOG и т.д.)
+      try {
+        final bytes = await file.readAsBytes();
+        try {
+          return utf8.decode(bytes);
+        } catch (_) {
+          // Фоллбек на кодировку Windows-1251 для русских CSV из 1С
+          return latin1.decode(bytes);
+        }
+      } catch (e) {
+        return '[Не удалось прочитать текстовый файл: $e]';
+      }
     }
+  }
+
+  Future<String> _parseXlsxDirectlyViaXml(File file, {int maxRows = 500}) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      // 1. Читаем таблицу общих строк (sharedStrings.xml)
+      List<String> sharedStrings = [];
+      final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
+      if (sharedStringsFile != null) {
+        final xmlStr = utf8.decode(sharedStringsFile.content as List<int>, allowMalformed: true);
+        final document = XmlDocument.parse(xmlStr);
+        for (final si in document.findAllElements('si')) {
+          final textBuffer = StringBuffer();
+          for (final t in si.findAllElements('t')) {
+            textBuffer.write(t.innerText);
+          }
+          sharedStrings.add(textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
+        }
+      }
+
+      // 2. Ищем все листы (xl/worksheets/sheet1.xml, sheet2.xml и т.д.)
+      final sheetFiles = archive.files
+          .where((f) => f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
+          .toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+
+      if (sheetFiles.isEmpty) {
+        return '[Пустая книга Excel]';
+      }
+
+      final sb = StringBuffer();
+
+      for (final sheetFile in sheetFiles) {
+        final sheetName = sheetFile.name.split('/').last.replaceAll('.xml', '');
+        sb.writeln('Лист: $sheetName');
+
+        final sheetXmlStr = utf8.decode(sheetFile.content as List<int>, allowMalformed: true);
+        final sheetDoc = XmlDocument.parse(sheetXmlStr);
+        final allRowElements = sheetDoc.findAllElements('row').toList();
+
+        if (allRowElements.isEmpty) continue;
+
+        List<String> parsedRows = [];
+
+        for (final rowEl in allRowElements) {
+          final cells = rowEl.findAllElements('c').toList();
+          if (cells.isEmpty) continue;
+
+          // Вычисляем индексы колонок по буквам (A, B, C... AA, AB...)
+          Map<int, String> rowMap = {};
+          int maxColIdx = 0;
+
+          for (final c in cells) {
+            final ref = c.getAttribute('r') ?? '';
+            final colIdx = _columnLettersToIndex(ref);
+            if (colIdx > maxColIdx) maxColIdx = colIdx;
+
+            final type = c.getAttribute('t');
+            String cellVal = '';
+
+            if (type == 's') {
+              // Ссылка на sharedStrings
+              final vEl = c.findElements('v').firstOrNull;
+              final idx = int.tryParse(vEl?.innerText ?? '');
+              if (idx != null && idx >= 0 && idx < sharedStrings.length) {
+                cellVal = sharedStrings[idx];
+              }
+            } else if (type == 'inlineStr') {
+              // Встроенная строка
+              final tEl = c.findAllElements('t').firstOrNull;
+              cellVal = tEl?.innerText ?? '';
+            } else {
+              // Число или формула
+              final vEl = c.findElements('v').firstOrNull;
+              cellVal = vEl?.innerText ?? '';
+            }
+
+            cellVal = cellVal.replaceAll(';', ' ').replaceAll('\n', ' ').trim();
+            rowMap[colIdx] = cellVal;
+          }
+
+          List<String> rowValues = [];
+          bool hasAnyData = false;
+          for (int i = 0; i <= maxColIdx; i++) {
+            final v = rowMap[i] ?? '';
+            if (v.isNotEmpty) hasAnyData = true;
+            rowValues.add(v);
+          }
+
+          if (hasAnyData) {
+            parsedRows.add(rowValues.join(';'));
+          }
+        }
+
+        if (parsedRows.isEmpty) continue;
+
+        // Всегда берем заголовок (первая непустая строка) + последние maxRows строк
+        sb.writeln(parsedRows.first);
+        final startIdx = parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
+        for (int i = startIdx; i < parsedRows.length; i++) {
+          sb.writeln(parsedRows[i]);
+        }
+      }
+
+      return sb.toString();
+    } catch (e) {
+      throw Exception('Ошибка разбора XML таблицы: $e');
+    }
+  }
+
+  int _columnLettersToIndex(String cellRef) {
+    final letters = cellRef.replaceAll(RegExp(r'[0-9]'), '').toUpperCase();
+    if (letters.isEmpty) return 0;
+    int col = 0;
+    for (int i = 0; i < letters.length; i++) {
+      col = col * 26 + (letters.codeUnitAt(i) - 64);
+    }
+    return col - 1;
   }
 
   Future<String> _callGroqWithHistory({
@@ -680,6 +820,7 @@ $svodkaFilialContent
     required String model,
     required String systemInstruction,
     required dynamic messages,
+    String? overrideLastUserText,
     File? imageFile,
     required double temperature,
   }) async {
@@ -691,13 +832,18 @@ $svodkaFilialContent
     var msgList = messages as List;
     for (int i = 0; i < msgList.length; i++) {
       var msg = msgList[i] as ChatMessage;
-      if (i == msgList.length - 1 && msg.role == 'user' && imageFile != null) {
+      final isLastUser = (i == msgList.length - 1 && msg.role == 'user');
+      final textToSend = (isLastUser && overrideLastUserText != null)
+          ? overrideLastUserText
+          : msg.text;
+
+      if (isLastUser && imageFile != null) {
         final bytes = await imageFile.readAsBytes();
         final base64Img = base64Encode(bytes);
         formattedMessages.add({
           'role': 'user',
           'content': [
-            {'type': 'text', 'text': msg.text},
+            {'type': 'text', 'text': textToSend},
             {
               'type': 'image_url',
               'image_url': {'url': 'data:image/jpeg;base64,$base64Img'}
@@ -707,7 +853,7 @@ $svodkaFilialContent
       } else {
         formattedMessages.add({
           'role': msg.role == 'user' ? 'user' : 'assistant',
-          'content': msg.text
+          'content': textToSend
         });
       }
     }
@@ -871,12 +1017,17 @@ $svodkaFilialContent
     }
   }
 
-  void _appendMessage(String role, String text, {String? imagePath}) {
+  void _appendMessage(String role, String text, {String? imagePath, String? fileName}) {
     if (_currentSession == null) return;
     setState(() {
       var msgs = _currentSession!.messages as List;
       msgs.add(
-        ChatMessage(role: role, text: text, imagePath: imagePath),
+        ChatMessage(
+          role: role,
+          text: text,
+          imagePath: imagePath,
+          fileName: fileName,
+        ),
       );
       if (msgs.length == 2 && role == 'user') {
         _currentSession!.title =
@@ -942,7 +1093,6 @@ $svodkaFilialContent
           ],
         ),
         actions: [
-          // Тумблер включения/выключения звука в AppBar
           IconButton(
             icon: Icon(
               _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
@@ -1004,6 +1154,7 @@ $svodkaFilialContent
                 final isSystem = role == 'system';
                 final text = m.text;
                 final imgPath = m.imagePath;
+                final docName = m.fileName;
 
                 return Align(
                   alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -1052,6 +1203,29 @@ $svodkaFilialContent
                               ),
                             ),
                           ),
+                        if (docName != null && docName.isNotEmpty)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8.0),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.insert_drive_file, size: 16, color: Colors.greenAccent),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    docName,
+                                    style: const TextStyle(fontSize: 13, color: Colors.greenAccent, fontWeight: FontWeight.w500),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         SelectableText(
                           text,
                           style: const TextStyle(
@@ -1063,7 +1237,7 @@ $svodkaFilialContent
                           Align(
                             alignment: Alignment.bottomRight,
                             child: InkWell(
-                              onTap: () => _speak(text, force: true), // Принудительно зачитать при ручном нажатии на динамик
+                              onTap: () => _speak(text, force: true),
                               child: const Padding(
                                 padding: EdgeInsets.only(top: 8.0),
                                 child: Icon(
@@ -1387,12 +1561,42 @@ $svodkaFilialContent
                   ],
                 ),
               ),
+            if (_chatAttachedFile != null)
+              Container(
+                alignment: Alignment.centerLeft,
+                margin: const EdgeInsets.only(bottom: 8, left: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E293B),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.greenAccent.withOpacity(0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.insert_drive_file, color: Colors.greenAccent, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        _chatAttachedFile!.path.split(Platform.pathSeparator).last,
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setState(() => _chatAttachedFile = null),
+                      child: const Icon(Icons.close, color: Colors.white70, size: 16),
+                    ),
+                  ],
+                ),
+              ),
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 IconButton(
                   icon: const Icon(Icons.attach_file, color: Colors.white70),
-                  onPressed: _showImageSourceDialog,
+                  onPressed: _showAttachmentMenu,
                 ),
                 Expanded(
                   child: Container(
@@ -1410,7 +1614,7 @@ $svodkaFilialContent
                       minLines: 1,
                       style: const TextStyle(fontSize: 16),
                       decoration: const InputDecoration(
-                        hintText: 'Спроси или отправь фото...',
+                        hintText: 'Спроси или отправь фото/файл...',
                         hintStyle: TextStyle(
                           color: Colors.white38,
                           fontSize: 15,
