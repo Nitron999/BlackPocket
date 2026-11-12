@@ -828,7 +828,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           }
         }
 
-        // Если в сводке не нашлось По счету — подставляем из Получено (например, 1)
         if (item.poSchetu.isEmpty) {
           item.poSchetu = item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
         }
@@ -1014,7 +1013,7 @@ $finalCsv
   }
 
   // =========================================================================
-  // ВЫГРУЗКА В EXCEL: ТАХОМА 18 / 16 BOLD БЕЗ СЖАТИЯ + ЖИРНЫЕ ГРАНИЦЫ THICK
+  // ВЫГРУЗКА В EXCEL: ТАХОМА 18 / 16 BOLD + ЖИРНЫЕ ГРАНИЦЫ THICK ПО ВСЕМУ ЛИСТУ
   // =========================================================================
 
   ex.CellStyle _buildCellStyle({
@@ -1038,7 +1037,7 @@ $finalCsv
         backgroundColorHex: ex.ExcelColor.fromHexString(bgHex),
         horizontalAlign: hAlign,
         verticalAlign: ex.VerticalAlign.Center,
-        textWrapping: wrapText ? ex.TextWrapping.WrapText : ex.TextWrapping.Clip,
+        textWrapping: wrapText ? ex.TextWrapping.WrapText : null,
         leftBorder: borderThick,
         rightBorder: borderThick,
         topBorder: borderThick,
@@ -1053,7 +1052,7 @@ $finalCsv
       fontColorHex: ex.ExcelColor.fromHexString(fontHex),
       horizontalAlign: hAlign,
       verticalAlign: ex.VerticalAlign.Center,
-      textWrapping: wrapText ? ex.TextWrapping.WrapText : ex.TextWrapping.Clip,
+      textWrapping: wrapText ? ex.TextWrapping.WrapText : null,
       leftBorder: borderThick,
       rightBorder: borderThick,
       topBorder: borderThick,
@@ -1061,12 +1060,12 @@ $finalCsv
     );
   }
 
-  void _fillBlankGridRow(ex.Sheet sheet, int rowIndex, {double rowHeight = 20}) {
+  void _styleEmptyRowWithThickGrid(ex.Sheet sheet, int rowIndex,
+      {double rowHeight = 22}) {
     sheet.setRowHeight(rowIndex, rowHeight);
     for (int c = 0; c < 13; c++) {
       final cell = sheet.cell(
           ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: rowIndex));
-      cell.value = ex.TextCellValue('');
       cell.cellStyle = _buildCellStyle(
         fontSize: c == 0 ? 18 : 16,
         fontHex: '#FF000000',
@@ -1090,7 +1089,7 @@ $finalCsv
       excel.delete('Sheet1');
 
       final colWidths = [
-        56.0, // A: Фирма (Tahoma 18 без автосжатия)
+        56.0, // A: Фирма (Tahoma 18)
         15.0, // B: PS (Tahoma 16)
         13.0, // C: Счет пп
         14.0, // D: Сч/Н
@@ -1147,23 +1146,23 @@ $finalCsv
       }
       currentRow++;
 
-      // 2. Отступ + строка даты отправки + отступ (везде жирная сетка!)
-      _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
+      // 2. Пустой отступ + строка даты отправки + пустой отступ (соседи справа без текста, чтобы дата не обрезалась!)
+      _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
       currentRow++;
 
       if (_lastOtpravkaHeader.isNotEmpty) {
-        _fillBlankGridRow(sheet, currentRow, rowHeight: 24);
+        _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 26);
         final dateCell = sheet.cell(
             ex.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow));
         dateCell.value = ex.TextCellValue(_lastOtpravkaHeader);
         dateCell.cellStyle = _buildCellStyle(
-          fontSize: 14,
+          fontSize: 16,
           fontHex: '#FF9C0006',
           hAlign: ex.HorizontalAlign.Left,
         );
         currentRow++;
 
-        _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
+        _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
         currentRow++;
       }
 
@@ -1184,27 +1183,23 @@ $finalCsv
         if (isFilialDivider) {
           isInsideFilialBlock = true;
 
-          // Пустая строка-отступ с жирной сеткой перед "филиал"
-          _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
+          _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
           currentRow++;
 
-          // Строка "филиал" (красная плашка в колонке A + жирные границы по всем 13 колонкам)
           sheet.setRowHeight(currentRow, 28);
-          for (int c = 0; c < 13; c++) {
-            final filCell = sheet.cell(
-                ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
-            filCell.value = ex.TextCellValue(c == 0 ? 'филиал' : '');
-            filCell.cellStyle = _buildCellStyle(
-              fontSize: c == 0 ? 18 : 16,
-              fontHex: c == 0 ? '#FFFFFFFF' : '#FF000000',
-              bgHex: c == 0 ? '#FFFF0000' : null,
-              hAlign: ex.HorizontalAlign.Center,
-            );
-          }
+          _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 28);
+          final filCell = sheet.cell(
+              ex.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow));
+          filCell.value = ex.TextCellValue('филиал');
+          filCell.cellStyle = _buildCellStyle(
+            fontSize: 18,
+            fontHex: '#FFFFFFFF',
+            bgHex: '#FFFF0000',
+            hAlign: ex.HorizontalAlign.Center,
+          );
           currentRow++;
 
-          // Пустая строка-отступ с жирной сеткой после "филиал"
-          _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
+          _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
           currentRow++;
           continue;
         }
@@ -1270,10 +1265,10 @@ $finalCsv
         currentRow++;
       }
 
-      // 4. Протягиваем жирную сетку и формат ячеек (18 для Фирмы, 16 для остальных) на 40 пустых строк вниз
-      final totalRowsWithBuffer = currentRow + 40;
+      // 4. Протягиваем жирную сетку и формат ячеек (18 для Фирмы, 16 для остальных) на 35 пустых строк вниз
+      final totalRowsWithBuffer = currentRow + 35;
       for (int r = currentRow; r < totalRowsWithBuffer; r++) {
-        _fillBlankGridRow(sheet, r, rowHeight: 24);
+        _styleEmptyRowWithThickGrid(sheet, r, rowHeight: 24);
       }
 
       final dir = await getApplicationDocumentsDirectory();
