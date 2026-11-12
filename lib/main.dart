@@ -982,8 +982,32 @@ $finalCsv
   }
 
   // =========================================================================
-  // ВЫГРУЗКА В EXCEL ПО ЭТАЛОНУ (ШРИФТЫ 18/16, ЦВЕТА, ОТСТУПЫ, ТОЛСТЫЕ РАМКИ)
+  // ВЫГРУЗКА В EXCEL: ЖИРНЫЕ ГРАНИЦЫ (THICK) ПО ВСЕМУ ЛИСТУ + ЭТАЛОННЫЕ ЦВЕТА
   // =========================================================================
+
+  void _applyThickGridToRow(ex.Sheet sheet, int rowIndex, ex.Border borderThick,
+      {double rowHeight = 20}) {
+    sheet.setRowHeight(rowIndex, rowHeight);
+    for (int c = 0; c < 13; c++) {
+      final cell = sheet.cell(
+          ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: rowIndex));
+      cell.value = ex.TextCellValue('');
+      cell.cellStyle = ex.CellStyle(
+        fontFamily: 'Tahoma',
+        fontSize: c == 0 ? 18 : 16,
+        bold: true,
+        fontColorHex: ex.ExcelColor.fromHexString('#FF000000'),
+        horizontalAlign: (c >= 1 && c <= 10)
+            ? ex.HorizontalAlign.Center
+            : ex.HorizontalAlign.Left,
+        verticalAlign: ex.VerticalAlign.Center,
+        leftBorder: borderThick,
+        rightBorder: borderThick,
+        topBorder: borderThick,
+        bottomBorder: borderThick,
+      );
+    }
+  }
 
   Future<void> _exportToFormattedExcel() async {
     final csvData = _lastCsvResult;
@@ -1017,8 +1041,9 @@ $finalCsv
         sheet.setColumnWidth(i, colWidths[i]);
       }
 
-      final borderMedium = ex.Border(
-        borderStyle: ex.BorderStyle.Medium,
+      // Самая жирная чёрная граница ячеек (Thick) — внешние и внутренние по всему листу
+      final borderThick = ex.Border(
+        borderStyle: ex.BorderStyle.Thick,
         borderColorHex: ex.ExcelColor.fromHexString('#FF000000'),
       );
 
@@ -1032,7 +1057,7 @@ $finalCsv
 
       int currentRow = 0;
 
-      // 1. Шапка таблицы
+      // 1. Шапка таблицы (бирюзовый фон #00B0AC, жирные границы)
       final headerCells = rawLines[0].split(';');
       sheet.setRowHeight(currentRow, 42);
       for (int c = 0; c < 13; c++) {
@@ -1051,20 +1076,20 @@ $finalCsv
               : ex.HorizontalAlign.Center,
           verticalAlign: ex.VerticalAlign.Center,
           textWrapping: ex.TextWrapping.WrapText,
-          leftBorder: borderMedium,
-          rightBorder: borderMedium,
-          topBorder: borderMedium,
-          bottomBorder: borderMedium,
+          leftBorder: borderThick,
+          rightBorder: borderThick,
+          topBorder: borderThick,
+          bottomBorder: borderThick,
         );
       }
       currentRow++;
 
-      // 2. Отступ + строка даты отправки + отступ
-      sheet.setRowHeight(currentRow, 14);
+      // 2. Отступ + строка даты отправки + отступ (везде жирная сетка!)
+      _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
       currentRow++;
 
       if (_lastOtpravkaHeader.isNotEmpty) {
-        sheet.setRowHeight(currentRow, 24);
+        _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 24);
         final dateCell = sheet.cell(
             ex.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow));
         dateCell.value = ex.TextCellValue(_lastOtpravkaHeader);
@@ -1075,10 +1100,14 @@ $finalCsv
           fontColorHex: ex.ExcelColor.fromHexString('#FF9C0006'),
           horizontalAlign: ex.HorizontalAlign.Left,
           verticalAlign: ex.VerticalAlign.Center,
+          leftBorder: borderThick,
+          rightBorder: borderThick,
+          topBorder: borderThick,
+          bottomBorder: borderThick,
         );
         currentRow++;
 
-        sheet.setRowHeight(currentRow, 14);
+        _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
         currentRow++;
       }
 
@@ -1099,11 +1128,12 @@ $finalCsv
         if (isFilialDivider) {
           isInsideFilialBlock = true;
 
-          sheet.setRowHeight(currentRow, 14);
+          // Пустая строка-отступ с жирной сеткой перед "филиал"
+          _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
           currentRow++;
 
+          // Строка "филиал" (красная плашка в колонке A + жирные границы по всем 13 колонкам)
           sheet.setRowHeight(currentRow, 28);
-          // Все 13 ячеек строки "филиал" заполняем жирными границами, а первую ячейку красим красным
           for (int c = 0; c < 13; c++) {
             final filCell = sheet.cell(
                 ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
@@ -1119,15 +1149,16 @@ $finalCsv
                   : ex.ExcelColor.none,
               horizontalAlign: ex.HorizontalAlign.Center,
               verticalAlign: ex.VerticalAlign.Center,
-              leftBorder: borderMedium,
-              rightBorder: borderMedium,
-              topBorder: borderMedium,
-              bottomBorder: borderMedium,
+              leftBorder: borderThick,
+              rightBorder: borderThick,
+              topBorder: borderThick,
+              bottomBorder: borderThick,
             );
           }
           currentRow++;
 
-          sheet.setRowHeight(currentRow, 14);
+          // Пустая строка-отступ с жирной сеткой после "филиал"
+          _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
           currentRow++;
           continue;
         }
@@ -1188,13 +1219,19 @@ $finalCsv
                 ? ex.HorizontalAlign.Center
                 : ex.HorizontalAlign.Left,
             verticalAlign: ex.VerticalAlign.Center,
-            leftBorder: borderMedium,
-            rightBorder: borderMedium,
-            topBorder: borderMedium,
-            bottomBorder: borderMedium,
+            leftBorder: borderThick,
+            rightBorder: borderThick,
+            topBorder: borderThick,
+            bottomBorder: borderThick,
           );
         }
         currentRow++;
+      }
+
+      // 4. Протягиваем жирную сетку и формат ячеек ещё на 30 пустых строк вниз с запасом
+      final totalRowsWithBuffer = currentRow + 30;
+      for (int r = currentRow; r < totalRowsWithBuffer; r++) {
+        _applyThickGridToRow(sheet, r, borderThick, rowHeight: 24);
       }
 
       final dir = await getApplicationDocumentsDirectory();
