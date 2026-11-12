@@ -632,6 +632,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 import sys
 import datetime
 import time
+import tempfile
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
@@ -647,8 +648,7 @@ def main():
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
-                    "--no-sandbox",
-                    "--kiosk-printing"
+                    "--no-sandbox"
                 ]
             )
             context = browser.new_context(
@@ -780,17 +780,17 @@ def main():
             page.get_by_role("button", name="Сохранить накладную").click()
             page.wait_for_load_state("networkidle")
 
-            # Ждем генерацию PDF на сервере Major Express, чтобы окно печати не было пустым
+            # Ждем генерацию PDF на сервере Major Express
             print("-> Жду подготовку PDF на сервере...")
             page.wait_for_timeout(3000)
 
-            print("-> Открываю PDF накладной...")
+            print("-> Открываю страницу печати накладной...")
             page.get_by_role("button", name="Печать", exact=True).click()
             page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(2500)
 
-            # --- 7. Извлекаем прямой поток PDF и печатаем в 100% размере A4 ---
-            print("-> Извлекаю прямой PDF-файл для полноразмерной печати...")
+            # --- 7. Скачиваем PDF напрямую через сессию и отправляем на принтер Windows ---
+            print("-> Скачиваю чистый PDF накладной для прямой печати...")
             try:
                 pdf_src = page.evaluate("""() => {
                     const el = document.querySelector('embed[src], iframe[src], object[data]');
@@ -799,23 +799,26 @@ def main():
                 }""")
                 if pdf_src:
                     full_pdf_url = urljoin(page.url, pdf_src)
-                    print(f"-> Открываю чистый PDF в новой вкладке для автопечати...")
-                    pdf_page = context.new_page()
-                    pdf_page.goto(full_pdf_url)
-                    pdf_page.wait_for_timeout(2500)
-                    pdf_page.keyboard.press("Control+p")
-                    pdf_page.wait_for_timeout(1500)
+                    resp = context.request.get(full_pdf_url)
+                    if resp.ok:
+                        tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
+                        with open(tmp_pdf, "wb") as f_pdf:
+                            f_pdf.write(resp.body())
+                        print(f"-> PDF сохранен: {tmp_pdf}")
+                        if os.name == "nt":
+                            os.startfile(tmp_pdf, "print")
+                            print("-> Отправлено на системный принтер Windows!")
+                        else:
+                            print("-> Прямая печать доступна только на Windows.")
+                    else:
+                        print(f"-> Сервер не отдал PDF (код {resp.status}), распечатай вручную.")
                 else:
-                    # Резервный вариант: прямой клик по иконке принтера PDF в правом верхнем углу
-                    box = page.locator("embed, iframe").first.bounding_box()
-                    if box:
-                        page.mouse.click(box["x"] + box["width"] - 56, box["y"] + 20)
-                        page.wait_for_timeout(1500)
+                    print("-> Ссылка на PDF не найдена, распечатай вручную из окна браузера.")
             except Exception as pe:
-                print(f"-> Автопечать не сработала ({pe}), распечатай вручную из окна браузера.")
+                print(f"-> Ошибка прямой печати ({pe}), распечатай вручную из окна браузера.")
 
-            print("\\nГОТОВО! Задание отправлено на принтер по умолчанию.")
-            input("Когда накладная распечатается, нажми ENTER в этой консоли, чтобы закрыть браузер...")
+            print("\\nГОТОВО! Проверяй принтер.")
+            input("Когда закончишь, нажми ENTER в этой консоли, чтобы закрыть браузер...")
             browser.close()
 
     except Exception as e:
