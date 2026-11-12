@@ -634,7 +634,7 @@ import datetime
 import time
 import tempfile
 import subprocess
-from urllib.parse import urlparse, parse_qs, urlencode, urljoin
+from urllib.parse import urlparse, parse_qs, urlencode
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
@@ -839,14 +839,14 @@ def main():
                     # Способ Б: тихая печать через Chrome или Edge с --kiosk-printing
                     if not printed:
                         browsers = [
-                            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                            r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                            r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                            r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                            r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
                         ]
                         b_exe = next((bp for bp in browsers if os.path.exists(bp)), None)
                         if b_exe:
-                            pdf_uri = "file:///" + tmp_pdf.replace("\\", "/")
+                            pdf_uri = "file:///" + tmp_pdf.replace("\\\\", "/")
                             subprocess.Popen([b_exe, "--kiosk-printing", pdf_uri])
                             print(f"-> Запущена автопечать через {os.path.basename(b_exe)}!")
                         else:
@@ -873,7 +873,7 @@ if __name__ == "__main__":
       try {
         await Process.start(
           'cmd',
-          ['/c', 'start', 'Major Express — $safeFileName', 'python', filePath],
+          ['/c', 'start', '""', 'cmd', '/k', 'python "$filePath"'],
           runInShell: true,
         );
         _showSnackbar('Запускаю браузер Major Express ($safeFileName)...');
