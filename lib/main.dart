@@ -842,7 +842,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 ${_lastOtpravkaHeader.isNotEmpty ? '📅 Блок: $_lastOtpravkaHeader\n' : ''}• Голова (ООО «Печатные платы»): ${headItems.length} поз.
 • Филиал (ЭЛЕКТРОконнект): ${filialItems.length} поз.
 
-Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel (Tahoma 18/16, розовое выделение Самовывоза в ПП, оранжевое в Филиале, толстые границы ячеек).
+Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel.
 
 ```csv
 $finalCsv
@@ -1103,22 +1103,28 @@ $finalCsv
           currentRow++;
 
           sheet.setRowHeight(currentRow, 28);
-          final filCell = sheet.cell(
-              ex.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow));
-          filCell.value = ex.TextCellValue('филиал');
-          filCell.cellStyle = ex.CellStyle(
-            fontFamily: 'Tahoma',
-            fontSize: 18,
-            bold: true,
-            fontColorHex: ex.ExcelColor.fromHexString('#FFFFFFFF'),
-            backgroundColorHex: ex.ExcelColor.fromHexString('#FFFF0000'),
-            horizontalAlign: ex.HorizontalAlign.Center,
-            verticalAlign: ex.VerticalAlign.Center,
-            leftBorder: borderMedium,
-            rightBorder: borderMedium,
-            topBorder: borderMedium,
-            bottomBorder: borderMedium,
-          );
+          // Все 13 ячеек строки "филиал" заполняем жирными границами, а первую ячейку красим красным
+          for (int c = 0; c < 13; c++) {
+            final filCell = sheet.cell(
+                ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
+            filCell.value = ex.TextCellValue(c == 0 ? 'филиал' : '');
+            filCell.cellStyle = ex.CellStyle(
+              fontFamily: 'Tahoma',
+              fontSize: c == 0 ? 18 : 16,
+              bold: true,
+              fontColorHex: ex.ExcelColor.fromHexString(
+                  c == 0 ? '#FFFFFFFF' : '#FF000000'),
+              backgroundColorHex: c == 0
+                  ? ex.ExcelColor.fromHexString('#FFFF0000')
+                  : ex.ExcelColor.none,
+              horizontalAlign: ex.HorizontalAlign.Center,
+              verticalAlign: ex.VerticalAlign.Center,
+              leftBorder: borderMedium,
+              rightBorder: borderMedium,
+              topBorder: borderMedium,
+              bottomBorder: borderMedium,
+            );
+          }
           currentRow++;
 
           sheet.setRowHeight(currentRow, 14);
@@ -1142,6 +1148,7 @@ $finalCsv
           ex.ExcelColor? bgColor;
           ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
 
+          // Заливка строки только при "Самовывоз" (розовая в ПП, жёлто-оранжевая в Филиале)
           if (isSamovyvoz) {
             if (!isInsideFilialBlock) {
               bgColor = ex.ExcelColor.fromHexString('#FFFF99CC');
@@ -1150,8 +1157,8 @@ $finalCsv
             }
           }
 
+          // Счет пп (колонка C, индекс 2): красным шрифтом, без жёлтой заливки
           if (c == 2 && val.isNotEmpty) {
-            bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
             fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
           }
 
