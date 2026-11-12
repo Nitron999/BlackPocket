@@ -607,7 +607,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      // Жестко контролируем бюджет символов, чтобы суммарный запрос был ~4500-5500 токенов (лимит 8000 TPM)
       final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 80, maxChars: 3500);
       final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
 
@@ -670,7 +669,6 @@ $svodkaFilialContent
     }
   }
 
-  // Извлекаем только точные артикулы PS и номера счетов (исключаем общие слова типа "ООО", "СДЭК" и т.д.)
   Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
     final tokens = <String>{};
     final stopWords = {'ооо', 'зао', 'оао', 'сдэк', 'самовывоз', 'отк', 'плата', 'платы', 'лист', 'посылка'};
@@ -680,7 +678,6 @@ $svodkaFilialContent
       for (final rawPart in parts) {
         final clean = rawPart.trim().toLowerCase();
         if (clean.length >= 3 && !stopWords.contains(clean)) {
-          // Берем токены, содержащие цифры (номера счетов, PS-коды, артикулы)
           if (RegExp(r'\d').hasMatch(clean) && RegExp(r'^[a-zа-я0-9\-/\.]+$').hasMatch(clean)) {
             tokens.add(clean);
             final digits = RegExp(r'\d{3,}').allMatches(clean).map((m) => m.group(0)!);
@@ -777,7 +774,6 @@ $svodkaFilialContent
       }
 
       final sb = StringBuffer();
-      // Берем только первый основной лист книги
       final sheetsToRead = sheetFiles.take(1);
 
       for (final sheetFile in sheetsToRead) {
@@ -799,7 +795,6 @@ $svodkaFilialContent
           for (final c in cells) {
             final ref = c.getAttribute('r') ?? '';
             final colIdx = _columnLettersToIndex(ref);
-            // Читаем только первые 14 рабочих колонок
             if (colIdx > 14) continue;
             if (colIdx > maxColIdx) maxColIdx = colIdx;
 
@@ -892,6 +887,15 @@ $svodkaFilialContent
     return col - 1;
   }
 
+  String _extractGroqMessageText(Map? message) {
+    if (message == null) return '';
+    final content = message['content']?.toString().trim() ?? '';
+    if (content.isNotEmpty) return content;
+    // Фоллбек для рассуждающих моделей (gpt-oss / qwen), если они положили ответ в reasoning
+    final reasoning = message['reasoning']?.toString().trim() ?? '';
+    return reasoning;
+  }
+
   Future<String> _callGroqWithHistory({
     required String apiKey,
     required String model,
@@ -937,11 +941,16 @@ $svodkaFilialContent
       }
     }
 
-    final payload = {
+    final Map<String, dynamic> payload = {
       'model': model,
       'temperature': temperature,
+      'max_tokens': 2000,
       'messages': formattedMessages,
     };
+
+    if (model.contains('gpt-oss')) {
+      payload['reasoning_effort'] = 'low';
+    }
 
     final resp = await http.post(
       url,
@@ -966,9 +975,9 @@ $svodkaFilialContent
 
     final firstChoice = choices[0] as Map?;
     final message = firstChoice?['message'] as Map?;
-    final text = message?['content'] as String?;
+    final text = _extractGroqMessageText(message);
 
-    if (text == null || text.isEmpty) {
+    if (text.isEmpty) {
       throw Exception('Пустой ответ от модели.');
     }
     return text;
@@ -997,14 +1006,20 @@ $svodkaFilialContent
       ];
     }
 
-    final payload = {
+    final Map<String, dynamic> payload = {
       'model': model,
       'temperature': temperature,
+      'max_tokens': 2500,
       'messages': [
         {'role': 'system', 'content': systemInstruction},
         {'role': 'user', 'content': userContent}
       ]
     };
+
+    // Снижаем расход токенов на внутренние размышления для gpt-oss, чтобы ответ не обрезался
+    if (model.contains('gpt-oss')) {
+      payload['reasoning_effort'] = 'low';
+    }
 
     final resp = await http.post(
       url,
@@ -1029,9 +1044,9 @@ $svodkaFilialContent
 
     final firstChoice = choices[0] as Map?;
     final message = firstChoice?['message'] as Map?;
-    final text = message?['content'] as String?;
+    final text = _extractGroqMessageText(message);
 
-    if (text == null || text.isEmpty) {
+    if (text.isEmpty) {
       throw Exception('Пустой ответ от модели.');
     }
     return text;
