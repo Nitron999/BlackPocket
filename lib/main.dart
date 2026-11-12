@@ -18,16 +18,16 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  runApp(const BlackPocketApp());
+  runApp(const PechatnyePlatyApp());
 }
 
-class BlackPocketApp extends StatelessWidget {
-  const BlackPocketApp({super.key});
+class PechatnyePlatyApp extends StatelessWidget {
+  const PechatnyePlatyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BlackPocket AI',
+      title: 'Печатные платы',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
@@ -982,7 +982,7 @@ $finalCsv
   }
 
   // =========================================================================
-  // ВЫГРУЗКА В EXCEL ТОЧЬ-В-ТОЧЬ ПО ТВОИМ СКРИНАМ (148265.jpg / 148266.jpg)
+  // ВЫГРУЗКА В EXCEL ПО ЭТАЛОНУ (ШРИФТЫ 18/16, ЦВЕТА, ОТСТУПЫ, ТОЛСТЫЕ РАМКИ)
   // =========================================================================
 
   Future<void> _exportToFormattedExcel() async {
@@ -997,7 +997,6 @@ $finalCsv
       final sheet = excel['Посылка'];
       excel.delete('Sheet1');
 
-      // Ширины колонок под Tahoma 18 (Фирма) и Tahoma 16 (остальные)
       final colWidths = [
         48.0, // A: Фирма (Tahoma 18)
         15.0, // B: PS (Tahoma 16)
@@ -1018,7 +1017,6 @@ $finalCsv
         sheet.setColumnWidth(i, colWidths[i]);
       }
 
-      // Толстые чёрные внешние и внутренние границы ячеек (как на скрине Формат ячеек)
       final borderMedium = ex.Border(
         borderStyle: ex.BorderStyle.Medium,
         borderColorHex: ex.ExcelColor.fromHexString('#FF000000'),
@@ -1034,7 +1032,7 @@ $finalCsv
 
       int currentRow = 0;
 
-      // 1. Шапка таблицы (бирюзовый фон #00B0AC, белый жирный текст, толстые рамки)
+      // 1. Шапка таблицы
       final headerCells = rawLines[0].split(';');
       sheet.setRowHeight(currentRow, 42);
       for (int c = 0; c < 13; c++) {
@@ -1061,7 +1059,7 @@ $finalCsv
       }
       currentRow++;
 
-      // 2. Отступ + строка даты отправки (ОТПРАВКА ... ПРИХОД ...) + отступ
+      // 2. Отступ + строка даты отправки + отступ
       sheet.setRowHeight(currentRow, 14);
       currentRow++;
 
@@ -1084,7 +1082,7 @@ $finalCsv
         currentRow++;
       }
 
-      // 3. Строки данных (Голова -> пустые отступы + красная строка "филиал" -> Филиал)
+      // 3. Строки данных
       bool isInsideFilialBlock = false;
 
       for (int i = 1; i < rawLines.length; i++) {
@@ -1101,11 +1099,9 @@ $finalCsv
         if (isFilialDivider) {
           isInsideFilialBlock = true;
 
-          // Пустая строка-отступ перед "филиал"
           sheet.setRowHeight(currentRow, 14);
           currentRow++;
 
-          // Красная плашка "филиал" только в колонке A (Tahoma 18 Bold, толстая рамка)
           sheet.setRowHeight(currentRow, 28);
           final filCell = sheet.cell(
               ex.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow));
@@ -1125,7 +1121,6 @@ $finalCsv
           );
           currentRow++;
 
-          // Пустая строка-отступ после "филиал"
           sheet.setRowHeight(currentRow, 14);
           currentRow++;
           continue;
@@ -1144,37 +1139,30 @@ $finalCsv
             cell.value = ex.TextCellValue(val);
           }
 
-          // Цвета ячеек:
           ex.ExcelColor? bgColor;
           ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
 
           if (isSamovyvoz) {
             if (!isInsideFilialBlock) {
-              // В первом блоке (Печатные платы) Самовывоз закрашивается розовым (#FF99CC)
               bgColor = ex.ExcelColor.fromHexString('#FFFF99CC');
             } else {
-              // Во втором блоке (Филиал) Самовывоз закрашивается оранжево-жёлтым (#FFC000)
               bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
             }
           }
 
-          // Счет пп (колонка C, индекс 2), если заполнен -> жёлто-оранжевый фон (#FFC000) и красный текст
           if (c == 2 && val.isNotEmpty) {
             bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
             fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
           }
 
-          // Этикетка "ОТК" (колонка H, индекс 7) -> синий жирный текст (#0000FF) как на скрине
           if (c == 7 && val.toUpperCase() == 'ОТК') {
             fontColor = ex.ExcelColor.fromHexString('#FF0000FF');
           }
 
-          // Отгрузить! (индекс 6) -> всегда красный шрифт #FF0000
           if (c == 6) {
             fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
           }
 
-          // Доставка (индекс 10) -> ДМ, К, Самовывоз красным (#FF0000), а СДЭК — чёрным (#FF000000)
           if (c == 10 && val.isNotEmpty) {
             if (isSdek) {
               fontColor = ex.ExcelColor.fromHexString('#FF000000');
@@ -1185,7 +1173,6 @@ $finalCsv
 
           cell.cellStyle = ex.CellStyle(
             fontFamily: 'Tahoma',
-            // Колонка A (Фирма) = 18 размер, все остальные колонки (B-M) = 16 размер
             fontSize: c == 0 ? 18 : 16,
             bold: true,
             fontColorHex: fontColor,
@@ -1485,14 +1472,14 @@ $finalCsv
                 color: const Color(0xFF0284C7).withOpacity(0.2),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.bolt, color: Color(0xFF38BDF8), size: 20),
+              child: const Icon(Icons.memory, color: Color(0xFF38BDF8), size: 20),
             ),
             const SizedBox(width: 10),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'BlackPocket AI',
+                  'Печатные платы',
                   style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                 ),
                 Row(
