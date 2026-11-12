@@ -632,6 +632,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 import sys
 import datetime
 import time
+from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
@@ -786,15 +787,32 @@ def main():
             print("-> Открываю PDF накладной...")
             page.get_by_role("button", name="Печать", exact=True).click()
             page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(3500)
+            page.wait_for_timeout(3000)
 
-            # --- 7. Автоматическая печать чистого PDF (клик по иконке принтера PDF + --kiosk-printing) ---
-            print("-> Отправляю PDF накладной на печать...")
+            # --- 7. Извлекаем прямой поток PDF и печатаем в 100% размере A4 ---
+            print("-> Извлекаю прямой PDF-файл для полноразмерной печати...")
             try:
-                page.mouse.click(1152, 200)
-                page.wait_for_timeout(1500)
+                pdf_src = page.evaluate("""() => {
+                    const el = document.querySelector('embed[src], iframe[src], object[data]');
+                    if (!el) return '';
+                    return el.getAttribute('src') || el.getAttribute('data') || '';
+                }""")
+                if pdf_src:
+                    full_pdf_url = urljoin(page.url, pdf_src)
+                    print(f"-> Открываю чистый PDF в новой вкладке для автопечати...")
+                    pdf_page = context.new_page()
+                    pdf_page.goto(full_pdf_url)
+                    pdf_page.wait_for_timeout(2500)
+                    pdf_page.keyboard.press("Control+p")
+                    pdf_page.wait_for_timeout(1500)
+                else:
+                    # Резервный вариант: прямой клик по иконке принтера PDF в правом верхнем углу
+                    box = page.locator("embed, iframe").first.bounding_box()
+                    if box:
+                        page.mouse.click(box["x"] + box["width"] - 56, box["y"] + 20)
+                        page.wait_for_timeout(1500)
             except Exception as pe:
-                print(f"-> Подсказка по автопечати: {pe}")
+                print(f"-> Автопечать не сработала ({pe}), распечатай вручную из окна браузера.")
 
             print("\\nГОТОВО! Задание отправлено на принтер по умолчанию.")
             input("Когда накладная распечатается, нажми ENTER в этой консоли, чтобы закрыть браузер...")
