@@ -633,8 +633,8 @@ import sys
 import datetime
 import time
 import tempfile
-import subprocess
-from urllib.parse import urlparse, parse_qs, urlencode, urljoin
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs, urlencode
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
@@ -649,7 +649,8 @@ def main():
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
-                    "--no-sandbox"
+                    "--no-sandbox",
+                    "--kiosk-printing"
                 ]
             )
             context = browser.new_context(
@@ -819,44 +820,27 @@ def main():
                 except Exception as e_dl:
                     print(f"-> Ошибка загрузки PDF по data: {e_dl}")
 
-            # --- 7. Отправляем сохраненный PDF на принтер Windows в 100% размере A4 ---
+            # --- 7. Открываем чистый локальный PDF в новой вкладке этого же браузера и печатаем ---
             if pdf_bytes_holder:
                 tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
                 with open(tmp_pdf, "wb") as f_pdf:
                     f_pdf.write(pdf_bytes_holder[-1])
                 print(f"-> Чистый PDF сохранен: {tmp_pdf}")
 
-                if os.name == "nt":
-                    printed = False
-                    # Способ А: системная ассоциация print (если стоит SumatraPDF / Adobe Reader / Foxit)
-                    try:
-                        os.startfile(tmp_pdf, "print")
-                        printed = True
-                        print("-> Отправлено на принтер через системную печать Windows!")
-                    except Exception:
-                        pass
-
-                    # Способ Б: тихая печать через Chrome или Edge с --kiosk-printing + SendKeys('^p')
-                    if not printed:
-                        browsers = [
-                            r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-                            r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-                            r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-                            r"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
-                        ]
-                        b_exe = next((bp for bp in browsers if os.path.exists(bp)), None)
-                        if b_exe:
-                            pdf_uri = "file:///" + tmp_pdf.replace("\\\\", "/")
-                            subprocess.Popen([b_exe, "--kiosk-printing", pdf_uri])
-                            time.sleep(2.5)
-                            subprocess.run(
-                                ["powershell", "-NoProfile", "-Command", "(New-Object -ComObject WScript.Shell).SendKeys('^p')"],
-                                capture_output=True
-                            )
-                            print(f"-> Запущена автопечать через {os.path.basename(b_exe)}!")
-                        else:
-                            os.startfile(tmp_pdf)
-                            print("-> PDF открыт на экране, нажми Ctrl+P.")
+                try:
+                    pdf_uri = Path(tmp_pdf).as_uri()
+                    print("-> Открываю PDF в чистой вкладке и отправляю на принтер по умолчанию...")
+                    pdf_page = context.new_page()
+                    pdf_page.goto(pdf_uri)
+                    pdf_page.wait_for_timeout(2000)
+                    pdf_page.bring_to_front()
+                    pdf_page.mouse.click(500, 400)
+                    pdf_page.wait_for_timeout(400)
+                    pdf_page.keyboard.press("Control+p")
+                    pdf_page.wait_for_timeout(2000)
+                    print("-> Задание отправлено на печать в 100% размере A4!")
+                except Exception as pe:
+                    print(f"-> Ошибка печати ({pe}), распечатай вручную из открытого окна.")
             else:
                 print("-> Не удалось перехватить PDF автоматически, распечатай вручную из окна браузера.")
 
