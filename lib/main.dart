@@ -609,7 +609,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _buildMajorExpressPythonScript({
     required String login,
     required String password,
-    String? shipperName,
+    required String shipperName,
     required String consigneeName,
     required String pickupDate,
     required String pickupTime,
@@ -618,6 +618,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     required String description,
     required String pickupInfo,
   }) {
+    final escapedShipper = shipperName.replaceAll("'", "\\'");
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
     final safeDate = pickupDate.trim().isEmpty ? _todayFormatted() : pickupDate.trim();
     final safeTimeFull = pickupTime.trim().isEmpty ? '14:00-18:00' : pickupTime.trim();
@@ -630,26 +631,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         (description.trim().isEmpty ? 'платы' : description.trim()).replaceAll('"', '\\"');
     final escapedInfo =
         (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim()).replaceAll('"', '\\"');
-
-    final shipperBlock = (shipperName != null && shipperName.isNotEmpty)
-        ? '''
-            # =========================================================
-            # 1. ОТПРАВИТЕЛЬ: $shipperName
-            # =========================================================
-            print("-> Фиксирую отправителя: $shipperName...")
-            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
-            shipper_inp.click()
-            shipper_inp.press("ControlOrMeta+A")
-            shipper_inp.press("Backspace")
-            shipper_inp.fill("$shipperName")
-            page.wait_for_timeout(1500)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-'''
-        : '''
-            # Отправитель (ООО «Печатные платы») зафиксирован в кабинете по умолчанию
-''';
 
     return '''import os
 import sys
@@ -710,9 +691,24 @@ def main():
             page.wait_for_load_state("networkidle")
 
             print("2. Заполняю данные...")
-$shipperBlock
+
             # =========================================================
-            # ПОЛУЧАТЕЛЬ: $escapedFirm
+            # 1. ОТПРАВИТЕЛЬ: $escapedShipper
+            # =========================================================
+            shipper_name = '$escapedShipper'
+            print(f"-> Фиксирую отправителя: {shipper_name}...")
+            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
+            shipper_inp.click()
+            shipper_inp.press("ControlOrMeta+A")
+            shipper_inp.press("Backspace")
+            shipper_inp.fill(shipper_name)
+            page.wait_for_timeout(1500)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+
+            # =========================================================
+            # 2. ПОЛУЧАТЕЛЬ: $escapedFirm
             # =========================================================
             consignee_name = '$escapedFirm'
             print(f"-> Вбиваю получателя: {consignee_name}...")
@@ -808,7 +804,7 @@ if __name__ == "__main__":
 ''';
   }
 
-  // Генерация для Панели 2: Электроконнект Мейджер Экспресс
+  // Генерация для Панели 2: Электроконнект Мейджер Экспресс (ООО «ЭЛЕКТРОконнект» Москва)
   Future<void> _generateMajorExpressScript() async {
     final firmName = _majorFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -883,7 +879,7 @@ if __name__ == "__main__":
     }
   }
 
-  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat — отправитель зафиксирован по умолчанию)
+  // Генерация для Панели 3: Платы Мейджер Экспресс (ООО«Печатные платы» — без пробела, как в адресной книге)
   Future<void> _generatePlatyMajorExpressScript() async {
     final firmName = _platyFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -914,7 +910,7 @@ if __name__ == "__main__":
       final scriptContent = _buildMajorExpressPythonScript(
         login: 'Palat',
         password: 'Z250121e9a7a762',
-        shipperName: null,
+        shipperName: 'ООО«Печатные платы»',
         consigneeName: firmName,
         pickupDate: pickupDate,
         pickupTime: pickupTime,
