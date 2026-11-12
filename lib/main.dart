@@ -131,7 +131,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
 
-  // Прикрепления в чате (фото или файл)
   File? _chatImage;
   File? _chatAttachedFile;
 
@@ -143,10 +142,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
     'qwen/qwen3.8-27b',
-    'openai/gpt-oss-safeguard-20b',
-    'meta-llama/llama-prompt-guard-2-86m',
-    'canopylabs/orpheus-v1-english',
-    'llama-3.2-11b-vision-preview'
+    'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'llama-3.2-11b-vision-preview',
   ];
 
   String _selectedModel = 'openai/gpt-oss-120b';
@@ -550,9 +548,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     try {
       String finalPromptForApi = displayPrompt;
 
-      // Если прикреплен документ — извлекаем его содержимое для ИИ
       if (activeDoc != null && activeDoc.existsSync()) {
-        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 400);
+        // Ограничиваем размер файла до 13000 символов (~4000 токенов), чтобы не упираться в лимит Groq 7000 ITPM
+        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 120, maxChars: 13000);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
@@ -604,18 +602,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 150);
+      // 1. Читаем файл Посылки (обычно 5–50 строк)
+      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 100, maxChars: 6000);
 
+      // 2. Извлекаем из Посылки ключевые токены (номера PS и номера счетов) для умной фильтрации огромных сводок
+      final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
+
+      // 3. Читаем из Сводки ПП только релевантные строки (сжимает 20000 токенов до ~1500!)
       String svodkaPpContent = '';
       final ppFile = _svodkaPpFile;
       if (ppFile != null && ppFile.existsSync()) {
-        svodkaPpContent = await _readAnyFileSafe(ppFile, maxRows: 600);
+        svodkaPpContent = await _readAnyFileSafe(
+          ppFile,
+          maxRows: 150,
+          maxChars: 6000,
+          filterTokens: filterTokens,
+        );
       }
 
+      // 4. Читаем из Сводки Филиала только релевантные строки
       String svodkaFilialContent = '';
       final filFile = _svodkaFilialFile;
       if (filFile != null && filFile.existsSync()) {
-        svodkaFilialContent = await _readAnyFileSafe(filFile, maxRows: 1500);
+        svodkaFilialContent = await _readAnyFileSafe(
+          filFile,
+          maxRows: 150,
+          maxChars: 6000,
+          filterTokens: filterTokens,
+        );
       }
 
       final promptText = '''
@@ -655,13 +669,44 @@ $svodkaFilialContent
     }
   }
 
-  // Прямой парсер XLSX через ZIP + XML (никогда не падает на Null check внутри стилей 1С)
-  Future<String> _readAnyFileSafe(File file, {int maxRows = 500}) async {
+  // Извлекаем все коды PS (например, PS-1234, 12345) и номера счетов из файла Посылка
+  Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
+    final tokens = <String>{};
+    final lines = posylkaCsv.split('\n');
+    for (int i = 1; i < lines.length; i++) {
+      final parts = lines[i].split(';');
+      for (final rawPart in parts) {
+        final clean = rawPart.trim();
+        if (clean.length >= 3) {
+          // Ищем номера PS или числовые коды счетов/позиций
+          if (RegExp(r'^[A-Za-zА-Яа-я0-9\-/]+$').hasMatch(clean)) {
+            tokens.add(clean.toLowerCase());
+            // Если есть формат типа PS-12345 или 1234/26, добавляем и цифровую часть
+            final digits = RegExp(r'\d{3,}').allMatches(clean).map((m) => m.group(0)!);
+            tokens.addAll(digits);
+          }
+        }
+      }
+    }
+    return tokens;
+  }
+
+  Future<String> _readAnyFileSafe(
+    File file, {
+    int maxRows = 300,
+    int maxChars = 12000,
+    Set<String>? filterTokens,
+  }) async {
+    String rawText = '';
     final path = file.path.toLowerCase();
+
     if (path.endsWith('.xlsx')) {
-      return await _parseXlsxDirectlyViaXml(file, maxRows: maxRows);
+      rawText = await _parseXlsxDirectlyViaXml(
+        file,
+        maxRows: maxRows,
+        filterTokens: filterTokens,
+      );
     } else if (path.endsWith('.xls')) {
-      // Попытка чтения старого формата .xls
       try {
         final bytes = await file.readAsBytes();
         final excel = ex.Excel.decodeBytes(bytes);
@@ -675,32 +720,38 @@ $svodkaFilialContent
             }
           }
         }
-        return sb.toString();
+        rawText = sb.toString();
       } catch (_) {
-        return '[Файл .xls старого бинарного формата — пересохраните в .xlsx или .csv]';
+        rawText = '[Файл .xls старого бинарного формата — пересохраните в .xlsx или .csv]';
       }
     } else {
-      // Чтение текстовых форматов (CSV, TXT, JSON, LOG и т.д.)
       try {
         final bytes = await file.readAsBytes();
         try {
-          return utf8.decode(bytes);
+          rawText = utf8.decode(bytes);
         } catch (_) {
-          // Фоллбек на кодировку Windows-1251 для русских CSV из 1С
-          return latin1.decode(bytes);
+          rawText = latin1.decode(bytes);
         }
       } catch (e) {
-        return '[Не удалось прочитать текстовый файл: $e]';
+        rawText = '[Не удалось прочитать текстовый файл: $e]';
       }
     }
+
+    if (rawText.length > maxChars) {
+      return '${rawText.substring(0, maxChars)}\n... [Обрезано по лимиту токенов API]';
+    }
+    return rawText;
   }
 
-  Future<String> _parseXlsxDirectlyViaXml(File file, {int maxRows = 500}) async {
+  Future<String> _parseXlsxDirectlyViaXml(
+    File file, {
+    int maxRows = 300,
+    Set<String>? filterTokens,
+  }) async {
     try {
       final bytes = await file.readAsBytes();
       final archive = ZipDecoder().decodeBytes(bytes);
 
-      // 1. Читаем таблицу общих строк (sharedStrings.xml)
       List<String> sharedStrings = [];
       final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
       if (sharedStringsFile != null) {
@@ -715,7 +766,6 @@ $svodkaFilialContent
         }
       }
 
-      // 2. Ищем все листы (xl/worksheets/sheet1.xml, sheet2.xml и т.д.)
       final sheetFiles = archive.files
           .where((f) => f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
           .toList()
@@ -727,7 +777,10 @@ $svodkaFilialContent
 
       final sb = StringBuffer();
 
-      for (final sheetFile in sheetFiles) {
+      // Читаем только первый основной лист (или первые два, если их несколько), чтобы не тянуть мусорные справочники
+      final sheetsToRead = sheetFiles.take(2);
+
+      for (final sheetFile in sheetsToRead) {
         final sheetName = sheetFile.name.split('/').last.replaceAll('.xml', '');
         sb.writeln('Лист: $sheetName');
 
@@ -743,31 +796,29 @@ $svodkaFilialContent
           final cells = rowEl.findAllElements('c').toList();
           if (cells.isEmpty) continue;
 
-          // Вычисляем индексы колонок по буквам (A, B, C... AA, AB...)
           Map<int, String> rowMap = {};
           int maxColIdx = 0;
 
           for (final c in cells) {
             final ref = c.getAttribute('r') ?? '';
             final colIdx = _columnLettersToIndex(ref);
+            // Ограничиваем ширину таблицы первыми 20 колонками, чтобы отсечь пустое форматирование справа
+            if (colIdx > 20) continue;
             if (colIdx > maxColIdx) maxColIdx = colIdx;
 
             final type = c.getAttribute('t');
             String cellVal = '';
 
             if (type == 's') {
-              // Ссылка на sharedStrings
               final vEl = c.findElements('v').firstOrNull;
               final idx = int.tryParse(vEl?.innerText ?? '');
               if (idx != null && idx >= 0 && idx < sharedStrings.length) {
                 cellVal = sharedStrings[idx];
               }
             } else if (type == 'inlineStr') {
-              // Встроенная строка
               final tEl = c.findAllElements('t').firstOrNull;
               cellVal = tEl?.innerText ?? '';
             } else {
-              // Число или формула
               final vEl = c.findElements('v').firstOrNull;
               cellVal = vEl?.innerText ?? '';
             }
@@ -784,18 +835,51 @@ $svodkaFilialContent
             rowValues.add(v);
           }
 
-          if (hasAnyData) {
+          // Убираем висячие пустые разделители в конце строки
+          while (rowValues.isNotEmpty && rowValues.last.isEmpty) {
+            rowValues.removeLast();
+          }
+
+          if (hasAnyData && rowValues.isNotEmpty) {
             parsedRows.add(rowValues.join(';'));
           }
         }
 
         if (parsedRows.isEmpty) continue;
 
-        // Всегда берем заголовок (первая непустая строка) + последние maxRows строк
+        // Всегда пишем заголовок
         sb.writeln(parsedRows.first);
-        final startIdx = parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
-        for (int i = startIdx; i < parsedRows.length; i++) {
-          sb.writeln(parsedRows[i]);
+
+        if (filterTokens != null && filterTokens.isNotEmpty) {
+          // Умная фильтрация: оставляем только строки, где встречаются PS или счета из Посылки
+          int matchedCount = 0;
+          for (int i = 1; i < parsedRows.length; i++) {
+            final rowLower = parsedRows[i].toLowerCase();
+            bool matches = false;
+            for (final token in filterTokens) {
+              if (rowLower.contains(token)) {
+                matches = true;
+                break;
+              }
+            }
+            if (matches) {
+              sb.writeln(parsedRows[i]);
+              matchedCount++;
+              if (matchedCount >= maxRows) break;
+            }
+          }
+          // Если по фильтрам ничего не нашлось, берем последние 40 строк как фоллбек
+          if (matchedCount == 0) {
+            final fallbackStart = parsedRows.length > 41 ? (parsedRows.length - 40) : 1;
+            for (int i = fallbackStart; i < parsedRows.length; i++) {
+              sb.writeln(parsedRows[i]);
+            }
+          }
+        } else {
+          final startIdx = parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
+          for (int i = startIdx; i < parsedRows.length; i++) {
+            sb.writeln(parsedRows[i]);
+          }
         }
       }
 
@@ -830,7 +914,10 @@ $svodkaFilialContent
     formattedMessages.add({'role': 'system', 'content': systemInstruction});
 
     var msgList = messages as List;
-    for (int i = 0; i < msgList.length; i++) {
+    // Берем не более 8 последних сообщений истории, чтобы не перегружать лимит токенов
+    final startMsgIdx = msgList.length > 8 ? (msgList.length - 8) : 0;
+
+    for (int i = startMsgIdx; i < msgList.length; i++) {
       var msg = msgList[i] as ChatMessage;
       final isLastUser = (i == msgList.length - 1 && msg.role == 'user');
       final textToSend = (isLastUser && overrideLastUserText != null)
