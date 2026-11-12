@@ -565,15 +565,34 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _buildMajorExpressPythonScript({
     required String login,
     required String password,
-    required String shipperName,
+    String? shipperName,
     required String consigneeName,
     required String weight,
     required String places,
   }) {
-    final escapedShipper = shipperName.replaceAll("'", "\\'");
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
     final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
     final safePlaces = places.trim().isEmpty ? '1' : places.trim();
+
+    final shipperBlock = (shipperName != null && shipperName.isNotEmpty)
+        ? '''
+            # =========================================================
+            # 1. ОТПРАВИТЕЛЬ: $shipperName
+            # =========================================================
+            print("-> Фиксирую отправителя: $shipperName...")
+            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
+            shipper_inp.click()
+            shipper_inp.press("ControlOrMeta+A")
+            shipper_inp.press("Backspace")
+            shipper_inp.fill("$shipperName")
+            page.wait_for_timeout(1500)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+'''
+        : '''
+            # Отправитель (ООО «Печатные платы») зафиксирован в кабинете по умолчанию
+''';
 
     return '''import os
 import sys
@@ -634,23 +653,9 @@ def main():
             page.wait_for_load_state("networkidle")
 
             print("2. Заполняю данные...")
-
+$shipperBlock
             # =========================================================
-            # 1. ОТПРАВИТЕЛЬ: $escapedShipper
-            # =========================================================
-            print("-> Фиксирую отправителя: $escapedShipper...")
-            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
-            shipper_inp.click()
-            shipper_inp.press("ControlOrMeta+A")
-            shipper_inp.press("Backspace")
-            shipper_inp.fill("$escapedShipper")
-            page.wait_for_timeout(1500)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-
-            # =========================================================
-            # 2. ПОЛУЧАТЕЛЬ: $escapedFirm
+            # ПОЛУЧАТЕЛЬ: $escapedFirm
             # =========================================================
             consignee_name = '$escapedFirm'
             print(f"-> Вбиваю получателя: {consignee_name}...")
@@ -806,7 +811,7 @@ if __name__ == "__main__":
     }
   }
 
-  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat)
+  // Генерация для Панели 3: Платы Мейджер Экспресс (Palat — отправитель уже зафиксирован по умолчанию)
   Future<void> _generatePlatyMajorExpressScript() async {
     final firmName = _platyFirmController.text.trim();
     if (firmName.isEmpty) {
@@ -825,7 +830,7 @@ if __name__ == "__main__":
       final scriptContent = _buildMajorExpressPythonScript(
         login: 'Palat',
         password: 'Z250121e9a7a762',
-        shipperName: 'ООО «Печатные платы»',
+        shipperName: null,
         consigneeName: firmName,
         weight: weight,
         places: places,
