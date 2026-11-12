@@ -29,17 +29,22 @@ class MainActivity: FlutterActivity(), TextToSpeech.OnInitListener {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            if (call.method == "speak") {
-                val text = call.argument<String>("text")
-                if (isTtsReady && !text.isNullOrEmpty()) {
-                    tts?.stop()
-                    tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "BlackPocketTTS")
-                    result.success(true)
-                } else {
-                    result.success(false)
+            when (call.method) {
+                "speak" -> {
+                    val text = call.argument<String>("text")
+                    if (isTtsReady && !text.isNullOrEmpty()) {
+                        tts?.stop()
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "BlackPocketTTS")
+                        result.success(true)
+                    } else {
+                        result.success(false)
+                    }
                 }
-            } else {
-                result.notImplemented()
+                "stop" -> {
+                    tts?.stop()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
             }
         }
     }
