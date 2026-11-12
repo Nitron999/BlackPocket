@@ -788,13 +788,10 @@ def main():
             page.wait_for_load_state("networkidle")
             page.wait_for_timeout(3500)
 
-            # --- 7. Автоматическая печать PDF (2 клика принтера / Ctrl+P + --kiosk-printing) ---
-            print("-> Отправляю накладную на печать...")
+            # --- 7. Автоматическая печать чистого PDF (клик по иконке принтера PDF + --kiosk-printing) ---
+            print("-> Отправляю PDF накладной на печать...")
             try:
-                # Передаём фокус в окно PDF-просмотрщика и запускаем печать
-                page.mouse.click(640, 450)
-                page.wait_for_timeout(500)
-                page.keyboard.press("Control+p")
+                page.mouse.click(1152, 200)
                 page.wait_for_timeout(1500)
             except Exception as pe:
                 print(f"-> Подсказка по автопечати: {pe}")
