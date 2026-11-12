@@ -646,7 +646,8 @@ def main():
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
-                    "--no-sandbox"
+                    "--no-sandbox",
+                    "--kiosk-printing"
                 ]
             )
             context = browser.new_context(
@@ -782,13 +783,24 @@ def main():
             print("-> Жду подготовку PDF на сервере...")
             page.wait_for_timeout(3000)
 
-            print("-> Открываю окно печати...")
+            print("-> Открываю PDF накладной...")
             page.get_by_role("button", name="Печать", exact=True).click()
             page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3500)
 
-            print("\\nГОТОВО! Накладная открыта на экране. Печатай руками.")
-            input("Когда закончишь, нажми ENTER в этой консоли, чтобы закрыть браузер...")
+            # --- 7. Автоматическая печать PDF (2 клика принтера / Ctrl+P + --kiosk-printing) ---
+            print("-> Отправляю накладную на печать...")
+            try:
+                # Передаём фокус в окно PDF-просмотрщика и запускаем печать
+                page.mouse.click(640, 450)
+                page.wait_for_timeout(500)
+                page.keyboard.press("Control+p")
+                page.wait_for_timeout(1500)
+            except Exception as pe:
+                print(f"-> Подсказка по автопечати: {pe}")
+
+            print("\\nГОТОВО! Задание отправлено на принтер по умолчанию.")
+            input("Когда накладная распечатается, нажми ENTER в этой консоли, чтобы закрыть браузер...")
             browser.close()
 
     except Exception as e:
@@ -803,7 +815,6 @@ if __name__ == "__main__":
   Future<void> _executeOrShareScript(String filePath, String safeFileName) async {
     if (Platform.isWindows) {
       try {
-        // Прямой запуск Python-скрипта в отдельном окне консоли на Windows
         await Process.start(
           'cmd',
           ['/c', 'start', 'Major Express — $safeFileName', 'python', filePath],
