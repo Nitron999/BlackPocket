@@ -165,6 +165,9 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
+  final TextEditingController _majorFirmController = TextEditingController();
+  final TextEditingController _majorWeightController = TextEditingController(text: '1');
+  final TextEditingController _majorPlacesController = TextEditingController(text: '1');
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
 
@@ -172,6 +175,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   bool _isLoading = false;
   bool _isLogisticsExpanded = false;
+  bool _isMajorExpanded = false;
   String _apiStatus = 'Ключ не настроен';
   bool _isKeyValidating = false;
   bool? _isKeyWorking;
@@ -188,6 +192,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   ChatSession? _currentSession;
   String? _lastCsvResult;
   String _lastOtpravkaHeader = '';
+  String? _lastGeneratedMajorScriptPath;
 
   final _availableModels = [
     'qwen/qwen3.8-27b',
@@ -214,6 +219,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _inputFocusNode.dispose();
+    _majorFirmController.dispose();
+    _majorWeightController.dispose();
+    _majorPlacesController.dispose();
     super.dispose();
   }
 
@@ -290,7 +298,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_sessions.isEmpty) {
       _createNewChat(
         initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦.',
+            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панели сверху 📦.',
       );
     } else {
       setState(() {
@@ -527,7 +535,268 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================================
-  // ПРЯМОЙ АВТОНОМНЫЙ АЛГОРИТМ СВЕДЕНИЯ НАКЛАДНЫХ (БЕЗ ОГРАНИЧЕНИЙ ТОКЕНОВ)
+  // МОДУЛЬ 2: ЭЛЕКТРОКОННЕКТ МЕЙДЖЕР ЭКСПРЕСС (ГЕНЕРАЦИЯ .PY ДЛЯ WINDOWS)
+  // =========================================================================
+
+  String _sanitizeFilename(String raw) {
+    final cleaned = raw
+        .replaceAll('"', '')
+        .replaceAll('«', '')
+        .replaceAll('»', '')
+        .replaceAll(RegExp(r'[\\/:*?<>|]'), '_')
+        .trim();
+    return cleaned.isEmpty ? 'Major_Express_Order' : cleaned;
+  }
+
+  String _buildMajorExpressPythonScript({
+    required String consigneeName,
+    required String weight,
+    required String places,
+  }) {
+    final escapedFirm = consigneeName.replaceAll("'", "\\'");
+    final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
+    final safePlaces = places.trim().isEmpty ? '1' : places.trim();
+
+    return '''import os
+import sys
+import datetime
+import time
+from playwright.sync_api import sync_playwright
+
+LOGIN = "Electroconnect"
+PASSWORD = "Y2501212e4e5d62"
+
+def main():
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=False,
+                slow_mo=100,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--no-sandbox"
+                ]
+            )
+            context = browser.new_context(
+                viewport={'width': 1280, 'height': 800},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            page = context.new_page()
+
+            print("1. Открываю страницу входа Major Express...")
+            page.goto("https://lke.major-express.ru/login.aspx")
+            page.wait_for_load_state("domcontentloaded")
+
+            # Ввод логина
+            login_input = page.locator("input[name='TextBox1']")
+            login_input.click()
+            login_input.fill(LOGIN)
+
+            # Ввод пароля
+            pass_input = page.locator("input[name='TextBox2']")
+            pass_input.click()
+            pass_input.fill(PASSWORD)
+            page.wait_for_timeout(500)
+
+            print("-> Нажимаю 'Вход'...")
+            pass_input.press("Enter")
+            try:
+                page.locator("#Button1, input[name='Button1'], input[value='Вход']").first.click(timeout=3000)
+            except Exception:
+                pass
+
+            print("\\n>>> Если появилась капча — реши её в браузере и нажми 'Вход'!")
+            page.wait_for_selector("a:has-text('ЗАКАЗЫ')", timeout=180000)
+            print("-> Вход выполнен. Перехожу к созданию заказа...")
+
+            page.get_by_role("link", name="ЗАКАЗЫ").click()
+            page.get_by_role("button", name="Вызвать курьера").click()
+            page.wait_for_load_state("networkidle")
+
+            print("2. Заполняю данные...")
+
+            # =========================================================
+            # 1. ОТПРАВИТЕЛЬ: ООО «ЭЛЕКТРОконнект» Москва
+            # =========================================================
+            print("-> Фиксирую отправителя: ООО «ЭЛЕКТРОконнект» Москва...")
+            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
+            shipper_inp.click()
+            shipper_inp.press("ControlOrMeta+A")
+            shipper_inp.press("Backspace")
+            shipper_inp.fill("ООО «ЭЛЕКТРОконнект» Москва")
+            page.wait_for_timeout(1500)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+
+            # =========================================================
+            # 2. ПОЛУЧАТЕЛЬ: $escapedFirm
+            # =========================================================
+            consignee_name = '$escapedFirm'
+            print(f"-> Вбиваю получателя: {consignee_name}...")
+            
+            consignee_inp = page.locator("#ctl00_MainPlaceHolder_o_cc_ddlConsignee_I")
+            consignee_inp.click()
+            consignee_inp.press("ControlOrMeta+A")
+            consignee_inp.press("Backspace")
+            consignee_inp.fill(consignee_name)
+            page.wait_for_timeout(1500)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(1000)
+
+            # --- 3. Дата забора ---
+            today_str = datetime.date.today().strftime("%d.%m.%Y")
+            date_inp = page.locator("#ctl00_MainPlaceHolder_o_deDateZabor_I")
+            date_inp.click()
+            date_inp.press("ControlOrMeta+A")
+            date_inp.press("Backspace")
+            date_inp.fill(today_str)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+
+            # --- 4. Время забора (14:00 - 18:00) ---
+            print("-> Устанавливаю интервал 14:00 - 18:00...")
+            time_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlZakazTimeNum_I")
+            time_inp.click()
+            time_inp.press("ControlOrMeta+A")
+            time_inp.press("Backspace")
+            time_inp.fill("14")
+            page.wait_for_timeout(1500)
+            try:
+                page.locator("[id*='ctl00_MainPlaceHolder_o_ddlZakazTimeNum_DDD'] td").filter(has_text="14").first.click(timeout=3000)
+            except Exception:
+                page.keyboard.press("ArrowDown")
+                page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+
+            # --- 5. Параметры груза ---
+            page.locator("#ctl00_MainPlaceHolder_o_tbWeight_I").fill("$safeWeight")
+            page.locator("#ctl00_MainPlaceHolder_o_tbPlaceCount_I").fill("$safePlaces")
+            
+            # Описание груза: "платы"
+            desc_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlDescription_I")
+            desc_inp.click()
+            desc_inp.press("ControlOrMeta+A")
+            desc_inp.press("Backspace")
+            desc_inp.fill("платы")
+            page.keyboard.press("Enter")
+
+            # Примечание (основание): "УПД"
+            rem_inp = page.locator("#ctl00_MainPlaceHolder_o_tbRem")
+            rem_inp.fill("УПД")
+
+            print("-> Все поля заполнены. Создаю заказ...")
+            page.wait_for_timeout(1000)
+
+            # --- 6. Создание заказа ---
+            page.once("dialog", lambda dialog: dialog.accept())
+            page.get_by_role("button", name="Создать заказ").click()
+
+            try:
+                page.get_by_role("button", name="OK").click(timeout=6000)
+            except Exception:
+                pass
+
+            print("-> Перехожу к созданию накладной...")
+            page.locator("span").filter(has_text="Создать накладную").click()
+            page.wait_for_load_state("networkidle")
+
+            page.get_by_role("button", name="Сохранить накладную").click()
+            page.wait_for_load_state("networkidle")
+
+            # Ждем генерацию PDF на сервере Major Express, чтобы окно печати не было пустым
+            print("-> Жду подготовку PDF на сервере...")
+            page.wait_for_timeout(3000)
+
+            print("-> Открываю окно печати...")
+            page.get_by_role("button", name="Печать", exact=True).click()
+            page.wait_for_load_state("networkidle")
+            page.wait_for_timeout(2000)
+
+            print("\\nГОТОВО! Накладная открыта на экране. Печатай руками.")
+            input("Когда закончишь, нажми ENTER в этой консоли, чтобы закрыть браузер...")
+            browser.close()
+
+    except Exception as e:
+        print(f"\\n[ОШИБКА]: {e}")
+        input("Нажми ENTER для выхода...")
+
+if __name__ == "__main__":
+    main()
+''';
+  }
+
+  Future<void> _generateMajorExpressScript() async {
+    final firmName = _majorFirmController.text.trim();
+    if (firmName.isEmpty) {
+      _showSnackbar('Впиши название фирмы-получателя!');
+      return;
+    }
+
+    final weight = _majorWeightController.text.trim().isEmpty
+        ? '1'
+        : _majorWeightController.text.trim();
+    final places = _majorPlacesController.text.trim().isEmpty
+        ? '1'
+        : _majorPlacesController.text.trim();
+
+    try {
+      final scriptContent = _buildMajorExpressPythonScript(
+        consigneeName: firmName,
+        weight: weight,
+        places: places,
+      );
+
+      final dir = await getApplicationDocumentsDirectory();
+      final safeFileName = '${_sanitizeFilename(firmName)}.py';
+      final filePath = '${dir.path}/$safeFileName';
+
+      final f = File(filePath);
+      await f.writeAsString(scriptContent, encoding: utf8);
+
+      setState(() {
+        _lastGeneratedMajorScriptPath = filePath;
+      });
+
+      _appendMessage(
+        'user',
+        '🚚 Электроконнект Мейджер Экспресс: сформировать скрипт для «$firmName» (вес: $weight кг, мест: $places)',
+      );
+
+      final botReply = '''
+✅ Скрипт Major Express для Windows готов!
+• Отправитель: ООО «ЭЛЕКТРОконнект» Москва
+• Получатель: $firmName
+• Параметры: вес $weight кг, мест $places, «платы», «УПД»
+• Файл: $safeFileName
+
+Нажми зелёную кнопку справа от «СФОРМИРОВАТЬ СКРИПТ», чтобы открыть/отправить файл `.py` на компьютер, или скопируй код ниже:
+
+```python
+$scriptContent
+```''';
+
+      _appendMessage('assistant', botReply);
+      await _speak('Скрипт Мейджер Экспресс для фирмы $firmName готов, Шурик!');
+    } catch (e) {
+      _showSnackbar('Ошибка создания скрипта: $e');
+    }
+  }
+
+  Future<void> _openLastMajorScript() async {
+    final path = _lastGeneratedMajorScriptPath;
+    if (path == null || !File(path).existsSync()) {
+      _showSnackbar('Сначала сформируй скрипт!');
+      return;
+    }
+    await OpenFilex.open(path);
+  }
+
+  // =========================================================================
+  // МОДУЛЬ 1: ПРЯМОЙ АВТОНОМНЫЙ АЛГОРИТМ СВЕДЕНИЯ НАКЛАДНЫХ (БЕЗ ЛИМИТОВ)
   // =========================================================================
 
   String _cleanNumStr(String raw) {
@@ -1118,7 +1387,7 @@ $finalCsv
 
       int currentRow = 0;
 
-      // 1. Шапка таблицы (бирюзовая, с жёлтыми ячейками Отгрузить! и на складе!)
+      // 1. Шапка таблицы
       final headerCells = rawLines[0].split(';');
       sheet.setRowHeight(currentRow, 42);
       for (int c = 0; c < 13; c++) {
@@ -1146,7 +1415,7 @@ $finalCsv
       }
       currentRow++;
 
-      // 2. Пустой отступ + строка даты отправки + пустой отступ (соседи справа без текста, чтобы дата не обрезалась!)
+      // 2. Пустой отступ + строка даты отправки + пустой отступ
       _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
       currentRow++;
 
@@ -1220,7 +1489,6 @@ $finalCsv
           String? bgColor;
           String fontColor = '#FF000000';
 
-          // Заливка строки только при "Самовывоз" (розовая в ПП, жёлто-оранжевая в Филиале)
           if (isSamovyvoz) {
             if (!isInsideFilialBlock) {
               bgColor = '#FFFF99CC';
@@ -1229,22 +1497,18 @@ $finalCsv
             }
           }
 
-          // Счет пп (колонка C, индекс 2): красным шрифтом, без лишней заливки
           if (c == 2 && val.isNotEmpty) {
             fontColor = '#FFFF0000';
           }
 
-          // Этикетка "ОТК" (колонка H, индекс 7): синим жирным
           if (c == 7 && val.toUpperCase() == 'ОТК') {
             fontColor = '#FF0000FF';
           }
 
-          // Отгрузить! (колонка G, индекс 6): всегда красным жирным
           if (c == 6) {
             fontColor = '#FFFF0000';
           }
 
-          // Доставка (колонка K, индекс 10): ДМ, К, Самовывоз красным, а СДЭК чёрным
           if (c == 10 && val.isNotEmpty) {
             if (isSdek) {
               fontColor = '#FF000000';
@@ -1615,7 +1879,7 @@ $finalCsv
                   ? const Color(0xFF38BDF8)
                   : Colors.white70,
             ),
-            tooltip: 'Модуль логистики',
+            tooltip: 'Сведение накладных',
             onPressed: () {
               setState(() {
                 _isLogisticsExpanded = !_isLogisticsExpanded;
@@ -1631,6 +1895,7 @@ $finalCsv
       body: Column(
         children: [
           _buildLogisticsTopPanel(),
+          _buildMajorExpressTopPanel(),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -1994,6 +2259,164 @@ $finalCsv
                     tooltip: 'Скачать Excel',
                     onPressed: _exportToFormattedExcel,
                   )
+                ]
+              ],
+            ),
+          ]
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMajorExpressTopPanel() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D1422),
+        border: Border(
+          bottom: BorderSide(color: const Color(0xFF1E293B).withOpacity(0.8)),
+        ),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isMajorExpanded = !_isMajorExpanded;
+              });
+            },
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.send_time_extension_outlined,
+                  size: 18,
+                  color: Colors.amberAccent,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Электроконнект Мейджер Экспресс',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white70,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  _isMajorExpanded
+                      ? Icons.keyboard_arrow_up
+                      : Icons.keyboard_arrow_down,
+                  size: 18,
+                  color: Colors.white54,
+                ),
+              ],
+            ),
+          ),
+          if (_isMajorExpanded) ...[
+            const SizedBox(height: 10),
+            TextField(
+              controller: _majorFirmController,
+              style: const TextStyle(fontSize: 14, color: Colors.white),
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'Фирма-получатель (например: ООО "Нейрософт")',
+                labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                filled: true,
+                fillColor: const Color(0xFF182235),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _majorWeightController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Вес (кг)',
+                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF182235),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _majorPlacesController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(fontSize: 14, color: Colors.white),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: 'Мест',
+                      labelStyle: const TextStyle(fontSize: 12, color: Colors.white54),
+                      filled: true,
+                      fillColor: const Color(0xFF182235),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFD97706),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.code, size: 18),
+                    label: const Text(
+                      'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    onPressed: _generateMajorExpressScript,
+                  ),
+                ),
+                if (_lastGeneratedMajorScriptPath != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF16A34A),
+                      foregroundColor: Colors.white,
+                    ),
+                    icon: const Icon(Icons.share),
+                    tooltip: 'Открыть / Отправить файл .py',
+                    onPressed: _openLastMajorScript,
+                  ),
                 ]
               ],
             ),
