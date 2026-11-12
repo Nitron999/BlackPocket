@@ -105,6 +105,56 @@ class ChatSession {
   }
 }
 
+class _LogisticsItem {
+  String firm;
+  String ps;
+  String schetPp;
+  String schN;
+  String poSchetu;
+  String polucheno;
+  String otgruzit;
+  String etiketka;
+  String naSklade;
+  String dolg;
+  String dostavka;
+  String raskhodnaya;
+  String major;
+  bool isFilial;
+
+  _LogisticsItem({
+    required this.firm,
+    required this.ps,
+    required this.schetPp,
+    required this.schN,
+    required this.poSchetu,
+    required this.polucheno,
+    required this.otgruzit,
+    required this.etiketka,
+    this.naSklade = '',
+    this.dolg = '',
+    required this.dostavka,
+    this.raskhodnaya = '',
+    this.major = '',
+    required this.isFilial,
+  });
+
+  List<String> toRowCells() => [
+        firm,
+        ps,
+        schetPp,
+        schN,
+        poSchetu,
+        polucheno,
+        otgruzit,
+        etiketka,
+        naSklade,
+        dolg,
+        dostavka,
+        raskhodnaya,
+        major,
+      ];
+}
+
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
 
@@ -137,6 +187,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   var _sessions = [];
   ChatSession? _currentSession;
   String? _lastCsvResult;
+  String _lastOtpravkaHeader = '';
 
   final _availableModels = [
     'qwen/qwen3.8-27b',
@@ -146,35 +197,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   ];
 
   String _selectedModel = 'qwen/qwen3.8-27b';
-
-  static const String _logisticsSystemPrompt = '''
-Сопоставь данные из трех таблиц складского учета (ООО «Печатные платы» и филиал «ЭЛЕКТРОконнект») и верни результат строго в формате CSV без лишнего текста.
-
-Первая строка CSV (заголовок из 13 колонок через точку с запятой ';'):
-Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major
-
-Правила заполнения:
-1. Блок «Голова» (позиции до строки "филиал"):
-- Найди каждую позицию по артикулу PS в «Сводке ПП». Заполни название Фирмы, если в Посылке оно пустое.
-- Счет пп: московский счет из сводки ПП с ведущими нулями (например: 0654, 0644, 0611).
-- По счету: полный тираж из сводки ПП (колонка «количество»). Не путай с «Получено»!
-- Этикетка: всегда "ОТК".
-- Доставка: "ДМ", "СДЭК", "К" или "Самовывоз".
-
-2. Разделитель между блоками (ровно такая строка):
-филиал;;;;;;;;;;;;
-
-3. Блок «Филиал» (позиции после строки "филиал"):
-- Счет пп: оставь пустым.
-- Этикетка: оставь пустым (без ОТК).
-- По счету: найди в «Сводке Филиал» по связке [Сч/Н + PS] полный объем заказа из колонки «кол-во».
-- Доставка: для Нейрософт и Кузьминский укажи "К"; для АТБ-Электроника укажи "ДМ"; для остальных укажи "СДЭК" или "Самовывоз" по данным сводки.
-
-4. Сортировка внутри каждого блока:
-Сначала ДМ, затем СДЭК, затем К, затем Самовывоз.
-
-Выведи только готовый блок ```csv ... ``` без пояснений.
-''';
 
   @override
   void initState() {
@@ -268,7 +290,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_sessions.isEmpty) {
       _createNewChat(
         initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦.',
+            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦 (сведение теперь работает мгновенно и без лимитов).',
       );
     } else {
       setState(() {
@@ -504,6 +526,479 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
+  // =========================================================================
+  // ПРЯМОЙ АВТОНОМНЫЙ АЛГОРИТМ СВЕДЕНИЯ НАКЛАДНЫХ (БЕЗ ОГРАНИЧЕНИЙ ТОКЕНОВ)
+  // =========================================================================
+
+  String _cleanNumStr(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.endsWith('.0')) {
+      return trimmed.substring(0, trimmed.length - 2);
+    }
+    return trimmed;
+  }
+
+  String _mapDeliveryKeyword(String rawText) {
+    final low = rawText.toLowerCase();
+    if (low.contains('доставка москва') || low == 'дм') return 'ДМ';
+    if (low.contains('сдэк')) return 'СДЭК';
+    if (low.contains('самовывоз')) return 'Самовывоз';
+    if (low.contains('курьер') || low == 'к') return 'К';
+    return '';
+  }
+
+  int _deliverySortWeight(String delivery) {
+    switch (delivery.trim().toUpperCase()) {
+      case 'ДМ':
+        return 1;
+      case 'СДЭК':
+        return 2;
+      case 'К':
+        return 3;
+      case 'САМОВЫВОЗ':
+        return 4;
+      default:
+        return 5;
+    }
+  }
+
+  Future<void> _processLogistics() async {
+    final posFile = _posylkaFile;
+    if (posFile == null || !posFile.existsSync()) {
+      _showSnackbar('Выберите файл Посылки!');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _lastCsvResult = null;
+      _lastOtpravkaHeader = '';
+    });
+
+    final fileName = posFile.path.split(Platform.pathSeparator).last;
+    _appendMessage(
+      'user',
+      '📦 Прямое сведение накладной (авто-движок без лимитов): $fileName',
+    );
+
+    try {
+      // 1. Читаем лист "Посылка" из файла Посылки
+      final posRows = await _extractSheetMatrix(posFile, preferredSheetName: 'Посылка', maxCols: 14);
+      if (posRows.isEmpty) {
+        throw Exception('Лист "Посылка" пуст или не найден.');
+      }
+
+      // Ищем последнюю строку "ОТПРАВКА ..."
+      int startRowIdx = 0;
+      for (int i = posRows.length - 1; i >= 0; i--) {
+        final rowJoined = posRows[i].join(' ').toUpperCase();
+        if (rowJoined.contains('ОТПРАВКА')) {
+          startRowIdx = i;
+          for (final cell in posRows[i]) {
+            if (cell.toUpperCase().contains('ОТПРАВКА')) {
+              _lastOtpravkaHeader = cell.trim();
+              break;
+            }
+          }
+          break;
+        }
+      }
+
+      // Собираем позиции из последнего блока Посылки (Голова + Филиал)
+      final headItems = <_LogisticsItem>[];
+      final filialItems = <_LogisticsItem>[];
+      bool inFilial = false;
+
+      for (int i = startRowIdx + 1; i < posRows.length; i++) {
+        final r = posRows[i];
+        final c0 = r.isNotEmpty ? r[0].trim() : '';
+        final c1 = r.length > 1 ? _cleanNumStr(r[1]) : '';
+        final c2 = r.length > 2 ? r[2].trim() : '';
+        final c3 = r.length > 3 ? _cleanNumStr(r[3]) : '';
+        final c4 = r.length > 4 ? _cleanNumStr(r[4]) : '';
+        final c5 = r.length > 5 ? _cleanNumStr(r[5]) : '';
+        final c6 = r.length > 6 ? _cleanNumStr(r[6]) : '';
+        final c7 = r.length > 7 ? r[7].trim() : '';
+        final c8 = r.length > 8 ? r[8].trim() : '';
+        final c9 = r.length > 9 ? r[9].trim() : '';
+        final c10 = r.length > 10 ? r[10].trim() : '';
+        final c11 = r.length > 11 ? r[11].trim() : '';
+        final c12 = r.length > 12 ? r[12].trim() : '';
+
+        if (c0.toLowerCase() == 'филиал') {
+          inFilial = true;
+          continue;
+        }
+
+        // Пропускаем пустые разделительные строки
+        if (c1.isEmpty && c3.isEmpty) continue;
+
+        final item = _LogisticsItem(
+          firm: c0,
+          ps: c1,
+          schetPp: c2,
+          schN: c3,
+          poSchetu: c4,
+          polucheno: c5.isNotEmpty ? c5 : c4,
+          otgruzit: c6.isNotEmpty ? c6 : (c5.isNotEmpty ? c5 : c4),
+          etiketka: c7,
+          naSklade: c8,
+          dolg: c9,
+          dostavka: c10,
+          raskhodnaya: c11,
+          major: c12,
+          isFilial: inFilial,
+        );
+
+        if (inFilial) {
+          filialItems.add(item);
+        } else {
+          headItems.add(item);
+        }
+      }
+
+      // 2. Индексируем Сводку ПП (если загружена)
+      // Колонки в СВОДКА: C(2)=PS, E(4)=количество (тираж), M(12)=Счет Москва, N(13)=Сч/Н или ОТК, O(14)=Фирма
+      final Map<String, Map<String, String>> ppByPs = {};
+      if (_svodkaPpFile != null && _svodkaPpFile!.existsSync()) {
+        final ppRows = await _extractSheetMatrix(_svodkaPpFile!, preferredSheetName: 'СВОДКА', maxCols: 16);
+        String currentMoscowSchet = '';
+        String currentFirm = '';
+        String currentDelivery = '';
+
+        for (int i = 3; i < ppRows.length; i++) {
+          final r = ppRows[i];
+          final colA = r.isNotEmpty ? r[0].trim() : ''; // № заказа типа 09.061
+          final colB = r.length > 1 ? r[1].trim() : '';
+          final psVal = r.length > 2 ? _cleanNumStr(r[2]) : '';
+          final qtyVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
+          final moscowVal = r.length > 12 ? r[12].trim() : '';
+          final colN = r.length > 13 ? _cleanNumStr(r[13]) : '';
+          final firmVal = r.length > 14 ? r[14].trim() : '';
+
+          // Если началась новая заявка (заполнен № в колонке A или есть фирма/счет)
+          if (colA.isNotEmpty || firmVal.isNotEmpty) {
+            if (moscowVal.isNotEmpty && RegExp(r'^\d+$').hasMatch(moscowVal)) {
+              currentMoscowSchet = moscowVal;
+            } else if (colA.isNotEmpty && moscowVal.isEmpty) {
+              currentMoscowSchet = '';
+            }
+            if (firmVal.isNotEmpty && !firmVal.toLowerCase().startsWith('заявка')) {
+              currentFirm = firmVal;
+            }
+            currentDelivery = '';
+          }
+
+          // Проверяем слова доставки в строке (Курьер, Самовывоз и т.д.)
+          for (final cell in r) {
+            final mapped = _mapDeliveryKeyword(cell);
+            if (mapped.isNotEmpty) {
+              currentDelivery = mapped;
+            }
+          }
+
+          if (psVal.isNotEmpty && RegExp(r'^\d{5,}$').hasMatch(psVal)) {
+            ppByPs[psVal] = {
+              'firm': currentFirm,
+              'schetPp': currentMoscowSchet,
+              'poSchetu': qtyVal,
+              'schn': RegExp(r'^\d+$').hasMatch(colN) ? colN : '',
+              'dostavka': currentDelivery,
+            };
+          }
+        }
+      }
+
+      // 3. Индексируем Сводку Филиал (если загружена)
+      // Колонки в ФИЛИАЛ: A(0)=№ счета (Сч/Н), B(1)=Фирма / Доставка, E(4)=PS, H(7)=кол-во (полный заказ)
+      final Map<String, Map<String, String>> filBySchnPs = {};
+      final Map<String, Map<String, String>> filByPs = {};
+
+      if (_svodkaFilialFile != null && _svodkaFilialFile!.existsSync()) {
+        final filRows = await _extractSheetMatrix(_svodkaFilialFile!, preferredSheetName: 'ФИЛИАЛ', maxCols: 16);
+        String currentSchn = '';
+        String currentFirm = '';
+        String currentDelivery = '';
+
+        for (int i = 12; i < filRows.length; i++) {
+          final r = filRows[i];
+          final colA = r.isNotEmpty ? _cleanNumStr(r[0]) : '';
+          final colB = r.length > 1 ? r[1].trim() : '';
+          final psVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
+          final qtyVal = r.length > 7 ? _cleanNumStr(r[7]) : '';
+
+          if (colA.isNotEmpty && RegExp(r'^\d+$').hasMatch(colA)) {
+            currentSchn = colA;
+            if (colB.isNotEmpty) {
+              currentFirm = colB;
+            }
+            currentDelivery = '';
+          }
+
+          if (colB.isNotEmpty) {
+            final mapped = _mapDeliveryKeyword(colB);
+            if (mapped.isNotEmpty) {
+              currentDelivery = mapped;
+              // Обновляем доставку для уже записанных позиций текущего счета
+              if (currentSchn.isNotEmpty) {
+                for (final entry in filBySchnPs.entries) {
+                  if (entry.key.startsWith('${currentSchn}_') &&
+                      (entry.value['dostavka'] ?? '').isEmpty) {
+                    entry.value['dostavka'] = currentDelivery;
+                  }
+                }
+              }
+            }
+          }
+
+          if (psVal.isNotEmpty && RegExp(r'^\d{5,}$').hasMatch(psVal)) {
+            final record = {
+              'firm': currentFirm,
+              'schn': currentSchn,
+              'poSchetu': qtyVal,
+              'dostavka': currentDelivery,
+            };
+            if (currentSchn.isNotEmpty) {
+              filBySchnPs['${currentSchn}_$psVal'] = record;
+            }
+            filByPs[psVal] = record;
+          }
+        }
+      }
+
+      // 4. Заполняем блок "Голова"
+      for (final item in headItems) {
+        final info = ppByPs[item.ps];
+        if (info != null) {
+          if (item.firm.isEmpty && (info['firm'] ?? '').isNotEmpty) {
+            item.firm = info['firm']!;
+          }
+          if (item.schetPp.isEmpty && (info['schetPp'] ?? '').isNotEmpty) {
+            item.schetPp = info['schetPp']!;
+          }
+          if ((info['poSchetu'] ?? '').isNotEmpty) {
+            item.poSchetu = info['poSchetu']!;
+          }
+          if (item.dostavka.isEmpty && (info['dostavka'] ?? '').isNotEmpty) {
+            item.dostavka = info['dostavka']!;
+          }
+        }
+        item.etiketka = 'ОТК';
+        if (item.dostavka.isEmpty) {
+          // Фоллбек по известным клиентам Головы
+          final fLow = item.firm.toLowerCase();
+          if (fLow.contains('авэкс') || fLow.contains('марс')) {
+            item.dostavka = 'ДМ';
+          } else if (fLow.contains('внииа')) {
+            item.dostavka = 'Самовывоз';
+          } else {
+            item.dostavka = 'К';
+          }
+        }
+      }
+
+      // 5. Заполняем блок "Филиал"
+      for (final item in filialItems) {
+        item.schetPp = ''; // В филиале всегда пусто
+        item.etiketka = ''; // В филиале ОТК нет
+
+        final info = filBySchnPs['${item.schN}_${item.ps}'] ?? filByPs[item.ps];
+        if (info != null) {
+          if ((info['poSchetu'] ?? '').isNotEmpty) {
+            item.poSchetu = info['poSchetu']!;
+          }
+          if (item.dostavka.isEmpty && (info['dostavka'] ?? '').isNotEmpty) {
+            item.dostavka = info['dostavka']!;
+          }
+        }
+
+        // Жесткие правила доставки по клиентам филиала + очистка
+        final fLow = item.firm.toLowerCase();
+        if (fLow.contains('нейрософт') || fLow.contains('кузьминский')) {
+          item.dostavka = 'К';
+        } else if (fLow.contains('атб-электроника') || fLow.contains('атб электроника')) {
+          item.dostavka = 'ДМ';
+        } else if (item.dostavka.isEmpty) {
+          item.dostavka = 'К';
+        }
+      }
+
+      // 6. Сортируем внутри каждого блока: ДМ -> СДЭК -> К -> Самовывоз
+      headItems.sort((a, b) =>
+          _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
+      filialItems.sort((a, b) =>
+          _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
+
+      // 7. Собираем итоговый CSV
+      final csvBuffer = StringBuffer();
+      csvBuffer.writeln(
+          'Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major');
+
+      for (final item in headItems) {
+        csvBuffer.writeln(item.toRowCells().join(';'));
+      }
+
+      if (filialItems.isNotEmpty) {
+        csvBuffer.writeln('филиал;;;;;;;;;;;;');
+        for (final item in filialItems) {
+          csvBuffer.writeln(item.toRowCells().join(';'));
+        }
+      }
+
+      final finalCsv = csvBuffer.toString().trim();
+      setState(() {
+        _lastCsvResult = finalCsv;
+      });
+
+      final summaryMsg = '''
+✅ Накладная сведена автоматически (без лимитов токенов)!
+${_lastOtpravkaHeader.isNotEmpty ? '📅 Блок: $_lastOtpravkaHeader\n' : ''}• Голова (ООО «Печатные платы»): ${headItems.length} поз.
+• Филиал (ЭЛЕКТРОконнект): ${filialItems.length} поз.
+
+Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel (Tahoma 18, цвета и рамки).
+
+```csv
+$finalCsv
+```''';
+
+      _appendMessage('assistant', summaryMsg);
+      await _speak(
+          'Накладная успешно сведена, Шурик! Голова: ${headItems.length}, филиал: ${filialItems.length}.');
+    } catch (e) {
+      _appendMessage('system', 'Ошибка сведения: $e');
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // Читает нужный лист Excel в двумерный список строк без ограничений по количеству строк
+  Future<List<List<String>>> _extractSheetMatrix(
+    File file, {
+    String? preferredSheetName,
+    int maxCols = 16,
+  }) async {
+    final bytes = await file.readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+
+    List<String> sharedStrings = [];
+    final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
+    if (sharedStringsFile != null) {
+      final xmlStr =
+          utf8.decode(sharedStringsFile.content as List<int>, allowMalformed: true);
+      final document = XmlDocument.parse(xmlStr);
+      for (final si in document.findAllElements('si')) {
+        final textBuffer = StringBuffer();
+        for (final t in si.findAllElements('t')) {
+          textBuffer.write(t.innerText);
+        }
+        sharedStrings.add(
+            textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
+      }
+    }
+
+    ArchiveFile? targetSheetFile;
+    final wbFile = archive.findFile('xl/workbook.xml');
+    final relsFile = archive.findFile('xl/_rels/workbook.xml.rels');
+
+    if (wbFile != null && relsFile != null) {
+      final wbDoc = XmlDocument.parse(
+          utf8.decode(wbFile.content as List<int>, allowMalformed: true));
+      final relsDoc = XmlDocument.parse(
+          utf8.decode(relsFile.content as List<int>, allowMalformed: true));
+
+      Map<String, String> rIdToTarget = {};
+      for (final rel in relsDoc.findAllElements('Relationship')) {
+        final id = rel.getAttribute('Id');
+        final target = rel.getAttribute('Target');
+        if (id != null && target != null) {
+          rIdToTarget[id] = target.startsWith('xl/') ? target : 'xl/$target';
+        }
+      }
+
+      for (final sheetEl in wbDoc.findAllElements('sheet')) {
+        final name = sheetEl.getAttribute('name') ?? '';
+        final rId = sheetEl.getAttribute('r:id');
+        final target = rId != null ? rIdToTarget[rId] : null;
+        if (target != null && target.contains('worksheets/')) {
+          final found = archive.findFile(target);
+          if (found != null) {
+            if (preferredSheetName != null &&
+                name.toLowerCase().contains(preferredSheetName.toLowerCase())) {
+              targetSheetFile = found;
+              break;
+            }
+            targetSheetFile ??= found;
+          }
+        }
+      }
+    }
+
+    if (targetSheetFile == null) {
+      final sheetFiles = archive.files
+          .where((f) =>
+              f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
+          .toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+      if (sheetFiles.isNotEmpty) {
+        targetSheetFile = sheetFiles.first;
+      }
+    }
+
+    if (targetSheetFile == null) return [];
+
+    final sheetXmlStr =
+        utf8.decode(targetSheetFile.content as List<int>, allowMalformed: true);
+    final sheetDoc = XmlDocument.parse(sheetXmlStr);
+    final allRowElements = sheetDoc.findAllElements('row').toList();
+
+    List<List<String>> matrix = [];
+
+    for (final rowEl in allRowElements) {
+      final cells = rowEl.findAllElements('c').toList();
+      if (cells.isEmpty) continue;
+
+      List<String> rowValues = List.filled(maxCols, '');
+      bool hasAnyData = false;
+
+      for (final c in cells) {
+        final ref = c.getAttribute('r') ?? '';
+        final colIdx = _columnLettersToIndex(ref);
+        if (colIdx < 0 || colIdx >= maxCols) continue;
+
+        final type = c.getAttribute('t');
+        String cellVal = '';
+
+        if (type == 's') {
+          final vEl = c.findElements('v').firstOrNull;
+          final idx = int.tryParse(vEl?.innerText ?? '');
+          if (idx != null && idx >= 0 && idx < sharedStrings.length) {
+            cellVal = sharedStrings[idx];
+          }
+        } else if (type == 'inlineStr') {
+          final tEl = c.findAllElements('t').firstOrNull;
+          cellVal = tEl?.innerText ?? '';
+        } else {
+          final vEl = c.findElements('v').firstOrNull;
+          cellVal = vEl?.innerText ?? '';
+        }
+
+        cellVal = cellVal.replaceAll(';', ' ').replaceAll('\n', ' ').trim();
+        if (cellVal.isNotEmpty) hasAnyData = true;
+        rowValues[colIdx] = cellVal;
+      }
+
+      if (hasAnyData) {
+        matrix.add(rowValues);
+      }
+    }
+
+    return matrix;
+  }
+
+  // =========================================================================
+  // ЧАТ И ПРИКРЕПЛЕНИЕ ДОКУМЕНТОВ / ФОТО ЧЕРЕЗ GROQ API
+  // =========================================================================
+
   Future<void> _sendChatMessage() async {
     final text = _chatInputController.text.trim();
     if (text.isEmpty && _chatImage == null && _chatAttachedFile == null) return;
@@ -550,12 +1045,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         modelToUse = 'llama-3.2-11b-vision-preview';
       } else if (activeDoc != null && activeDoc.existsSync()) {
         modelToUse = 'qwen/qwen3.8-27b';
-        final docContent = await _readAnyFileSafe(
-          activeDoc,
-          maxRows: 80,
-          maxChars: 6500,
-          onlyLastOtpravkaBlock: true,
-        );
+        final docContent = await _readAnyFileForChat(activeDoc, maxChars: 6500);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
@@ -582,174 +1072,21 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _processLogistics() async {
-    final apiKey = _apiKeyController.text.trim();
-    if (apiKey.isEmpty) {
-      _showSnackbar('Введите ключ Groq в настройках!');
-      return;
-    }
-
-    final posFile = _posylkaFile;
-    if (posFile == null || !posFile.existsSync()) {
-      _showSnackbar('Выберите файл Посылки!');
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _lastCsvResult = null;
-    });
-
-    const String logisticsModel = 'qwen/qwen3.8-27b';
-
-    final fileName = posFile.path.split(Platform.pathSeparator).last;
-    _appendMessage(
-      'user',
-      '📦 Запуск сведения накладной ($logisticsModel): $fileName',
-    );
-
-    try {
-      // Берем строго последнюю секцию после последнего "ОТПРАВКА ..." из листа "Посылка"
-      final posylkaContent = await _readAnyFileSafe(
-        posFile,
-        maxRows: 120,
-        maxChars: 3500,
-        onlyLastOtpravkaBlock: true,
-        preferredSheetName: 'Посылка',
-      );
-      final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
-
-      String svodkaPpContent = '';
-      final ppFile = _svodkaPpFile;
-      if (ppFile != null && ppFile.existsSync()) {
-        svodkaPpContent = await _readAnyFileSafe(
-          ppFile,
-          maxRows: 80,
-          maxChars: 2800,
-          filterTokens: filterTokens,
-        );
-      }
-
-      String svodkaFilialContent = '';
-      final filFile = _svodkaFilialFile;
-      if (filFile != null && filFile.existsSync()) {
-        svodkaFilialContent = await _readAnyFileSafe(
-          filFile,
-          maxRows: 80,
-          maxChars: 2800,
-          filterTokens: filterTokens,
-        );
-      }
-
-      final promptText = '''
-Таблицы для сопоставления:
-
-1. Таблица Посылка (последний приход):
-$posylkaContent
-
-2. Сводка ООО Печатные платы (Голова):
-$svodkaPpContent
-
-3. Сводка Филиал (ЭЛЕКТРОконнект):
-$svodkaFilialContent
-
-Сформируй итоговую таблицу в формате CSV по правилам.
-''';
-
-      final response = await _callGroqRaw(
-        apiKey: apiKey,
-        model: logisticsModel,
-        systemInstruction: _logisticsSystemPrompt,
-        prompt: promptText,
-        temperature: 0.0,
-      );
-
-      final csv = _extractCsv(response);
-      setState(() {
-        _lastCsvResult = csv;
-      });
-
-      _appendMessage('assistant', response);
-      await _speak("Накладная успешно сведена, Шурик!");
-    } catch (e) {
-      _appendMessage('system', 'Ошибка логистики: $e');
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
-    final tokens = <String>{};
-    final stopWords = {
-      'ооо',
-      'зао',
-      'оао',
-      'сдэк',
-      'самовывоз',
-      'отк',
-      'плата',
-      'платы',
-      'лист',
-      'посылка',
-      'филиал',
-      'отправка',
-      'приход',
-    };
-    final lines = posylkaCsv.split('\n');
-    for (int i = 1; i < lines.length; i++) {
-      final parts = lines[i].split(';');
-      for (final rawPart in parts) {
-        final clean = rawPart.trim().toLowerCase();
-        if (clean.length >= 3 && !stopWords.contains(clean)) {
-          if (RegExp(r'\d').hasMatch(clean) &&
-              RegExp(r'^[a-zа-я0-9\-/\.]+$').hasMatch(clean)) {
-            tokens.add(clean);
-            final digits = RegExp(r'\d{4,}').allMatches(clean).map((m) => m.group(0)!);
-            tokens.addAll(digits);
-          }
-        }
-      }
-    }
-    return tokens;
-  }
-
-  Future<String> _readAnyFileSafe(
-    File file, {
-    int maxRows = 150,
-    int maxChars = 6000,
-    Set<String>? filterTokens,
-    bool onlyLastOtpravkaBlock = false,
-    String? preferredSheetName,
-  }) async {
+  Future<String> _readAnyFileForChat(File file, {int maxChars = 6500}) async {
     String rawText = '';
     final path = file.path.toLowerCase();
 
     if (path.endsWith('.xlsx')) {
-      rawText = await _parseXlsxDirectlyViaXml(
-        file,
-        maxRows: maxRows,
-        filterTokens: filterTokens,
-        onlyLastOtpravkaBlock: onlyLastOtpravkaBlock,
-        preferredSheetName: preferredSheetName,
-      );
-    } else if (path.endsWith('.xls')) {
-      try {
-        final bytes = await file.readAsBytes();
-        final excel = ex.Excel.decodeBytes(bytes);
-        final sb = StringBuffer();
-        for (final entry in excel.tables.entries) {
-          sb.writeln('Лист: ${entry.key}');
-          for (final row in entry.value.rows) {
-            final vals = row.map((c) => c?.value?.toString() ?? '').toList();
-            if (vals.any((v) => v.trim().isNotEmpty)) {
-              sb.writeln(vals.join(';'));
-            }
-          }
+      final rows = await _extractSheetMatrix(file, maxCols: 14);
+      final sb = StringBuffer();
+      if (rows.isNotEmpty) {
+        sb.writeln(rows.first.join(';'));
+        final start = rows.length > 60 ? rows.length - 60 : 1;
+        for (int i = start; i < rows.length; i++) {
+          sb.writeln(rows[i].join(';'));
         }
-        rawText = sb.toString();
-      } catch (_) {
-        rawText = '[Файл .xls старого бинарного формата — пересохраните в .xlsx или .csv]';
       }
+      rawText = sb.toString();
     } else {
       try {
         final bytes = await file.readAsBytes();
@@ -759,211 +1096,14 @@ $svodkaFilialContent
           rawText = latin1.decode(bytes);
         }
       } catch (e) {
-        rawText = '[Не удалось прочитать текстовый файл: $e]';
+        rawText = '[Не удалось прочитать файл: $e]';
       }
     }
 
     if (rawText.length > maxChars) {
-      return '${rawText.substring(0, maxChars)}\n... [Обрезано по лимиту API]';
+      return '${rawText.substring(0, maxChars)}\n... [Обрезано]';
     }
     return rawText;
-  }
-
-  Future<String> _parseXlsxDirectlyViaXml(
-    File file, {
-    int maxRows = 150,
-    Set<String>? filterTokens,
-    bool onlyLastOtpravkaBlock = false,
-    String? preferredSheetName,
-  }) async {
-    try {
-      final bytes = await file.readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes);
-
-      List<String> sharedStrings = [];
-      final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
-      if (sharedStringsFile != null) {
-        final xmlStr = utf8.decode(sharedStringsFile.content as List<int>, allowMalformed: true);
-        final document = XmlDocument.parse(xmlStr);
-        for (final si in document.findAllElements('si')) {
-          final textBuffer = StringBuffer();
-          for (final t in si.findAllElements('t')) {
-            textBuffer.write(t.innerText);
-          }
-          sharedStrings.add(
-              textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
-        }
-      }
-
-      // Находим правильный XML листа по имени из workbook.xml (чтобы не путать с листом Диаграммы)
-      ArchiveFile? targetSheetFile;
-      final wbFile = archive.findFile('xl/workbook.xml');
-      final relsFile = archive.findFile('xl/_rels/workbook.xml.rels');
-
-      if (wbFile != null && relsFile != null) {
-        final wbDoc = XmlDocument.parse(
-            utf8.decode(wbFile.content as List<int>, allowMalformed: true));
-        final relsDoc = XmlDocument.parse(
-            utf8.decode(relsFile.content as List<int>, allowMalformed: true));
-
-        Map<String, String> rIdToTarget = {};
-        for (final rel in relsDoc.findAllElements('Relationship')) {
-          final id = rel.getAttribute('Id');
-          final target = rel.getAttribute('Target');
-          if (id != null && target != null) {
-            rIdToTarget[id] = target.startsWith('xl/') ? target : 'xl/$target';
-          }
-        }
-
-        for (final sheetEl in wbDoc.findAllElements('sheet')) {
-          final name = sheetEl.getAttribute('name') ?? '';
-          final rId = sheetEl.getAttribute('r:id');
-          final target = rId != null ? rIdToTarget[rId] : null;
-          if (target != null && target.contains('worksheets/')) {
-            final found = archive.findFile(target);
-            if (found != null) {
-              if (preferredSheetName != null &&
-                  name.toLowerCase().contains(preferredSheetName.toLowerCase())) {
-                targetSheetFile = found;
-                break;
-              }
-              targetSheetFile ??= found;
-            }
-          }
-        }
-      }
-
-      if (targetSheetFile == null) {
-        final sheetFiles = archive.files
-            .where((f) =>
-                f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
-            .toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
-        if (sheetFiles.isNotEmpty) {
-          targetSheetFile = sheetFiles.first;
-        }
-      }
-
-      if (targetSheetFile == null) {
-        return '[Пустая книга Excel]';
-      }
-
-      final sheetXmlStr =
-          utf8.decode(targetSheetFile.content as List<int>, allowMalformed: true);
-      final sheetDoc = XmlDocument.parse(sheetXmlStr);
-      final allRowElements = sheetDoc.findAllElements('row').toList();
-
-      if (allRowElements.isEmpty) return '';
-
-      List<String> parsedRows = [];
-
-      for (final rowEl in allRowElements) {
-        final cells = rowEl.findAllElements('c').toList();
-        if (cells.isEmpty) continue;
-
-        Map<int, String> rowMap = {};
-        int maxColIdx = 0;
-
-        for (final c in cells) {
-          final ref = c.getAttribute('r') ?? '';
-          final colIdx = _columnLettersToIndex(ref);
-          if (colIdx > 14) continue;
-          if (colIdx > maxColIdx) maxColIdx = colIdx;
-
-          final type = c.getAttribute('t');
-          String cellVal = '';
-
-          if (type == 's') {
-            final vEl = c.findElements('v').firstOrNull;
-            final idx = int.tryParse(vEl?.innerText ?? '');
-            if (idx != null && idx >= 0 && idx < sharedStrings.length) {
-              cellVal = sharedStrings[idx];
-            }
-          } else if (type == 'inlineStr') {
-            final tEl = c.findAllElements('t').firstOrNull;
-            cellVal = tEl?.innerText ?? '';
-          } else {
-            final vEl = c.findElements('v').firstOrNull;
-            cellVal = vEl?.innerText ?? '';
-          }
-
-          cellVal = cellVal.replaceAll(';', ' ').replaceAll('\n', ' ').trim();
-          rowMap[colIdx] = cellVal;
-        }
-
-        List<String> rowValues = [];
-        bool hasAnyData = false;
-        for (int i = 0; i <= maxColIdx; i++) {
-          final v = rowMap[i] ?? '';
-          if (v.isNotEmpty) hasAnyData = true;
-          rowValues.add(v);
-        }
-
-        while (rowValues.isNotEmpty && rowValues.last.isEmpty) {
-          rowValues.removeLast();
-        }
-
-        if (hasAnyData && rowValues.isNotEmpty) {
-          parsedRows.add(rowValues.join(';'));
-        }
-      }
-
-      if (parsedRows.isEmpty) return '';
-
-      final sb = StringBuffer();
-      sb.writeln(parsedRows.first); // Заголовок таблицы
-
-      if (onlyLastOtpravkaBlock) {
-        // Ищем последнюю строку с "ОТПРАВКА", чтобы не тянуть прошлые дни
-        int lastOtpravkaIdx = -1;
-        for (int i = parsedRows.length - 1; i >= 1; i--) {
-          if (parsedRows[i].toUpperCase().contains('ОТПРАВКА')) {
-            lastOtpravkaIdx = i;
-            break;
-          }
-        }
-        final startIdx = lastOtpravkaIdx != -1
-            ? lastOtpravkaIdx
-            : (parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1);
-        for (int i = startIdx; i < parsedRows.length; i++) {
-          sb.writeln(parsedRows[i]);
-        }
-      } else if (filterTokens != null && filterTokens.isNotEmpty) {
-        int matchedCount = 0;
-        for (int i = 1; i < parsedRows.length; i++) {
-          final rowLower = parsedRows[i].toLowerCase();
-          bool matches = false;
-          for (final token in filterTokens) {
-            if (rowLower.contains(token)) {
-              matches = true;
-              break;
-            }
-          }
-          if (matches) {
-            sb.writeln(parsedRows[i]);
-            matchedCount++;
-            if (matchedCount >= maxRows) break;
-          }
-        }
-        if (matchedCount == 0) {
-          final fallbackStart =
-              parsedRows.length > 26 ? (parsedRows.length - 25) : 1;
-          for (int i = fallbackStart; i < parsedRows.length; i++) {
-            sb.writeln(parsedRows[i]);
-          }
-        }
-      } else {
-        final startIdx =
-            parsedRows.length > (maxRows + 1) ? (parsedRows.length - maxRows) : 1;
-        for (int i = startIdx; i < parsedRows.length; i++) {
-          sb.writeln(parsedRows[i]);
-        }
-      }
-
-      return sb.toString();
-    } catch (e) {
-      throw Exception('Ошибка разбора XML таблицы: $e');
-    }
   }
 
   int _columnLettersToIndex(String cellRef) {
@@ -978,7 +1118,8 @@ $svodkaFilialContent
 
   String _extractGroqMessageText(Map? message) {
     if (message == null) return '';
-    final content = message['content']?.toString().trim() ?? '';
+    String content = message['content']?.toString().trim() ?? '';
+    content = content.replaceAll(RegExp(r'<think>[\s\S]*?</think>'), '').trim();
     if (content.isNotEmpty) return content;
     final reasoning = message['reasoning']?.toString().trim() ?? '';
     return reasoning;
@@ -1032,12 +1173,14 @@ $svodkaFilialContent
     final Map<String, dynamic> payload = {
       'model': model,
       'temperature': temperature,
-      'max_tokens': 2000,
+      'max_tokens': 950,
       'messages': formattedMessages,
     };
 
     if (model.contains('gpt-oss')) {
       payload['reasoning_effort'] = 'low';
+    } else if (model.contains('qwen')) {
+      payload['reasoning_format'] = 'hidden';
     }
 
     final resp = await http.post(
@@ -1071,94 +1214,10 @@ $svodkaFilialContent
     return text;
   }
 
-  Future<String> _callGroqRaw({
-    required String apiKey,
-    required String model,
-    required String systemInstruction,
-    required String prompt,
-    File? imageFile,
-    required double temperature,
-  }) async {
-    final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
-
-    dynamic userContent = prompt;
-    if (imageFile != null) {
-      final bytes = await imageFile.readAsBytes();
-      final base64Img = base64Encode(bytes);
-      userContent = [
-        {'type': 'text', 'text': prompt},
-        {
-          'type': 'image_url',
-          'image_url': {'url': 'data:image/jpeg;base64,$base64Img'}
-        }
-      ];
-    }
-
-    final Map<String, dynamic> payload = {
-      'model': model,
-      'temperature': temperature,
-      'max_tokens': 2500,
-      'messages': [
-        {'role': 'system', 'content': systemInstruction},
-        {'role': 'user', 'content': userContent}
-      ]
-    };
-
-    if (model.contains('gpt-oss')) {
-      payload['reasoning_effort'] = 'low';
-    }
-
-    final resp = await http.post(
-      url,
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode(payload),
-    );
-
-    final responseBody = utf8.decode(resp.bodyBytes);
-
-    if (resp.statusCode != 200) {
-      throw Exception('Ошибка API Groq (${resp.statusCode}): $responseBody');
-    }
-
-    final data = jsonDecode(responseBody) as Map?;
-    final choices = data?['choices'] as List?;
-    if (choices == null || choices.isEmpty) {
-      throw Exception('Groq не вернул ответ.');
-    }
-
-    final firstChoice = choices[0] as Map?;
-    final message = firstChoice?['message'] as Map?;
-    final text = _extractGroqMessageText(message);
-
-    if (text.isEmpty) {
-      throw Exception('Пустой ответ от модели.');
-    }
-    return text;
-  }
-
-  String _extractCsv(String text) {
-    String clean = text.trim();
-    if (clean.contains('```csv')) {
-      final start = clean.indexOf('```csv') + 6;
-      final end = clean.indexOf('```', start);
-      clean = end != -1 ? clean.substring(start, end) : clean.substring(start);
-    } else if (clean.contains('```')) {
-      final start = clean.indexOf('```') + 3;
-      final end = clean.indexOf('```', start);
-      clean = end != -1 ? clean.substring(start, end) : clean.substring(start);
-    }
-    // Убираем возможные остатки маркеров разметки
-    return clean.replaceAll('```csv', '').replaceAll('```', '').trim();
-  }
-
-  // Выгрузка в оформленный Excel с твоими шрифтами, ширинами и цветами (Tahoma 18 Bold)
   Future<void> _exportToFormattedExcel() async {
     final csvData = _lastCsvResult;
     if (csvData == null || csvData.isEmpty) {
-      _showSnackbar('Нет данных CSV!');
+      _showSnackbar('Нет данных для выгрузки!');
       return;
     }
 
@@ -1167,7 +1226,6 @@ $svodkaFilialContent
       final sheet = excel['Посылка'];
       excel.delete('Sheet1');
 
-      // Настраиваем ширину колонок как в эталонном файле Посылка 26 2.xlsx
       final colWidths = [
         52.0, // A: Фирма
         16.0, // B: PS
@@ -1220,7 +1278,6 @@ $svodkaFilialContent
             cell.value = ex.TextCellValue(val);
           }
 
-          // Определяем цвета заливки и шрифта
           ex.ExcelColor? bgColor;
           ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
 
@@ -1233,7 +1290,6 @@ $svodkaFilialContent
             bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
           }
 
-          // В колонке "Отгрузить" (индекс 6) и "Доставка" (индекс 10) выделяем красным шрифтом как в твоем шаблоне
           if (!isHeader && !isFilialDivider && (c == 6 || c == 10)) {
             fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
           }
@@ -1526,7 +1582,7 @@ $svodkaFilialContent
                   ),
                   SizedBox(width: 8),
                   Text(
-                    'Гена думает...',
+                    'Обработка...',
                     style: TextStyle(fontSize: 14, color: Colors.grey),
                   ),
                 ],
