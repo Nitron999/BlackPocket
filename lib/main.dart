@@ -290,7 +290,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (_sessions.isEmpty) {
       _createNewChat(
         initMessage:
-            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦 (сведение теперь работает мгновенно и без лимитов).',
+            'Здорово, Шурик! Я на связи. Спрашивай что нужно, кидай фото или файлы через скрепку, а для накладных разворачивай панель сверху 📦.',
       );
     } else {
       setState(() {
@@ -582,13 +582,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      // 1. Читаем лист "Посылка" из файла Посылки
       final posRows = await _extractSheetMatrix(posFile, preferredSheetName: 'Посылка', maxCols: 14);
       if (posRows.isEmpty) {
         throw Exception('Лист "Посылка" пуст или не найден.');
       }
 
-      // Ищем последнюю строку "ОТПРАВКА ..."
       int startRowIdx = 0;
       for (int i = posRows.length - 1; i >= 0; i--) {
         final rowJoined = posRows[i].join(' ').toUpperCase();
@@ -604,7 +602,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // Собираем позиции из последнего блока Посылки (Голова + Филиал)
       final headItems = <_LogisticsItem>[];
       final filialItems = <_LogisticsItem>[];
       bool inFilial = false;
@@ -630,7 +627,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           continue;
         }
 
-        // Пропускаем пустые разделительные строки
         if (c1.isEmpty && c3.isEmpty) continue;
 
         final item = _LogisticsItem(
@@ -657,8 +653,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // 2. Индексируем Сводку ПП (если загружена)
-      // Колонки в СВОДКА: C(2)=PS, E(4)=количество (тираж), M(12)=Счет Москва, N(13)=Сч/Н или ОТК, O(14)=Фирма
+      // Индексируем Сводку ПП
       final Map<String, Map<String, String>> ppByPs = {};
       if (_svodkaPpFile != null && _svodkaPpFile!.existsSync()) {
         final ppRows = await _extractSheetMatrix(_svodkaPpFile!, preferredSheetName: 'СВОДКА', maxCols: 16);
@@ -668,15 +663,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
         for (int i = 3; i < ppRows.length; i++) {
           final r = ppRows[i];
-          final colA = r.isNotEmpty ? r[0].trim() : ''; // № заказа типа 09.061
-          final colB = r.length > 1 ? r[1].trim() : '';
+          final colA = r.isNotEmpty ? r[0].trim() : '';
           final psVal = r.length > 2 ? _cleanNumStr(r[2]) : '';
           final qtyVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
           final moscowVal = r.length > 12 ? r[12].trim() : '';
           final colN = r.length > 13 ? _cleanNumStr(r[13]) : '';
           final firmVal = r.length > 14 ? r[14].trim() : '';
 
-          // Если началась новая заявка (заполнен № в колонке A или есть фирма/счет)
           if (colA.isNotEmpty || firmVal.isNotEmpty) {
             if (moscowVal.isNotEmpty && RegExp(r'^\d+$').hasMatch(moscowVal)) {
               currentMoscowSchet = moscowVal;
@@ -689,7 +682,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             currentDelivery = '';
           }
 
-          // Проверяем слова доставки в строке (Курьер, Самовывоз и т.д.)
           for (final cell in r) {
             final mapped = _mapDeliveryKeyword(cell);
             if (mapped.isNotEmpty) {
@@ -709,8 +701,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // 3. Индексируем Сводку Филиал (если загружена)
-      // Колонки в ФИЛИАЛ: A(0)=№ счета (Сч/Н), B(1)=Фирма / Доставка, E(4)=PS, H(7)=кол-во (полный заказ)
+      // Индексируем Сводку Филиал
       final Map<String, Map<String, String>> filBySchnPs = {};
       final Map<String, Map<String, String>> filByPs = {};
 
@@ -739,7 +730,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             final mapped = _mapDeliveryKeyword(colB);
             if (mapped.isNotEmpty) {
               currentDelivery = mapped;
-              // Обновляем доставку для уже записанных позиций текущего счета
               if (currentSchn.isNotEmpty) {
                 for (final entry in filBySchnPs.entries) {
                   if (entry.key.startsWith('${currentSchn}_') &&
@@ -766,7 +756,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // 4. Заполняем блок "Голова"
+      // Заполняем блок "Голова"
       for (final item in headItems) {
         final info = ppByPs[item.ps];
         if (info != null) {
@@ -785,7 +775,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
         item.etiketka = 'ОТК';
         if (item.dostavka.isEmpty) {
-          // Фоллбек по известным клиентам Головы
           final fLow = item.firm.toLowerCase();
           if (fLow.contains('авэкс') || fLow.contains('марс')) {
             item.dostavka = 'ДМ';
@@ -797,10 +786,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // 5. Заполняем блок "Филиал"
+      // Заполняем блок "Филиал"
       for (final item in filialItems) {
-        item.schetPp = ''; // В филиале всегда пусто
-        item.etiketka = ''; // В филиале ОТК нет
+        item.schetPp = '';
+        item.etiketka = '';
 
         final info = filBySchnPs['${item.schN}_${item.ps}'] ?? filByPs[item.ps];
         if (info != null) {
@@ -812,7 +801,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           }
         }
 
-        // Жесткие правила доставки по клиентам филиала + очистка
         final fLow = item.firm.toLowerCase();
         if (fLow.contains('нейрософт') || fLow.contains('кузьминский')) {
           item.dostavka = 'К';
@@ -823,16 +811,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         }
       }
 
-      // 6. Сортируем внутри каждого блока: ДМ -> СДЭК -> К -> Самовывоз
+      // Сортируем внутри каждого блока: ДМ -> СДЭК -> К -> Самовывоз
       headItems.sort((a, b) =>
           _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
       filialItems.sort((a, b) =>
           _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
 
-      // 7. Собираем итоговый CSV
       final csvBuffer = StringBuffer();
       csvBuffer.writeln(
-          'Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major');
+          'Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить!;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major');
 
       for (final item in headItems) {
         csvBuffer.writeln(item.toRowCells().join(';'));
@@ -851,11 +838,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       });
 
       final summaryMsg = '''
-✅ Накладная сведена автоматически (без лимитов токенов)!
+✅ Накладная сведена автоматически!
 ${_lastOtpravkaHeader.isNotEmpty ? '📅 Блок: $_lastOtpravkaHeader\n' : ''}• Голова (ООО «Печатные платы»): ${headItems.length} поз.
 • Филиал (ЭЛЕКТРОконнект): ${filialItems.length} поз.
 
-Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel (Tahoma 18, цвета и рамки).
+Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel (Tahoma 18/16, цвета и отступы как в эталоне).
 
 ```csv
 $finalCsv
@@ -871,7 +858,6 @@ $finalCsv
     }
   }
 
-  // Читает нужный лист Excel в двумерный список строк без ограничений по количеству строк
   Future<List<List<String>>> _extractSheetMatrix(
     File file, {
     String? preferredSheetName,
@@ -993,6 +979,225 @@ $finalCsv
     }
 
     return matrix;
+  }
+
+  // =========================================================================
+  // ВЫГРУЗКА В EXCEL ТОЧЬ-В-ТОЧЬ КАК НА ТВОЁМ СКРИНЕ (ШРИФТЫ 18/16, ЦВЕТА, ОТСТУПЫ)
+  // =========================================================================
+
+  Future<void> _exportToFormattedExcel() async {
+    final csvData = _lastCsvResult;
+    if (csvData == null || csvData.isEmpty) {
+      _showSnackbar('Нет данных для выгрузки!');
+      return;
+    }
+
+    try {
+      final excel = ex.Excel.createExcel();
+      final sheet = excel['Посылка'];
+      excel.delete('Sheet1');
+
+      // Ширины колонок под Tahoma 18 (Фирма) и Tahoma 16 (остальные)
+      final colWidths = [
+        48.0, // A: Фирма (Tahoma 18)
+        15.0, // B: PS (Tahoma 16)
+        13.0, // C: Счет пп
+        14.0, // D: Сч/Н
+        14.0, // E: По счету
+        15.0, // F: Получено
+        16.0, // G: Отгрузить!
+        14.0, // H: Этикетка
+        15.0, // I: на складе!
+        12.0, // J: долг
+        18.0, // K: Доставка
+        30.0, // L: Расходная накладная
+        20.0, // M: Major
+      ];
+
+      for (int i = 0; i < colWidths.length; i++) {
+        sheet.setColumnWidth(i, colWidths[i]);
+      }
+
+      final borderThin = ex.Border(
+        borderStyle: ex.BorderStyle.Thin,
+        borderColorHex: ex.ExcelColor.fromHexString('#FF000000'),
+      );
+
+      final rawLines = csvData
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty && !l.startsWith('```'))
+          .toList();
+
+      if (rawLines.isEmpty) return;
+
+      int currentRow = 0;
+
+      // 1. Шапка таблицы (бирюзовый фон #00B0AC, белый жирный текст, как на скрине)
+      final headerCells = rawLines[0].split(';');
+      sheet.setRowHeight(currentRow, 42);
+      for (int c = 0; c < 13; c++) {
+        final val = c < headerCells.length ? headerCells[c].trim() : '';
+        final cell = sheet.cell(
+            ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
+        cell.value = ex.TextCellValue(val);
+        cell.cellStyle = ex.CellStyle(
+          fontFamily: 'Tahoma',
+          fontSize: c == 0 ? 16 : 13,
+          bold: true,
+          fontColorHex: ex.ExcelColor.fromHexString('#FFFFFFFF'),
+          backgroundColorHex: ex.ExcelColor.fromHexString('#FF00B0AC'),
+          horizontalAlign: c == 0
+              ? ex.HorizontalAlign.Left
+              : ex.HorizontalAlign.Center,
+          verticalAlign: ex.VerticalAlign.Center,
+          textWrapping: ex.TextWrapping.WrapText,
+          leftBorder: borderThin,
+          rightBorder: borderThin,
+          topBorder: borderThin,
+          bottomBorder: borderThin,
+        );
+      }
+      currentRow++;
+
+      // 2. Отступ + строка даты отправки (ОТПРАВКА ... ПРИХОД ...) + отступ
+      sheet.setRowHeight(currentRow, 14);
+      currentRow++;
+
+      if (_lastOtpravkaHeader.isNotEmpty) {
+        sheet.setRowHeight(currentRow, 24);
+        final dateCell = sheet.cell(
+            ex.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow));
+        dateCell.value = ex.TextCellValue(_lastOtpravkaHeader);
+        dateCell.cellStyle = ex.CellStyle(
+          fontFamily: 'Tahoma',
+          fontSize: 13,
+          bold: true,
+          fontColorHex: ex.ExcelColor.fromHexString('#FF9C0006'),
+          horizontalAlign: ex.HorizontalAlign.Left,
+          verticalAlign: ex.VerticalAlign.Center,
+        );
+        currentRow++;
+
+        sheet.setRowHeight(currentRow, 14);
+        currentRow++;
+      }
+
+      // 3. Строки данных (Голова -> пустые отступы + красная строка "филиал" -> Филиал)
+      for (int i = 1; i < rawLines.length; i++) {
+        final cells = rawLines[i].split(';');
+        final firstColLower =
+            cells.isNotEmpty ? cells[0].trim().toLowerCase() : '';
+        final deliveryVal =
+            cells.length > 10 ? cells[10].trim().toLowerCase() : '';
+
+        final isFilialDivider = firstColLower == 'филиал';
+        final isSamovyvoz = deliveryVal.contains('самовывоз');
+
+        if (isFilialDivider) {
+          // Пустая строка-отступ перед "филиал"
+          sheet.setRowHeight(currentRow, 14);
+          currentRow++;
+
+          // Красная плашка "филиал" только в колонке A (как на скрине)
+          sheet.setRowHeight(currentRow, 28);
+          final filCell = sheet.cell(
+              ex.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow));
+          filCell.value = ex.TextCellValue('филиал');
+          filCell.cellStyle = ex.CellStyle(
+            fontFamily: 'Tahoma',
+            fontSize: 18,
+            bold: true,
+            fontColorHex: ex.ExcelColor.fromHexString('#FFFFFFFF'),
+            backgroundColorHex: ex.ExcelColor.fromHexString('#FFFF0000'),
+            horizontalAlign: ex.HorizontalAlign.Center,
+            verticalAlign: ex.VerticalAlign.Center,
+            leftBorder: borderThin,
+            rightBorder: borderThin,
+            topBorder: borderThin,
+            bottomBorder: borderThin,
+          );
+          currentRow++;
+
+          // Пустая строка-отступ после "филиал"
+          sheet.setRowHeight(currentRow, 14);
+          currentRow++;
+          continue;
+        }
+
+        sheet.setRowHeight(currentRow, 26);
+
+        for (int c = 0; c < 13; c++) {
+          final val = c < cells.length ? cells[c].trim() : '';
+          final cell = sheet.cell(
+              ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
+
+          if (c >= 4 && c <= 6 && int.tryParse(val) != null) {
+            cell.value = ex.IntCellValue(int.parse(val));
+          } else {
+            cell.value = ex.TextCellValue(val);
+          }
+
+          // Цвета ячеек как на твоём скрине:
+          ex.ExcelColor? bgColor;
+          ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
+
+          if (isSamovyvoz) {
+            // Вся строка Самовывоз залита оранжево-жёлтым #FFC000
+            bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
+          }
+
+          // Счет пп (колонка C, индекс 2), если заполнен -> жёлтый фон и красный текст
+          if (c == 2 && val.isNotEmpty) {
+            bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
+            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+          }
+
+          // Этикетка "ОТК" (колонка H, индекс 7) -> сиреневый фон #CC99FF, тёмно-синий текст
+          if (c == 7 && val.toUpperCase() == 'ОТК') {
+            bgColor = ex.ExcelColor.fromHexString('#FFCC99FF');
+            fontColor = ex.ExcelColor.fromHexString('#FF000080');
+          }
+
+          // Отгрузить! (индекс 6) и Доставка (индекс 10) -> красный шрифт #FF0000
+          if (c == 6 || c == 10) {
+            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+          }
+
+          cell.cellStyle = ex.CellStyle(
+            fontFamily: 'Tahoma',
+            // Колонка A (Фирма) = 18 шрифт, остальные колонки (B-M) = 16 шрифт
+            fontSize: c == 0 ? 18 : 16,
+            bold: true,
+            fontColorHex: fontColor,
+            backgroundColorHex: bgColor ?? ex.ExcelColor.none,
+            horizontalAlign: (c >= 1 && c <= 10)
+                ? ex.HorizontalAlign.Center
+                : ex.HorizontalAlign.Left,
+            verticalAlign: ex.VerticalAlign.Center,
+            leftBorder: borderThin,
+            rightBorder: borderThin,
+            topBorder: borderThin,
+            bottomBorder: borderThin,
+          );
+        }
+        currentRow++;
+      }
+
+      final dir = await getApplicationDocumentsDirectory();
+      final filePath =
+          '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final fileBytes = excel.save();
+
+      if (fileBytes != null) {
+        final f = File(filePath);
+        await f.writeAsBytes(fileBytes);
+        _showSnackbar('Excel сохранен: $filePath');
+        await OpenFilex.open(filePath);
+      }
+    } catch (e) {
+      _showSnackbar('Ошибка выгрузки: $e');
+    }
   }
 
   // =========================================================================
@@ -1134,7 +1339,7 @@ $finalCsv
     File? imageFile,
     required double temperature,
   }) async {
-    final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
+    final url = Uri.parse('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)');
 
     var formattedMessages = [];
     formattedMessages.add({'role': 'system', 'content': systemInstruction});
@@ -1212,120 +1417,6 @@ $finalCsv
       throw Exception('Пустой ответ от модели.');
     }
     return text;
-  }
-
-  Future<void> _exportToFormattedExcel() async {
-    final csvData = _lastCsvResult;
-    if (csvData == null || csvData.isEmpty) {
-      _showSnackbar('Нет данных для выгрузки!');
-      return;
-    }
-
-    try {
-      final excel = ex.Excel.createExcel();
-      final sheet = excel['Посылка'];
-      excel.delete('Sheet1');
-
-      final colWidths = [
-        52.0, // A: Фирма
-        16.0, // B: PS
-        15.0, // C: Счет пп
-        15.0, // D: Сч/Н
-        15.0, // E: По счету
-        18.0, // F: Получено
-        16.0, // G: Отгрузить
-        14.0, // H: Этикетка
-        15.0, // I: на складе!
-        14.0, // J: долг
-        18.0, // K: Доставка
-        32.0, // L: Расходная накладная
-        22.0, // M: Major
-      ];
-
-      for (int i = 0; i < colWidths.length; i++) {
-        sheet.setColumnWidth(i, colWidths[i]);
-      }
-
-      final borderThin = ex.Border(
-        borderStyle: ex.BorderStyle.Thin,
-        borderColorHex: ex.ExcelColor.fromHexString('#FF808080'),
-      );
-
-      final lines = csvData
-          .split('\n')
-          .map((l) => l.trim())
-          .where((l) => l.isNotEmpty && !l.startsWith('```'))
-          .toList();
-
-      for (int r = 0; r < lines.length; r++) {
-        final cells = lines[r].split(';');
-        final isHeader = r == 0;
-        final firstColLower = cells.isNotEmpty ? cells[0].trim().toLowerCase() : '';
-        final deliveryVal = cells.length > 10 ? cells[10].trim().toLowerCase() : '';
-
-        final isFilialDivider = firstColLower == 'филиал';
-        final isSamovyvoz = deliveryVal.contains('самовывоз');
-
-        for (int c = 0; c < 13; c++) {
-          final val = c < cells.length ? cells[c].trim() : '';
-          final cellIndex =
-              ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: r);
-          final cell = sheet.cell(cellIndex);
-
-          if (!isHeader && !isFilialDivider && c >= 4 && c <= 6 && int.tryParse(val) != null) {
-            cell.value = ex.IntCellValue(int.parse(val));
-          } else {
-            cell.value = ex.TextCellValue(val);
-          }
-
-          ex.ExcelColor? bgColor;
-          ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
-
-          if (isHeader) {
-            bgColor = ex.ExcelColor.fromHexString('#FFD9E1F2');
-          } else if (isFilialDivider) {
-            bgColor = ex.ExcelColor.fromHexString('#FFFF0000');
-            fontColor = ex.ExcelColor.fromHexString('#FFFFFFFF');
-          } else if (isSamovyvoz) {
-            bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
-          }
-
-          if (!isHeader && !isFilialDivider && (c == 6 || c == 10)) {
-            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
-          }
-
-          cell.cellStyle = ex.CellStyle(
-            fontFamily: 'Tahoma',
-            fontSize: 18,
-            bold: true,
-            fontColorHex: fontColor,
-            backgroundColorHex: bgColor ?? ex.ExcelColor.none,
-            horizontalAlign: (c >= 1 && c <= 10)
-                ? ex.HorizontalAlign.Center
-                : ex.HorizontalAlign.Left,
-            verticalAlign: ex.VerticalAlign.Center,
-            leftBorder: borderThin,
-            rightBorder: borderThin,
-            topBorder: borderThin,
-            bottomBorder: borderThin,
-          );
-        }
-      }
-
-      final dir = await getApplicationDocumentsDirectory();
-      final filePath =
-          '${dir.path}/Посылка_Сведение_${DateTime.now().millisecondsSinceEpoch}.xlsx';
-      final fileBytes = excel.save();
-
-      if (fileBytes != null) {
-        final f = File(filePath);
-        await f.writeAsBytes(fileBytes);
-        _showSnackbar('Excel сохранен: $filePath');
-        await OpenFilex.open(filePath);
-      }
-    } catch (e) {
-      _showSnackbar('Ошибка выгрузки: $e');
-    }
   }
 
   void _appendMessage(String role, String text, {String? imagePath, String? fileName}) {
