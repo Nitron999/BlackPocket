@@ -634,7 +634,7 @@ import datetime
 import time
 import tempfile
 import subprocess
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, urljoin
 from playwright.sync_api import sync_playwright
 
 LOGIN = "$login"
@@ -836,7 +836,7 @@ def main():
                     except Exception:
                         pass
 
-                    # Способ Б: тихая печать через Chrome или Edge с --kiosk-printing
+                    # Способ Б: тихая печать через Chrome или Edge с --kiosk-printing + SendKeys('^p')
                     if not printed:
                         browsers = [
                             r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -848,6 +848,11 @@ def main():
                         if b_exe:
                             pdf_uri = "file:///" + tmp_pdf.replace("\\\\", "/")
                             subprocess.Popen([b_exe, "--kiosk-printing", pdf_uri])
+                            time.sleep(2.5)
+                            subprocess.run(
+                                ["powershell", "-NoProfile", "-Command", "(New-Object -ComObject WScript.Shell).SendKeys('^p')"],
+                                capture_output=True
+                            )
                             print(f"-> Запущена автопечать через {os.path.basename(b_exe)}!")
                         else:
                             os.startfile(tmp_pdf)
