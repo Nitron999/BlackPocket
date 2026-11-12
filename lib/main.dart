@@ -548,12 +548,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       String finalPromptForApi = displayPrompt;
 
       if (activeDoc != null && activeDoc.existsSync()) {
-        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 120, maxChars: 13000);
+        final docContent = await _readAnyFileSafe(activeDoc, maxRows: 80, maxChars: 7500);
         finalPromptForApi =
             '$displayPrompt\n\n=== СОДЕРЖИМОЕ ФАЙЛА ($docName) ===\n$docContent';
       }
 
-      // Если прикреплено фото, а выбрана чисто текстовая модель — автоматически переключаем запрос на vision-модель
       String modelToUse = _selectedModel;
       if (activeImage != null &&
           !modelToUse.contains('vision') &&
@@ -608,7 +607,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
 
     try {
-      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 100, maxChars: 6000);
+      // Жестко контролируем бюджет символов, чтобы суммарный запрос был ~4500-5500 токенов (лимит 8000 TPM)
+      final posylkaContent = await _readAnyFileSafe(posFile, maxRows: 80, maxChars: 3500);
       final filterTokens = _extractSearchTokensFromPosylka(posylkaContent);
 
       String svodkaPpContent = '';
@@ -616,8 +616,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (ppFile != null && ppFile.existsSync()) {
         svodkaPpContent = await _readAnyFileSafe(
           ppFile,
-          maxRows: 150,
-          maxChars: 6000,
+          maxRows: 80,
+          maxChars: 3000,
           filterTokens: filterTokens,
         );
       }
@@ -627,8 +627,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (filFile != null && filFile.existsSync()) {
         svodkaFilialContent = await _readAnyFileSafe(
           filFile,
-          maxRows: 150,
-          maxChars: 6000,
+          maxRows: 80,
+          maxChars: 3000,
           filterTokens: filterTokens,
         );
       }
@@ -670,16 +670,19 @@ $svodkaFilialContent
     }
   }
 
+  // Извлекаем только точные артикулы PS и номера счетов (исключаем общие слова типа "ООО", "СДЭК" и т.д.)
   Set<String> _extractSearchTokensFromPosylka(String posylkaCsv) {
     final tokens = <String>{};
+    final stopWords = {'ооо', 'зао', 'оао', 'сдэк', 'самовывоз', 'отк', 'плата', 'платы', 'лист', 'посылка'};
     final lines = posylkaCsv.split('\n');
     for (int i = 1; i < lines.length; i++) {
       final parts = lines[i].split(';');
       for (final rawPart in parts) {
-        final clean = rawPart.trim();
-        if (clean.length >= 3) {
-          if (RegExp(r'^[A-Za-zА-Яа-я0-9\-/]+$').hasMatch(clean)) {
-            tokens.add(clean.toLowerCase());
+        final clean = rawPart.trim().toLowerCase();
+        if (clean.length >= 3 && !stopWords.contains(clean)) {
+          // Берем токены, содержащие цифры (номера счетов, PS-коды, артикулы)
+          if (RegExp(r'\d').hasMatch(clean) && RegExp(r'^[a-zа-я0-9\-/\.]+$').hasMatch(clean)) {
+            tokens.add(clean);
             final digits = RegExp(r'\d{3,}').allMatches(clean).map((m) => m.group(0)!);
             tokens.addAll(digits);
           }
@@ -691,8 +694,8 @@ $svodkaFilialContent
 
   Future<String> _readAnyFileSafe(
     File file, {
-    int maxRows = 300,
-    int maxChars = 12000,
+    int maxRows = 150,
+    int maxChars = 6000,
     Set<String>? filterTokens,
   }) async {
     String rawText = '';
@@ -736,14 +739,14 @@ $svodkaFilialContent
     }
 
     if (rawText.length > maxChars) {
-      return '${rawText.substring(0, maxChars)}\n... [Обрезано по лимиту токенов API]';
+      return '${rawText.substring(0, maxChars)}\n... [Обрезано по лимиту API]';
     }
     return rawText;
   }
 
   Future<String> _parseXlsxDirectlyViaXml(
     File file, {
-    int maxRows = 300,
+    int maxRows = 150,
     Set<String>? filterTokens,
   }) async {
     try {
@@ -774,12 +777,10 @@ $svodkaFilialContent
       }
 
       final sb = StringBuffer();
-      final sheetsToRead = sheetFiles.take(2);
+      // Берем только первый основной лист книги
+      final sheetsToRead = sheetFiles.take(1);
 
       for (final sheetFile in sheetsToRead) {
-        final sheetName = sheetFile.name.split('/').last.replaceAll('.xml', '');
-        sb.writeln('Лист: $sheetName');
-
         final sheetXmlStr = utf8.decode(sheetFile.content as List<int>, allowMalformed: true);
         final sheetDoc = XmlDocument.parse(sheetXmlStr);
         final allRowElements = sheetDoc.findAllElements('row').toList();
@@ -798,7 +799,8 @@ $svodkaFilialContent
           for (final c in cells) {
             final ref = c.getAttribute('r') ?? '';
             final colIdx = _columnLettersToIndex(ref);
-            if (colIdx > 20) continue;
+            // Читаем только первые 14 рабочих колонок
+            if (colIdx > 14) continue;
             if (colIdx > maxColIdx) maxColIdx = colIdx;
 
             final type = c.getAttribute('t');
@@ -861,7 +863,7 @@ $svodkaFilialContent
             }
           }
           if (matchedCount == 0) {
-            final fallbackStart = parsedRows.length > 41 ? (parsedRows.length - 40) : 1;
+            final fallbackStart = parsedRows.length > 26 ? (parsedRows.length - 25) : 1;
             for (int i = fallbackStart; i < parsedRows.length; i++) {
               sb.writeln(parsedRows[i]);
             }
@@ -905,7 +907,7 @@ $svodkaFilialContent
     formattedMessages.add({'role': 'system', 'content': systemInstruction});
 
     var msgList = messages as List;
-    final startMsgIdx = msgList.length > 8 ? (msgList.length - 8) : 0;
+    final startMsgIdx = msgList.length > 6 ? (msgList.length - 6) : 0;
 
     for (int i = startMsgIdx; i < msgList.length; i++) {
       var msg = msgList[i] as ChatMessage;
