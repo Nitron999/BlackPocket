@@ -985,26 +985,62 @@ $finalCsv
   // ВЫГРУЗКА В EXCEL: ЖИРНЫЕ ГРАНИЦЫ (THICK) ПО ВСЕМУ ЛИСТУ + ЭТАЛОННЫЕ ЦВЕТА
   // =========================================================================
 
-  void _applyThickGridToRow(ex.Sheet sheet, int rowIndex, ex.Border borderThick,
-      {double rowHeight = 20}) {
+  ex.CellStyle _buildCellStyle({
+    required int fontSize,
+    required String fontHex,
+    String? bgHex,
+    required ex.HorizontalAlign hAlign,
+    bool wrapText = false,
+  }) {
+    final borderThick = ex.Border(
+      borderStyle: ex.BorderStyle.Thick,
+      borderColorHex: ex.ExcelColor.fromHexString('#FF000000'),
+    );
+
+    if (bgHex != null && bgHex.isNotEmpty) {
+      return ex.CellStyle(
+        fontFamily: 'Tahoma',
+        fontSize: fontSize,
+        bold: true,
+        fontColorHex: ex.ExcelColor.fromHexString(fontHex),
+        backgroundColorHex: ex.ExcelColor.fromHexString(bgHex),
+        horizontalAlign: hAlign,
+        verticalAlign: ex.VerticalAlign.Center,
+        textWrapping: wrapText ? ex.TextWrapping.WrapText : ex.TextWrapping.Clip,
+        leftBorder: borderThick,
+        rightBorder: borderThick,
+        topBorder: borderThick,
+        bottomBorder: borderThick,
+      );
+    }
+
+    return ex.CellStyle(
+      fontFamily: 'Tahoma',
+      fontSize: fontSize,
+      bold: true,
+      fontColorHex: ex.ExcelColor.fromHexString(fontHex),
+      horizontalAlign: hAlign,
+      verticalAlign: ex.VerticalAlign.Center,
+      textWrapping: wrapText ? ex.TextWrapping.WrapText : ex.TextWrapping.Clip,
+      leftBorder: borderThick,
+      rightBorder: borderThick,
+      topBorder: borderThick,
+      bottomBorder: borderThick,
+    );
+  }
+
+  void _fillBlankGridRow(ex.Sheet sheet, int rowIndex, {double rowHeight = 20}) {
     sheet.setRowHeight(rowIndex, rowHeight);
     for (int c = 0; c < 13; c++) {
       final cell = sheet.cell(
           ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: rowIndex));
       cell.value = ex.TextCellValue('');
-      cell.cellStyle = ex.CellStyle(
-        fontFamily: 'Tahoma',
+      cell.cellStyle = _buildCellStyle(
         fontSize: c == 0 ? 18 : 16,
-        bold: true,
-        fontColorHex: ex.ExcelColor.fromHexString('#FF000000'),
-        horizontalAlign: (c >= 1 && c <= 10)
+        fontHex: '#FF000000',
+        hAlign: (c >= 1 && c <= 10)
             ? ex.HorizontalAlign.Center
             : ex.HorizontalAlign.Left,
-        verticalAlign: ex.VerticalAlign.Center,
-        leftBorder: borderThick,
-        rightBorder: borderThick,
-        topBorder: borderThick,
-        bottomBorder: borderThick,
       );
     }
   }
@@ -1034,18 +1070,12 @@ $finalCsv
         12.0, // J: долг
         18.0, // K: Доставка
         30.0, // L: Расходная накладная
-        20.0, // M: Major
+        24.0, // M: Major
       ];
 
       for (int i = 0; i < colWidths.length; i++) {
         sheet.setColumnWidth(i, colWidths[i]);
       }
-
-      // Самая жирная чёрная граница ячеек (Thick) — внешние и внутренние по всему листу
-      final borderThick = ex.Border(
-        borderStyle: ex.BorderStyle.Thick,
-        borderColorHex: ex.ExcelColor.fromHexString('#FF000000'),
-      );
 
       final rawLines = csvData
           .split('\n')
@@ -1057,7 +1087,7 @@ $finalCsv
 
       int currentRow = 0;
 
-      // 1. Шапка таблицы (бирюзовый фон #00B0AC, жирные границы)
+      // 1. Шапка таблицы (бирюзовая, с жёлтыми ячейками Отгрузить! и на складе!)
       final headerCells = rawLines[0].split(';');
       sheet.setRowHeight(currentRow, 42);
       for (int c = 0; c < 13; c++) {
@@ -1065,49 +1095,43 @@ $finalCsv
         final cell = sheet.cell(
             ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
         cell.value = ex.TextCellValue(val);
-        cell.cellStyle = ex.CellStyle(
-          fontFamily: 'Tahoma',
+
+        String headerBg = '#FF00B0AC';
+        String headerFont = '#FFFFFFFF';
+        if (c == 6 || c == 8) {
+          headerBg = '#FFFFFF00';
+          headerFont = '#FFFF0000';
+        }
+
+        cell.cellStyle = _buildCellStyle(
           fontSize: c == 0 ? 16 : 13,
-          bold: true,
-          fontColorHex: ex.ExcelColor.fromHexString('#FFFFFFFF'),
-          backgroundColorHex: ex.ExcelColor.fromHexString('#FF00B0AC'),
-          horizontalAlign: c == 0
+          fontHex: headerFont,
+          bgHex: headerBg,
+          hAlign: c == 0
               ? ex.HorizontalAlign.Left
               : ex.HorizontalAlign.Center,
-          verticalAlign: ex.VerticalAlign.Center,
-          textWrapping: ex.TextWrapping.WrapText,
-          leftBorder: borderThick,
-          rightBorder: borderThick,
-          topBorder: borderThick,
-          bottomBorder: borderThick,
+          wrapText: true,
         );
       }
       currentRow++;
 
       // 2. Отступ + строка даты отправки + отступ (везде жирная сетка!)
-      _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
+      _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
       currentRow++;
 
       if (_lastOtpravkaHeader.isNotEmpty) {
-        _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 24);
+        _fillBlankGridRow(sheet, currentRow, rowHeight: 24);
         final dateCell = sheet.cell(
             ex.CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: currentRow));
         dateCell.value = ex.TextCellValue(_lastOtpravkaHeader);
-        dateCell.cellStyle = ex.CellStyle(
-          fontFamily: 'Tahoma',
+        dateCell.cellStyle = _buildCellStyle(
           fontSize: 13,
-          bold: true,
-          fontColorHex: ex.ExcelColor.fromHexString('#FF9C0006'),
-          horizontalAlign: ex.HorizontalAlign.Left,
-          verticalAlign: ex.VerticalAlign.Center,
-          leftBorder: borderThick,
-          rightBorder: borderThick,
-          topBorder: borderThick,
-          bottomBorder: borderThick,
+          fontHex: '#FF9C0006',
+          hAlign: ex.HorizontalAlign.Left,
         );
         currentRow++;
 
-        _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
+        _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
         currentRow++;
       }
 
@@ -1129,7 +1153,7 @@ $finalCsv
           isInsideFilialBlock = true;
 
           // Пустая строка-отступ с жирной сеткой перед "филиал"
-          _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
+          _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
           currentRow++;
 
           // Строка "филиал" (красная плашка в колонке A + жирные границы по всем 13 колонкам)
@@ -1138,27 +1162,17 @@ $finalCsv
             final filCell = sheet.cell(
                 ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
             filCell.value = ex.TextCellValue(c == 0 ? 'филиал' : '');
-            filCell.cellStyle = ex.CellStyle(
-              fontFamily: 'Tahoma',
+            filCell.cellStyle = _buildCellStyle(
               fontSize: c == 0 ? 18 : 16,
-              bold: true,
-              fontColorHex: ex.ExcelColor.fromHexString(
-                  c == 0 ? '#FFFFFFFF' : '#FF000000'),
-              backgroundColorHex: c == 0
-                  ? ex.ExcelColor.fromHexString('#FFFF0000')
-                  : ex.ExcelColor.none,
-              horizontalAlign: ex.HorizontalAlign.Center,
-              verticalAlign: ex.VerticalAlign.Center,
-              leftBorder: borderThick,
-              rightBorder: borderThick,
-              topBorder: borderThick,
-              bottomBorder: borderThick,
+              fontHex: c == 0 ? '#FFFFFFFF' : '#FF000000',
+              bgHex: c == 0 ? '#FFFF0000' : null,
+              hAlign: ex.HorizontalAlign.Center,
             );
           }
           currentRow++;
 
           // Пустая строка-отступ с жирной сеткой после "филиал"
-          _applyThickGridToRow(sheet, currentRow, borderThick, rowHeight: 18);
+          _fillBlankGridRow(sheet, currentRow, rowHeight: 18);
           currentRow++;
           continue;
         }
@@ -1176,62 +1190,58 @@ $finalCsv
             cell.value = ex.TextCellValue(val);
           }
 
-          ex.ExcelColor? bgColor;
-          ex.ExcelColor fontColor = ex.ExcelColor.fromHexString('#FF000000');
+          String? bgColor;
+          String fontColor = '#FF000000';
 
           // Заливка строки только при "Самовывоз" (розовая в ПП, жёлто-оранжевая в Филиале)
           if (isSamovyvoz) {
             if (!isInsideFilialBlock) {
-              bgColor = ex.ExcelColor.fromHexString('#FFFF99CC');
+              bgColor = '#FFFF99CC';
             } else {
-              bgColor = ex.ExcelColor.fromHexString('#FFFFC000');
+              bgColor = '#FFFFC000';
             }
           }
 
-          // Счет пп (колонка C, индекс 2): красным шрифтом, без жёлтой заливки
+          // Счет пп (колонка C, индекс 2): красным шрифтом, без лишней заливки
           if (c == 2 && val.isNotEmpty) {
-            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+            fontColor = '#FFFF0000';
           }
 
+          // Этикетка "ОТК" (колонка H, индекс 7): синим жирным
           if (c == 7 && val.toUpperCase() == 'ОТК') {
-            fontColor = ex.ExcelColor.fromHexString('#FF0000FF');
+            fontColor = '#FF0000FF';
           }
 
+          // Отгрузить! (колонка G, индекс 6): всегда красным жирным
           if (c == 6) {
-            fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+            fontColor = '#FFFF0000';
           }
 
+          // Доставка (колонка K, индекс 10): ДМ, К, Самовывоз красным, а СДЭК чёрным
           if (c == 10 && val.isNotEmpty) {
             if (isSdek) {
-              fontColor = ex.ExcelColor.fromHexString('#FF000000');
+              fontColor = '#FF000000';
             } else {
-              fontColor = ex.ExcelColor.fromHexString('#FFFF0000');
+              fontColor = '#FFFF0000';
             }
           }
 
-          cell.cellStyle = ex.CellStyle(
-            fontFamily: 'Tahoma',
+          cell.cellStyle = _buildCellStyle(
             fontSize: c == 0 ? 18 : 16,
-            bold: true,
-            fontColorHex: fontColor,
-            backgroundColorHex: bgColor ?? ex.ExcelColor.none,
-            horizontalAlign: (c >= 1 && c <= 10)
+            fontHex: fontColor,
+            bgHex: bgColor,
+            hAlign: (c >= 1 && c <= 10)
                 ? ex.HorizontalAlign.Center
                 : ex.HorizontalAlign.Left,
-            verticalAlign: ex.VerticalAlign.Center,
-            leftBorder: borderThick,
-            rightBorder: borderThick,
-            topBorder: borderThick,
-            bottomBorder: borderThick,
           );
         }
         currentRow++;
       }
 
-      // 4. Протягиваем жирную сетку и формат ячеек ещё на 30 пустых строк вниз с запасом
-      final totalRowsWithBuffer = currentRow + 30;
+      // 4. Протягиваем жирную сетку и формат ячеек (18 для Фирмы, 16 для остальных) на 40 пустых строк вниз
+      final totalRowsWithBuffer = currentRow + 40;
       for (int r = currentRow; r < totalRowsWithBuffer; r++) {
-        _applyThickGridToRow(sheet, r, borderThick, rowHeight: 24);
+        _fillBlankGridRow(sheet, r, rowHeight: 24);
       }
 
       final dir = await getApplicationDocumentsDirectory();
