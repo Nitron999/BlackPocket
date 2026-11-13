@@ -68,7 +68,7 @@ class _PechatnyePlatyAppState extends State<PechatnyePlatyApp> {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0A0F1A),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF14B8A6), // Бирюзовый акцент OpsPilot
+          primary: Color(0xFF14B8A6),
           secondary: Color(0xFF38BDF8),
           surface: Color(0xFF111827),
           surfaceVariant: Color(0xFF1E293B),
@@ -256,6 +256,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _chatInputController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
 
+  // Контроллеры путей для Панели 1: Сведение накладных (локальные и сетевые пути)
+  final TextEditingController _posylkaPathController = TextEditingController();
+  final TextEditingController _svodkaPpPathController = TextEditingController();
+  final TextEditingController _svodkaFilialPathController =
+      TextEditingController();
+
   // Контроллеры для Панели 2: Электроконнект Мейджер Экспресс
   late final TextEditingController _majorFirmController;
   late final TextEditingController _majorDateController;
@@ -277,10 +283,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
 
-  static const MethodChannel _ttsChannel = MethodChannel('blackpocket/native_tts');
+  static const MethodChannel _ttsChannel =
+      MethodChannel('blackpocket/native_tts');
 
-  // Навигация и состояние UI
-  int _selectedNavIndex = 0; // 0: Обзор+Чат, 1: Сведение, 2: Электроконнект, 3: Платы, 4: Журнал
+  int _selectedNavIndex = 0;
   bool _isSidebarCollapsed = false;
   String _searchQuery = '';
   bool _sumatraFound = false;
@@ -336,6 +342,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return '$h:$m:$s';
   }
 
+  String _normalizePathInput(String raw) {
+    var cleaned = raw.trim();
+    if (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) {
+      cleaned = cleaned.substring(1, cleaned.length - 1).trim();
+    }
+    return cleaned;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -386,6 +400,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _inputFocusNode.dispose();
     _searchController.dispose();
+
+    _posylkaPathController.dispose();
+    _svodkaPpPathController.dispose();
+    _svodkaFilialPathController.dispose();
 
     _majorFirmController.dispose();
     _majorDateController.dispose();
@@ -468,6 +486,30 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  Future<void> _saveSavedLogisticsPaths() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'saved_posylka_path', _normalizePathInput(_posylkaPathController.text));
+    await prefs.setString('saved_svodka_pp_path',
+        _normalizePathInput(_svodkaPpPathController.text));
+    await prefs.setString('saved_svodka_filial_path',
+        _normalizePathInput(_svodkaFilialPathController.text));
+  }
+
+  void _syncFileFromPath(int type, String rawPath) {
+    final cleaned = _normalizePathInput(rawPath);
+    setState(() {
+      if (type == 1) {
+        _posylkaFile = cleaned.isNotEmpty ? File(cleaned) : null;
+      } else if (type == 2) {
+        _svodkaPpFile = cleaned.isNotEmpty ? File(cleaned) : null;
+      } else if (type == 3) {
+        _svodkaFilialFile = cleaned.isNotEmpty ? File(cleaned) : null;
+      }
+    });
+    _saveSavedLogisticsPaths();
+  }
+
   Future<void> _loadSettingsAndChats() async {
     final prefs = await SharedPreferences.getInstance();
     final key = prefs.getString('groq_api_key') ?? '';
@@ -475,9 +517,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
     final sidebarCollapsed = prefs.getBool('sidebar_collapsed') ?? false;
 
+    final savedPosPath = prefs.getString('saved_posylka_path') ?? '';
+    final savedPpPath = prefs.getString('saved_svodka_pp_path') ?? '';
+    final savedFilPath = prefs.getString('saved_svodka_filial_path') ?? '';
+
     setState(() {
       _isVoiceEnabled = savedVoice;
       _isSidebarCollapsed = sidebarCollapsed;
+      if (savedPosPath.isNotEmpty) {
+        _posylkaPathController.text = savedPosPath;
+        _posylkaFile = File(savedPosPath);
+      }
+      if (savedPpPath.isNotEmpty) {
+        _svodkaPpPathController.text = savedPpPath;
+        _svodkaPpFile = File(savedPpPath);
+      }
+      if (savedFilPath.isNotEmpty) {
+        _svodkaFilialPathController.text = savedFilPath;
+        _svodkaFilialFile = File(savedFilPath);
+      }
     });
 
     if (key.isNotEmpty) {
@@ -668,10 +726,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       final path = result.files.single.path;
       if (path != null && path.isNotEmpty) {
         setState(() {
-          if (type == 1) _posylkaFile = File(path);
-          if (type == 2) _svodkaPpFile = File(path);
-          if (type == 3) _svodkaFilialFile = File(path);
+          if (type == 1) {
+            _posylkaFile = File(path);
+            _posylkaPathController.text = path;
+          }
+          if (type == 2) {
+            _svodkaPpFile = File(path);
+            _svodkaPpPathController.text = path;
+          }
+          if (type == 3) {
+            _svodkaFilialFile = File(path);
+            _svodkaFilialPathController.text = path;
+          }
         });
+        await _saveSavedLogisticsPaths();
       }
     }
   }
@@ -787,8 +855,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
     final safePlaces = places.trim().isEmpty ? '1' : places.trim();
-    final escapedDesc = (description.trim().isEmpty ? 'платы' : description.trim())
-        .replaceAll('"', '\\"');
+    final escapedDesc =
+        (description.trim().isEmpty ? 'платы' : description.trim())
+            .replaceAll('"', '\\"');
     final escapedInfo = (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim())
         .replaceAll('"', '\\"');
     final escapedAppDir = appExeDir.replaceAll('\\', '\\\\');
@@ -1035,7 +1104,8 @@ if __name__ == "__main__":
 ''';
   }
 
-  Future<void> _executeOrShareScript(String filePath, String safeFileName) async {
+  Future<void> _executeOrShareScript(
+      String filePath, String safeFileName) async {
     if (Platform.isWindows) {
       try {
         await Process.start(
@@ -1045,7 +1115,8 @@ if __name__ == "__main__":
         );
         _showSnackbar('Запускаю браузер Major Express ($safeFileName)...');
       } catch (e) {
-        _showSnackbar('Ошибка запуска Python: $e. Проверь, установлен ли Python.');
+        _showSnackbar(
+            'Ошибка запуска Python: $e. Проверь, установлен ли Python.');
       }
     } else {
       await _shareScriptByPath(filePath);
@@ -1300,9 +1371,20 @@ if __name__ == "__main__":
   }
 
   Future<void> _processLogistics() async {
+    // Синхронизируем пути из текстовых полей (локальные и сетевые UNC-пути)
+    final p1 = _normalizePathInput(_posylkaPathController.text);
+    final p2 = _normalizePathInput(_svodkaPpPathController.text);
+    final p3 = _normalizePathInput(_svodkaFilialPathController.text);
+
+    if (p1.isNotEmpty) _posylkaFile = File(p1);
+    if (p2.isNotEmpty) _svodkaPpFile = File(p2);
+    if (p3.isNotEmpty) _svodkaFilialFile = File(p3);
+    await _saveSavedLogisticsPaths();
+
     final posFile = _posylkaFile;
     if (posFile == null || !posFile.existsSync()) {
-      _showSnackbar('Выберите файл Посылки!');
+      _showSnackbar(
+          'Файл Посылки не найден! Укажи верный путь или выбери файл.');
       return;
     }
 
@@ -2293,8 +2375,7 @@ $finalCsv
   // НОВЫЙ ДИЗАЙН: КОМПОНЕНТЫ ИНТЕРФЕЙСА (SIDEBAR, TOPBAR, КАРТОЧКИ, МОДУЛИ)
   // =========================================================================
 
-  Color get _cardBg =>
-      widget.isDark ? const Color(0xFF111827) : Colors.white;
+  Color get _cardBg => widget.isDark ? const Color(0xFF111827) : Colors.white;
   Color get _sidebarBg =>
       widget.isDark ? const Color(0xFF0D1320) : const Color(0xFFF8FAFC);
   Color get _borderCol =>
@@ -2341,7 +2422,8 @@ $finalCsv
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      drawer: isWide ? null : Drawer(child: _buildSidebarContent(isDrawer: true)),
+      drawer:
+          isWide ? null : Drawer(child: _buildSidebarContent(isDrawer: true)),
       body: Row(
         children: [
           if (isWide) _buildSidebarContent(isDrawer: false),
@@ -2413,7 +2495,6 @@ $finalCsv
       child: SafeArea(
         child: Column(
           children: [
-            // Шапка сайдбара
             Padding(
               padding: EdgeInsets.symmetric(
                   horizontal: collapsed ? 12 : 16, vertical: 16),
@@ -2427,8 +2508,8 @@ $finalCsv
                       ),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(Icons.memory,
-                        color: Colors.white, size: 22),
+                    child:
+                        const Icon(Icons.memory, color: Colors.white, size: 22),
                   ),
                   if (!collapsed) ...[
                     const SizedBox(width: 12),
@@ -2445,7 +2526,7 @@ $finalCsv
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            'Logistics Suite v2.6',
+                            'Logistics Suite v2.7',
                             style: TextStyle(fontSize: 11, color: _subtleText),
                           ),
                         ],
@@ -2476,7 +2557,8 @@ $finalCsv
               ),
             Expanded(
               child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 itemCount: navItems.length,
                 itemBuilder: (context, idx) {
                   final item = navItems[idx];
@@ -2574,7 +2656,6 @@ $finalCsv
               ),
             ),
             Divider(height: 1, color: _borderCol),
-            // Нижние кнопки сайдбара
             if (!collapsed && Platform.isWindows)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
@@ -2879,7 +2960,6 @@ $finalCsv
     return Column(
       key: const ValueKey('dashboard_view'),
       children: [
-        // Сетка карточек модулей
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
           child: LayoutBuilder(
@@ -2916,7 +2996,6 @@ $finalCsv
             },
           ),
         ),
-        // Разделитель рабочей зоны чата
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
           child: Row(
@@ -2932,8 +3011,8 @@ $finalCsv
               ),
               const Spacer(),
               TextButton.icon(
-                style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact),
+                style:
+                    TextButton.styleFrom(visualDensity: VisualDensity.compact),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Новый чат', style: TextStyle(fontSize: 12)),
                 onPressed: _createNewChat,
@@ -2941,7 +3020,6 @@ $finalCsv
             ],
           ),
         ),
-        // Лента сообщений
         Expanded(
           child: rawMessages.isEmpty
               ? Center(
@@ -3214,7 +3292,7 @@ $finalCsv
   }
 
   // =========================================================================
-  // ЭКРАН 1: ПОЛНОЭКРАННЫЙ МОДУЛЬ СВЕДЕНИЯ НАКЛАДНЫХ
+  // ЭКРАН 1: ПОЛНОЭКРАННЫЙ МОДУЛЬ СВЕДЕНИЯ НАКЛАДНЫХ + ЛОКАЛЬНЫЕ/СЕТЕВЫЕ ПУТИ
   // =========================================================================
 
   Widget _buildLogisticsWorkspace() {
@@ -3223,7 +3301,7 @@ $finalCsv
       padding: const EdgeInsets.all(20),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 920),
+          constraints: const BoxConstraints(maxWidth: 960),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3259,7 +3337,7 @@ $finalCsv
                                     fontSize: 18, fontWeight: FontWeight.bold),
                               ),
                               Text(
-                                'Загрузи файл «Посылка» и сводки (ПП / Филиал) для автоматической группировки и оформления Excel',
+                                'Выбери файлы через проводник или вставь прямой путь (включая сетевые папки \\\\Server\\...)',
                                 style:
                                     TextStyle(fontSize: 13, color: _subtleText),
                               ),
@@ -3269,53 +3347,31 @@ $finalCsv
                       ],
                     ),
                     const SizedBox(height: 20),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final isRow = constraints.maxWidth >= 600;
-                        final slots = [
-                          _buildFileDropSlot(
-                            step: 'Шаг 1 (Обязательно)',
-                            title: 'Файл Посылка',
-                            file: _posylkaFile,
-                            accent: const Color(0xFF38BDF8),
-                            onTap: () => _pickFile(1),
-                          ),
-                          _buildFileDropSlot(
-                            step: 'Шаг 2 (Голова)',
-                            title: 'Сводка ПП',
-                            file: _svodkaPpFile,
-                            accent: const Color(0xFF14B8A6),
-                            onTap: () => _pickFile(2),
-                          ),
-                          _buildFileDropSlot(
-                            step: 'Шаг 3 (Филиал)',
-                            title: 'Сводка Филиал',
-                            file: _svodkaFilialFile,
-                            accent: const Color(0xFFA855F7),
-                            onTap: () => _pickFile(3),
-                          ),
-                        ];
-                        if (isRow) {
-                          return Row(
-                            children: [
-                              Expanded(child: slots[0]),
-                              const SizedBox(width: 12),
-                              Expanded(child: slots[1]),
-                              const SizedBox(width: 12),
-                              Expanded(child: slots[2]),
-                            ],
-                          );
-                        }
-                        return Column(
-                          children: [
-                            slots[0],
-                            const SizedBox(height: 10),
-                            slots[1],
-                            const SizedBox(height: 10),
-                            slots[2],
-                          ],
-                        );
-                      },
+                    _buildFilePathCard(
+                      type: 1,
+                      step: '1. Посылка (Обязательно)',
+                      hint:
+                          r'Например: C:\Посылка.xlsx или \\Server\Общая\Посылка.xlsx',
+                      controller: _posylkaPathController,
+                      accent: const Color(0xFF38BDF8),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildFilePathCard(
+                      type: 2,
+                      step: '2. Сводка ПП (Голова)',
+                      hint:
+                          r'Например: C:\Сводка_ПП.xlsx или \\Server\Общая\Сводка.xlsx',
+                      controller: _svodkaPpPathController,
+                      accent: const Color(0xFF14B8A6),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildFilePathCard(
+                      type: 3,
+                      step: '3. Сводка Филиал (ЭЛЕКТРОконнект)',
+                      hint:
+                          r'Например: C:\Филиал.xlsx или \\Server\Общая\Филиал.xlsx',
+                      controller: _svodkaFilialPathController,
+                      accent: const Color(0xFFA855F7),
                     ),
                     const SizedBox(height: 20),
                     Row(
@@ -3337,7 +3393,8 @@ $finalCsv
                                     child: CircularProgressIndicator(
                                         strokeWidth: 2, color: Colors.white),
                                   )
-                                : const Icon(Icons.play_arrow_rounded, size: 22),
+                                : const Icon(Icons.play_arrow_rounded,
+                                    size: 22),
                             label: Text(
                               _isLoading
                                   ? 'ИДЁТ СВЕДЕНИЕ...'
@@ -3441,75 +3498,132 @@ $finalCsv
     );
   }
 
-  Widget _buildFileDropSlot({
+  Widget _buildFilePathCard({
+    required int type,
     required String step,
-    required String title,
-    required File? file,
+    required String hint,
+    required TextEditingController controller,
     required Color accent,
-    required VoidCallback onTap,
   }) {
-    final isLoaded = file != null;
-    final fileName =
-        isLoaded ? file.path.split(Platform.pathSeparator).last : 'Нажми для выбора файла';
+    final cleaned = _normalizePathInput(controller.text);
+    final hasText = cleaned.isNotEmpty;
+    final fileExists = hasText && File(cleaned).existsSync();
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isLoaded
-              ? const Color(0xFF10B981).withOpacity(0.08)
-              : (widget.isDark
-                  ? const Color(0xFF182235)
-                  : const Color(0xFFF8FAFC)),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isLoaded ? const Color(0xFF10B981) : _borderCol,
-            width: isLoaded ? 1.5 : 1,
-          ),
+    final statusColor = !hasText
+        ? accent
+        : (fileExists ? const Color(0xFF10B981) : Colors.amberAccent);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: widget.isDark
+            ? const Color(0xFF162032)
+            : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: fileExists
+              ? const Color(0xFF10B981).withOpacity(0.6)
+              : _borderCol,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                fileExists
+                    ? Icons.check_circle_rounded
+                    : (hasText
+                        ? Icons.warning_amber_rounded
+                        : Icons.folder_open_rounded),
+                size: 18,
+                color: statusColor,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                step,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold,
+                  color: statusColor,
+                ),
+              ),
+              const Spacer(),
+              if (hasText)
                 Text(
-                  step,
+                  fileExists ? 'Файл найден' : 'Путь не найден',
                   style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: isLoaded ? const Color(0xFF10B981) : accent,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
                   ),
                 ),
-                const Spacer(),
-                Icon(
-                  isLoaded
-                      ? Icons.check_circle_rounded
-                      : Icons.upload_file_rounded,
-                  size: 18,
-                  color: isLoaded ? const Color(0xFF10B981) : _subtleText,
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  onChanged: (val) => _syncFileFromPath(type, val),
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: hint,
+                    hintStyle: TextStyle(fontSize: 12, color: _subtleText),
+                    prefixIcon: const Icon(Icons.lan_outlined, size: 17),
+                    suffixIcon: hasText
+                        ? IconButton(
+                            tooltip: 'Очистить путь',
+                            icon: const Icon(Icons.close, size: 16),
+                            onPressed: () {
+                              controller.clear();
+                              _syncFileFromPath(type, '');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: widget.isDark
+                        ? const Color(0xFF0D1320)
+                        : Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _borderCol),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: _borderCol),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 11),
+                  ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              title,
-              style:
-                  const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              fileName,
-              style: TextStyle(
-                fontSize: 12,
-                color: isLoaded ? const Color(0xFF10B981) : _subtleText,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: accent.withOpacity(0.18),
+                  foregroundColor: accent,
+                  elevation: 0,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: BorderSide(color: accent.withOpacity(0.4)),
+                  ),
+                ),
+                icon: const Icon(Icons.upload_file_rounded, size: 18),
+                label: const Text(
+                  'Обзор',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () => _pickFile(type),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -3520,7 +3634,8 @@ $finalCsv
 
   Widget _buildMajorCourierWorkspace({required bool isPlaty}) {
     final isWin = Platform.isWindows;
-    final accent = isPlaty ? const Color(0xFFA855F7) : const Color(0xFFF59E0B);
+    final accent =
+        isPlaty ? const Color(0xFFA855F7) : const Color(0xFFF59E0B);
     final firmCtrl = isPlaty ? _platyFirmController : _majorFirmController;
     final dateCtrl = isPlaty ? _platyDateController : _majorDateController;
     final timeCtrl = isPlaty ? _platyTimeController : _majorTimeController;
@@ -3616,13 +3731,13 @@ $finalCsv
                   ],
                 ),
                 const SizedBox(height: 8),
-                // Быстрый выбор даты и интервала
                 Wrap(
                   spacing: 8,
                   runSpacing: 6,
                   children: [
                     ActionChip(
-                      label: const Text('Сегодня', style: TextStyle(fontSize: 12)),
+                      label:
+                          const Text('Сегодня', style: TextStyle(fontSize: 12)),
                       onPressed: () =>
                           setState(() => dateCtrl.text = _todayFormatted()),
                     ),
@@ -3691,7 +3806,9 @@ $finalCsv
                           ),
                         ),
                         icon: Icon(
-                          isWin ? Icons.rocket_launch_rounded : Icons.code_rounded,
+                          isWin
+                              ? Icons.rocket_launch_rounded
+                              : Icons.code_rounded,
                           size: 20,
                         ),
                         label: Text(
