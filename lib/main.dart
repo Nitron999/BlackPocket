@@ -24,29 +24,75 @@ void main() {
   runApp(const PechatnyePlatyApp());
 }
 
-class PechatnyePlatyApp extends StatelessWidget {
+class PechatnyePlatyApp extends StatefulWidget {
   const PechatnyePlatyApp({super.key});
+
+  @override
+  State<PechatnyePlatyApp> createState() => _PechatnyePlatyAppState();
+}
+
+class _PechatnyePlatyAppState extends State<PechatnyePlatyApp> {
+  ThemeMode _themeMode = ThemeMode.dark;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final isDark = prefs.getBool('is_dark_theme') ?? true;
+    setState(() {
+      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
+
+  Future<void> _toggleTheme() async {
+    final prefs = await SharedPreferences.getInstance();
+    final nextDark = _themeMode != ThemeMode.dark;
+    await prefs.setBool('is_dark_theme', nextDark);
+    setState(() {
+      _themeMode = nextDark ? ThemeMode.dark : ThemeMode.light;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Печатные платы',
+      title: 'Печатные платы Pro',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
+      themeMode: _themeMode,
       darkTheme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF090D16),
+        scaffoldBackgroundColor: const Color(0xFF0A0F1A),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF38BDF8),
-          secondary: Color(0xFF818CF8),
-          surface: Color(0xFF131B2E),
+          primary: Color(0xFF14B8A6), // Бирюзовый акцент OpsPilot
+          secondary: Color(0xFF38BDF8),
+          surface: Color(0xFF111827),
           surfaceVariant: Color(0xFF1E293B),
           error: Color(0xFFEF4444),
         ),
         fontFamily: 'Roboto',
       ),
-      home: const MainScreen(),
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFF0D9488),
+          secondary: Color(0xFF0284C7),
+          surface: Colors.white,
+          surfaceVariant: Color(0xFFE2E8F0),
+          error: Color(0xFFDC2626),
+        ),
+        fontFamily: 'Roboto',
+      ),
+      home: MainScreen(
+        isDark: _themeMode == ThemeMode.dark,
+        onToggleTheme: _toggleTheme,
+      ),
     );
   }
 }
@@ -108,6 +154,39 @@ class ChatSession {
   }
 }
 
+class OperationLogEntry {
+  final String time;
+  final String module;
+  final String title;
+  final String details;
+  final bool isError;
+
+  OperationLogEntry({
+    required this.time,
+    required this.module,
+    required this.title,
+    required this.details,
+    this.isError = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'time': time,
+        'module': module,
+        'title': title,
+        'details': details,
+        'isError': isError,
+      };
+
+  factory OperationLogEntry.fromJson(Map<String, dynamic> json) =>
+      OperationLogEntry(
+        time: json['time'] ?? '',
+        module: json['module'] ?? '',
+        title: json['title'] ?? '',
+        details: json['details'] ?? '',
+        isError: json['isError'] ?? false,
+      );
+}
+
 class _LogisticsItem {
   String firm;
   String ps;
@@ -159,7 +238,14 @@ class _LogisticsItem {
 }
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final bool isDark;
+  final VoidCallback onToggleTheme;
+
+  const MainScreen({
+    super.key,
+    required this.isDark,
+    required this.onToggleTheme,
+  });
 
   @override
   State<MainScreen> createState() => _MainScreenState();
@@ -168,6 +254,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _chatInputController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
 
   // Контроллеры для Панели 2: Электроконнект Мейджер Экспресс
   late final TextEditingController _majorFirmController;
@@ -192,10 +279,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   static const MethodChannel _ttsChannel = MethodChannel('blackpocket/native_tts');
 
+  // Навигация и состояние UI
+  int _selectedNavIndex = 0; // 0: Обзор+Чат, 1: Сведение, 2: Электроконнект, 3: Платы, 4: Журнал
+  bool _isSidebarCollapsed = false;
+  String _searchQuery = '';
+  bool _sumatraFound = false;
+
   bool _isLoading = false;
-  bool _isLogisticsExpanded = false;
-  bool _isMajorExpanded = false;
-  bool _isPlatyExpanded = false;
   String _apiStatus = 'Ключ не настроен';
   bool _isKeyValidating = false;
   bool? _isKeyWorking;
@@ -210,10 +300,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   var _sessions = [];
   ChatSession? _currentSession;
+  List<OperationLogEntry> _operationLogs = [];
+
   String? _lastCsvResult;
   String _lastOtpravkaHeader = '';
+  int _lastHeadCount = 0;
+  int _lastFilialCount = 0;
   String? _lastGeneratedMajorScriptPath;
   String? _lastGeneratedPlatyScriptPath;
+  String _lastMajorAction = 'Готов к запуску';
+  String _lastPlatyAction = 'Готов к запуску';
+  String _lastLogisticsAction = 'Ожидает файлы';
 
   final _availableModels = [
     'qwen/qwen3.8-27b',
@@ -229,6 +326,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final d = now.day.toString().padLeft(2, '0');
     final m = now.month.toString().padLeft(2, '0');
     return '$d.$m.${now.year}';
+  }
+
+  String _nowTimeFormatted() {
+    final now = DateTime.now();
+    final h = now.hour.toString().padLeft(2, '0');
+    final m = now.minute.toString().padLeft(2, '0');
+    final s = now.second.toString().padLeft(2, '0');
+    return '$h:$m:$s';
   }
 
   @override
@@ -253,6 +358,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _platyInfoController = TextEditingController(text: 'с/ч');
 
     WidgetsBinding.instance.addObserver(this);
+    _checkSumatraPresence();
     _loadSettingsAndChats();
     _inputFocusNode.addListener(() {
       if (_inputFocusNode.hasFocus) {
@@ -261,10 +367,25 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
+  void _checkSumatraPresence() {
+    if (!Platform.isWindows) return;
+    final appExeDir = File(Platform.resolvedExecutable).parent.path;
+    final candidates = [
+      '$appExeDir\\SumatraPDF.exe',
+      r'C:\PechatnyePlaty\SumatraPDF.exe',
+      r'C:\SumatraPDF.exe',
+    ];
+    final exists = candidates.any((p) => File(p).existsSync());
+    setState(() {
+      _sumatraFound = exists;
+    });
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _inputFocusNode.dispose();
+    _searchController.dispose();
 
     _majorFirmController.dispose();
     _majorDateController.dispose();
@@ -306,6 +427,32 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
+  Future<void> _addOperationLog(
+    String module,
+    String title,
+    String details, {
+    bool isError = false,
+  }) async {
+    final entry = OperationLogEntry(
+      time: '${_todayFormatted()} ${_nowTimeFormatted()}',
+      module: module,
+      title: title,
+      details: details,
+      isError: isError,
+    );
+    setState(() {
+      _operationLogs.insert(0, entry);
+      if (_operationLogs.length > 50) {
+        _operationLogs = _operationLogs.sublist(0, 50);
+      }
+    });
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      'operation_logs',
+      jsonEncode(_operationLogs.map((e) => e.toJson()).toList()),
+    );
+  }
+
   Future<void> _speak(String text, {bool force = false}) async {
     if (!Platform.isAndroid && !Platform.isIOS) return;
     if (!_isVoiceEnabled && !force) return;
@@ -326,9 +473,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final key = prefs.getString('groq_api_key') ?? '';
     final savedModel = prefs.getString('groq_model') ?? 'qwen/qwen3.8-27b';
     final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
+    final sidebarCollapsed = prefs.getBool('sidebar_collapsed') ?? false;
 
     setState(() {
       _isVoiceEnabled = savedVoice;
+      _isSidebarCollapsed = sidebarCollapsed;
     });
 
     if (key.isNotEmpty) {
@@ -343,6 +492,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       setState(() {
         _selectedModel = savedModel;
       });
+    }
+
+    final logsJson = prefs.getString('operation_logs');
+    if (logsJson != null) {
+      try {
+        final decodedLogs = jsonDecode(logsJson) as List;
+        setState(() {
+          _operationLogs = decodedLogs
+              .map((e) =>
+                  OperationLogEntry.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+        });
+      } catch (_) {}
     }
 
     final chatsJson = prefs.getString('chat_sessions');
@@ -391,7 +553,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF162032),
         title: const Text('Переименовать чат'),
         content: TextField(
           controller: titleController,
@@ -550,7 +711,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void _showAttachmentMenu() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF162032),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -575,7 +735,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.insert_drive_file, color: Colors.greenAccent),
+              leading:
+                  const Icon(Icons.insert_drive_file, color: Colors.greenAccent),
               title: const Text('Прикрепить файл (Excel, CSV, TXT, и др.)'),
               onTap: () {
                 Navigator.pop(ctx);
@@ -589,7 +750,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================================
-  // МОДУЛИ 2 И 3: MAJOR EXPRESS (ЭЛЕКТРОКОННЕКТ И ПЛАТЫ)
+  // МОДУЛИ 2 И 3: MAJOR EXPRESS (ЭЛЕКТРОКОННЕКТ И ПЛАТЫ) — ЛОГИКА СОХРАНЕНА
   // =========================================================================
 
   String _sanitizeFilename(String raw) {
@@ -617,17 +778,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }) {
     final escapedShipper = shipperName.replaceAll("'", "\\'");
     final escapedFirm = consigneeName.replaceAll("'", "\\'");
-    final safeDate = pickupDate.trim().isEmpty ? _todayFormatted() : pickupDate.trim();
-    final safeTimeFull = pickupTime.trim().isEmpty ? '14:00-18:00' : pickupTime.trim();
+    final safeDate =
+        pickupDate.trim().isEmpty ? _todayFormatted() : pickupDate.trim();
+    final safeTimeFull =
+        pickupTime.trim().isEmpty ? '14:00-18:00' : pickupTime.trim();
     final timePrefixMatch = RegExp(r'^\d{1,2}').firstMatch(safeTimeFull);
     final timeFilterCode = timePrefixMatch?.group(0) ?? '14';
 
     final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
     final safePlaces = places.trim().isEmpty ? '1' : places.trim();
-    final escapedDesc =
-        (description.trim().isEmpty ? 'платы' : description.trim()).replaceAll('"', '\\"');
-    final escapedInfo =
-        (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim()).replaceAll('"', '\\"');
+    final escapedDesc = (description.trim().isEmpty ? 'платы' : description.trim())
+        .replaceAll('"', '\\"');
+    final escapedInfo = (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim())
+        .replaceAll('"', '\\"');
     final escapedAppDir = appExeDir.replaceAll('\\', '\\\\');
 
     return '''import os
@@ -951,18 +1114,28 @@ if __name__ == "__main__":
 
       setState(() {
         _lastGeneratedMajorScriptPath = filePath;
+        _lastMajorAction = '$firmName ($pickupDate)';
       });
 
-      _appendMessage(
-        'user',
-        '🚚 Электроконнект Мейджер Экспресс: $firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)',
-      );
-
+      final details =
+          '$firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)';
+      _appendMessage('user', '🚚 Электроконнект Мейджер Экспресс: $details');
       _appendMessage('assistant', scriptContent);
+      await _addOperationLog(
+        'Электроконнект',
+        'Вызов курьера Major Express',
+        details,
+      );
       await _speak('Скрипт Электроконнект для фирмы $firmName готов, Шурик!');
 
       await _executeOrShareScript(filePath, safeFileName);
     } catch (e) {
+      await _addOperationLog(
+        'Электроконнект',
+        'Ошибка запуска',
+        '$e',
+        isError: true,
+      );
       _showSnackbar('Ошибка создания скрипта: $e');
     }
   }
@@ -1029,18 +1202,28 @@ if __name__ == "__main__":
 
       setState(() {
         _lastGeneratedPlatyScriptPath = filePath;
+        _lastPlatyAction = '$firmName ($pickupDate)';
       });
 
-      _appendMessage(
-        'user',
-        '📦 Платы Мейджер Экспресс: $firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)',
-      );
-
+      final details =
+          '$firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)';
+      _appendMessage('user', '📦 Платы Мейджер Экспресс: $details');
       _appendMessage('assistant', scriptContent);
+      await _addOperationLog(
+        'Печатные платы',
+        'Вызов курьера Major Express',
+        details,
+      );
       await _speak('Скрипт Платы для фирмы $firmName готов, Шурик!');
 
       await _executeOrShareScript(filePath, safeFileName);
     } catch (e) {
+      await _addOperationLog(
+        'Печатные платы',
+        'Ошибка запуска',
+        '$e',
+        isError: true,
+      );
       _showSnackbar('Ошибка создания скрипта: $e');
     }
   }
@@ -1136,7 +1319,8 @@ if __name__ == "__main__":
     );
 
     try {
-      final posRows = await _extractSheetMatrix(posFile, preferredSheetName: 'Посылка', maxCols: 14);
+      final posRows = await _extractSheetMatrix(posFile,
+          preferredSheetName: 'Посылка', maxCols: 14);
       if (posRows.isEmpty) {
         throw Exception('Лист "Посылка" пуст или не найден.');
       }
@@ -1210,7 +1394,8 @@ if __name__ == "__main__":
       // Индексируем Сводку ПП
       final Map<String, Map<String, String>> ppByPs = {};
       if (_svodkaPpFile != null && _svodkaPpFile!.existsSync()) {
-        final ppRows = await _extractSheetMatrix(_svodkaPpFile!, preferredSheetName: 'СВОДКА', maxCols: 16);
+        final ppRows = await _extractSheetMatrix(_svodkaPpFile!,
+            preferredSheetName: 'СВОДКА', maxCols: 16);
         String currentMoscowSchet = '';
         String currentFirm = '';
         String currentDelivery = '';
@@ -1230,7 +1415,8 @@ if __name__ == "__main__":
             } else if (colA.isNotEmpty && moscowVal.isEmpty) {
               currentMoscowSchet = '';
             }
-            if (firmVal.isNotEmpty && !firmVal.toLowerCase().startsWith('заявка')) {
+            if (firmVal.isNotEmpty &&
+                !firmVal.toLowerCase().startsWith('заявка')) {
               currentFirm = firmVal;
             }
             currentDelivery = '';
@@ -1260,7 +1446,8 @@ if __name__ == "__main__":
       final Map<String, Map<String, String>> filByPs = {};
 
       if (_svodkaFilialFile != null && _svodkaFilialFile!.existsSync()) {
-        final filRows = await _extractSheetMatrix(_svodkaFilialFile!, preferredSheetName: 'ФИЛИАЛ', maxCols: 16);
+        final filRows = await _extractSheetMatrix(_svodkaFilialFile!,
+            preferredSheetName: 'ФИЛИАЛ', maxCols: 16);
         String currentSchn = '';
         String currentFirm = '';
         String currentDelivery = '';
@@ -1273,7 +1460,9 @@ if __name__ == "__main__":
           final qtyVal = r.length > 7 ? _cleanNumStr(r[7]) : '';
 
           final extractedSchn = _extractDigitsOnly(colA);
-          if (extractedSchn.isNotEmpty && extractedSchn.length >= 4 && extractedSchn.length <= 6) {
+          if (extractedSchn.isNotEmpty &&
+              extractedSchn.length >= 4 &&
+              extractedSchn.length <= 6) {
             currentSchn = extractedSchn;
             if (colB.isNotEmpty) {
               currentFirm = colB;
@@ -1329,7 +1518,8 @@ if __name__ == "__main__":
           }
         }
         if (item.poSchetu.isEmpty) {
-          item.poSchetu = item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
+          item.poSchetu =
+              item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
         }
         item.etiketka = 'ОТК';
         if (item.dostavka.isEmpty) {
@@ -1364,13 +1554,15 @@ if __name__ == "__main__":
         }
 
         if (item.poSchetu.isEmpty) {
-          item.poSchetu = item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
+          item.poSchetu =
+              item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
         }
 
         final fLow = item.firm.toLowerCase();
         if (fLow.contains('нейрософт') || fLow.contains('кузьминский')) {
           item.dostavka = 'К';
-        } else if (fLow.contains('атб-электроника') || fLow.contains('атб электроника')) {
+        } else if (fLow.contains('атб-электроника') ||
+            fLow.contains('атб электроника')) {
           item.dostavka = 'ДМ';
         } else if (item.dostavka.isEmpty) {
           item.dostavka = 'К';
@@ -1378,10 +1570,10 @@ if __name__ == "__main__":
       }
 
       // Сортируем внутри каждого блока: ДМ -> СДЭК -> К -> Самовывоз
-      headItems.sort((a, b) =>
-          _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
-      filialItems.sort((a, b) =>
-          _deliverySortWeight(a.dostavka).compareTo(_deliverySortWeight(b.dostavka)));
+      headItems.sort((a, b) => _deliverySortWeight(a.dostavka)
+          .compareTo(_deliverySortWeight(b.dostavka)));
+      filialItems.sort((a, b) => _deliverySortWeight(a.dostavka)
+          .compareTo(_deliverySortWeight(b.dostavka)));
 
       final csvBuffer = StringBuffer();
       csvBuffer.writeln(
@@ -1401,6 +1593,10 @@ if __name__ == "__main__":
       final finalCsv = csvBuffer.toString().trim();
       setState(() {
         _lastCsvResult = finalCsv;
+        _lastHeadCount = headItems.length;
+        _lastFilialCount = filialItems.length;
+        _lastLogisticsAction =
+            'Голова: ${headItems.length} • Филиал: ${filialItems.length}';
       });
 
       final summaryMsg = '''
@@ -1408,16 +1604,27 @@ if __name__ == "__main__":
 ${_lastOtpravkaHeader.isNotEmpty ? '📅 Блок: $_lastOtpravkaHeader\n' : ''}• Голова (ООО «Печатные платы»): ${headItems.length} поз.
 • Филиал (ЭЛЕКТРОконнект): ${filialItems.length} поз.
 
-Нажми зелёную кнопку скачивания справа сверху, чтобы открыть готовый оформленный Excel.
+Нажми зелёную кнопку «Скачать Excel», чтобы открыть готовый оформленный файл.
 
 ```csv
 $finalCsv
 ```''';
 
       _appendMessage('assistant', summaryMsg);
+      await _addOperationLog(
+        'Сведение накладных',
+        'Успешно сведено ($fileName)',
+        'Голова: ${headItems.length} поз., Филиал: ${filialItems.length} поз. ${_lastOtpravkaHeader.isNotEmpty ? "($_lastOtpravkaHeader)" : ""}',
+      );
       await _speak(
           'Накладная успешно сведена, Шурик! Голова: ${headItems.length}, филиал: ${filialItems.length}.');
     } catch (e) {
+      await _addOperationLog(
+        'Сведение накладных',
+        'Ошибка сведения',
+        '$e',
+        isError: true,
+      );
       _appendMessage('system', 'Ошибка сведения: $e');
     } finally {
       setState(() => _isLoading = false);
@@ -1435,16 +1642,19 @@ $finalCsv
     List<String> sharedStrings = [];
     final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
     if (sharedStringsFile != null) {
-      final xmlStr =
-          utf8.decode(sharedStringsFile.content as List<int>, allowMalformed: true);
+      final xmlStr = utf8.decode(sharedStringsFile.content as List<int>,
+          allowMalformed: true);
       final document = XmlDocument.parse(xmlStr);
       for (final si in document.findAllElements('si')) {
         final textBuffer = StringBuffer();
         for (final t in si.findAllElements('t')) {
           textBuffer.write(t.innerText);
         }
-        sharedStrings.add(
-            textBuffer.toString().replaceAll(';', ' ').replaceAll('\n', ' ').trim());
+        sharedStrings.add(textBuffer
+            .toString()
+            .replaceAll(';', ' ')
+            .replaceAll('\n', ' ')
+            .trim());
       }
     }
 
@@ -1488,7 +1698,8 @@ $finalCsv
     if (targetSheetFile == null) {
       final sheetFiles = archive.files
           .where((f) =>
-              f.name.startsWith('xl/worksheets/sheet') && f.name.endsWith('.xml'))
+              f.name.startsWith('xl/worksheets/sheet') &&
+              f.name.endsWith('.xml'))
           .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
       if (sheetFiles.isNotEmpty) {
@@ -1673,9 +1884,8 @@ $finalCsv
           fontSize: c == 0 ? 16 : 13,
           fontHex: headerFont,
           bgHex: headerBg,
-          hAlign: c == 0
-              ? ex.HorizontalAlign.Left
-              : ex.HorizontalAlign.Center,
+          hAlign:
+              c == 0 ? ex.HorizontalAlign.Left : ex.HorizontalAlign.Center,
           wrapText: true,
         );
       }
@@ -1723,8 +1933,8 @@ $finalCsv
 
           sheet.setRowHeight(currentRow, 28);
           _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 28);
-          final filCell = sheet.cell(
-              ex.CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: currentRow));
+          final filCell = sheet.cell(ex.CellIndex.indexByColumnRow(
+              columnIndex: 0, rowIndex: currentRow));
           filCell.value = ex.TextCellValue('филиал');
           filCell.cellStyle = _buildCellStyle(
             fontSize: 18,
@@ -1743,8 +1953,8 @@ $finalCsv
 
         for (int c = 0; c < 13; c++) {
           final val = c < cells.length ? cells[c].trim() : '';
-          final cell = sheet.cell(
-              ex.CellIndex.indexByColumnRow(columnIndex: c, rowIndex: currentRow));
+          final cell = sheet.cell(ex.CellIndex.indexByColumnRow(
+              columnIndex: c, rowIndex: currentRow));
 
           if (c >= 4 && c <= 6 && int.tryParse(val) != null) {
             cell.value = ex.IntCellValue(int.parse(val));
@@ -1809,10 +2019,21 @@ $finalCsv
       if (fileBytes != null) {
         final f = File(filePath);
         await f.writeAsBytes(fileBytes);
+        await _addOperationLog(
+          'Экспорт Excel',
+          'Сформирован файл .xlsx',
+          filePath,
+        );
         _showSnackbar('Excel сохранен: $filePath');
         await OpenFilex.open(filePath);
       }
     } catch (e) {
+      await _addOperationLog(
+        'Экспорт Excel',
+        'Ошибка выгрузки',
+        '$e',
+        isError: true,
+      );
       _showSnackbar('Ошибка выгрузки: $e');
     }
   }
@@ -2036,7 +2257,8 @@ $finalCsv
     return text;
   }
 
-  void _appendMessage(String role, String text, {String? imagePath, String? fileName}) {
+  void _appendMessage(String role, String text,
+      {String? imagePath, String? fileName}) {
     if (_currentSession == null) return;
     setState(() {
       var msgs = _currentSession!.messages as List;
@@ -2061,816 +2283,1611 @@ $finalCsv
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(text),
-        backgroundColor: const Color(0xFF1E293B),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
 
-  Widget _miniInputField({
+  // =========================================================================
+  // НОВЫЙ ДИЗАЙН: КОМПОНЕНТЫ ИНТЕРФЕЙСА (SIDEBAR, TOPBAR, КАРТОЧКИ, МОДУЛИ)
+  // =========================================================================
+
+  Color get _cardBg =>
+      widget.isDark ? const Color(0xFF111827) : Colors.white;
+  Color get _sidebarBg =>
+      widget.isDark ? const Color(0xFF0D1320) : const Color(0xFFF8FAFC);
+  Color get _borderCol =>
+      widget.isDark ? const Color(0xFF1F2937) : const Color(0xFFE2E8F0);
+  Color get _subtleText =>
+      widget.isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+
+  Widget _styledInputField({
     required TextEditingController controller,
     required String label,
+    IconData? icon,
     TextInputType keyboardType = TextInputType.text,
   }) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      style: const TextStyle(fontSize: 13, color: Colors.white),
+      style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
-        isDense: true,
         labelText: label,
-        labelStyle: const TextStyle(fontSize: 11, color: Colors.white54),
+        labelStyle: TextStyle(fontSize: 13, color: _subtleText),
+        prefixIcon: icon != null ? Icon(icon, size: 18) : null,
         filled: true,
-        fillColor: const Color(0xFF182235),
+        fillColor: widget.isDark
+            ? const Color(0xFF182235)
+            : const Color(0xFFF8FAFC),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _borderCol),
         ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 10,
-          vertical: 8,
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _borderCol),
         ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final rawMessages = _currentSession?.messages as List? ?? [];
-    final isWin = Platform.isWindows;
+    final width = MediaQuery.of(context).size.width;
+    final isWide = width >= 840;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF101726),
-        elevation: 0,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0284C7).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.memory, color: Color(0xFF38BDF8), size: 20),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      drawer: isWide ? null : Drawer(child: _buildSidebarContent(isDrawer: true)),
+      body: Row(
+        children: [
+          if (isWide) _buildSidebarContent(isDrawer: false),
+          Expanded(
+            child: Column(
               children: [
-                Text(
-                  isWin ? 'Печатные платы (Windows)' : 'Печатные платы',
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                _buildTopBar(isWide: isWide),
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    child: _buildActiveWorkspace(),
+                  ),
                 ),
-                Row(
-                  children: const [
-                    Icon(Icons.bolt, color: Colors.greenAccent, size: 14),
-                    SizedBox(width: 2),
-                    Text(
-                      'Онлайн',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.greenAccent,
-                        fontWeight: FontWeight.w500,
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebarContent({required bool isDrawer}) {
+    final collapsed = !isDrawer && _isSidebarCollapsed;
+    final navItems = [
+      (
+        index: 0,
+        title: 'Обзор и Чат',
+        subtitle: 'Главная панель',
+        icon: Icons.dashboard_rounded,
+        color: const Color(0xFF14B8A6),
+      ),
+      (
+        index: 1,
+        title: 'Сведение накладных',
+        subtitle: 'Посылка / Сводки',
+        icon: Icons.table_chart_rounded,
+        color: const Color(0xFF38BDF8),
+      ),
+      (
+        index: 2,
+        title: 'Электроконнект',
+        subtitle: 'Major Express',
+        icon: Icons.local_shipping_rounded,
+        color: const Color(0xFFF59E0B),
+      ),
+      (
+        index: 3,
+        title: 'Печатные платы',
+        subtitle: 'Major Express',
+        icon: Icons.developer_board_rounded,
+        color: const Color(0xFFA855F7),
+      ),
+      (
+        index: 4,
+        title: 'Журнал операций',
+        subtitle: 'История и логи',
+        icon: Icons.history_rounded,
+        color: const Color(0xFF10B981),
+      ),
+    ];
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      width: collapsed ? 74 : 255,
+      decoration: BoxDecoration(
+        color: _sidebarBg,
+        border: Border(right: BorderSide(color: _borderCol)),
+      ),
+      child: SafeArea(
+        child: Column(
+          children: [
+            // Шапка сайдбара
+            Padding(
+              padding: EdgeInsets.symmetric(
+                  horizontal: collapsed ? 12 : 16, vertical: 16),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF14B8A6), Color(0xFF0284C7)],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.memory,
+                        color: Colors.white, size: 22),
+                  ),
+                  if (!collapsed) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Печатные платы',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            'Logistics Suite v2.6',
+                            style: TextStyle(fontSize: 11, color: _subtleText),
+                          ),
+                        ],
                       ),
                     ),
                   ],
+                ],
+              ),
+            ),
+            Divider(height: 1, color: _borderCol),
+            const SizedBox(height: 10),
+            if (!collapsed)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'РАБОЧИЕ РАЗДЕЛЫ',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.1,
+                      color: _subtleText,
+                    ),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                itemCount: navItems.length,
+                itemBuilder: (context, idx) {
+                  final item = navItems[idx];
+                  final isSelected = _selectedNavIndex == item.index;
+                  return Tooltip(
+                    message: collapsed ? item.title : '',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: () {
+                        setState(() {
+                          _selectedNavIndex = item.index;
+                        });
+                        if (isDrawer) Navigator.pop(context);
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 3),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: collapsed ? 0 : 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? item.color.withOpacity(0.16)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: isSelected
+                                ? item.color.withOpacity(0.45)
+                                : Colors.transparent,
+                          ),
+                        ),
+                        child: collapsed
+                            ? Center(
+                                child: Icon(
+                                  item.icon,
+                                  color: isSelected ? item.color : _subtleText,
+                                  size: 22,
+                                ),
+                              )
+                            : Row(
+                                children: [
+                                  Icon(
+                                    item.icon,
+                                    color:
+                                        isSelected ? item.color : _subtleText,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.title,
+                                          style: TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: isSelected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                            color: isSelected
+                                                ? (widget.isDark
+                                                    ? Colors.white
+                                                    : Colors.black87)
+                                                : null,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        Text(
+                                          item.subtitle,
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: _subtleText,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  if (isSelected)
+                                    Container(
+                                      width: 6,
+                                      height: 6,
+                                      decoration: BoxDecoration(
+                                        color: item.color,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            Divider(height: 1, color: _borderCol),
+            // Нижние кнопки сайдбара
+            if (!collapsed && Platform.isWindows)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: _sumatraFound
+                        ? const Color(0xFF10B981).withOpacity(0.1)
+                        : const Color(0xFFF59E0B).withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _sumatraFound
+                          ? const Color(0xFF10B981).withOpacity(0.3)
+                          : const Color(0xFFF59E0B).withOpacity(0.3),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _sumatraFound
+                            ? Icons.print_rounded
+                            : Icons.warning_amber_rounded,
+                        size: 18,
+                        color: _sumatraFound
+                            ? const Color(0xFF10B981)
+                            : const Color(0xFFF59E0B),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _sumatraFound
+                              ? 'Автопечать SumatraPDF готова'
+                              : 'SumatraPDF.exe не найден',
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                mainAxisAlignment: collapsed
+                    ? MainAxisAlignment.center
+                    : MainAxisAlignment.spaceBetween,
+                children: [
+                  if (!collapsed)
+                    TextButton.icon(
+                      icon: const Icon(Icons.settings_outlined, size: 18),
+                      label: const Text('Настройки',
+                          style: TextStyle(fontSize: 12)),
+                      onPressed: () => _showSettingsDialog(context),
+                    ),
+                  if (!isDrawer)
+                    IconButton(
+                      tooltip: collapsed ? 'Развернуть меню' : 'Свернуть меню',
+                      icon: Icon(
+                        collapsed
+                            ? Icons.keyboard_double_arrow_right
+                            : Icons.keyboard_double_arrow_left,
+                        size: 20,
+                        color: _subtleText,
+                      ),
+                      onPressed: () async {
+                        final next = !_isSidebarCollapsed;
+                        setState(() => _isSidebarCollapsed = next);
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setBool('sidebar_collapsed', next);
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopBar({required bool isWide}) {
+    final titles = [
+      'Обзор и ИИ-ассистент',
+      'Сведение накладных (Посылка / Сводки)',
+      'Электроконнект — Major Express',
+      'Печатные платы — Major Express',
+      'Журнал операций',
+    ];
+
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        border: Border(bottom: BorderSide(color: _borderCol)),
+      ),
+      child: Row(
+        children: [
+          if (!isWide)
+            Builder(
+              builder: (ctx) => IconButton(
+                icon: const Icon(Icons.menu_rounded),
+                tooltip: 'Меню разделов',
+                onPressed: () => Scaffold.of(ctx).openDrawer(),
+              ),
+            ),
+          Expanded(
+            flex: 3,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  titles[_selectedNavIndex],
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF10B981),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      Platform.isWindows ? 'ONLINE • Windows' : 'ONLINE',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF10B981),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          if (isWide)
+            Expanded(
+              flex: 2,
+              child: SizedBox(
+                height: 36,
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (val) =>
+                      setState(() => _searchQuery = val.trim().toLowerCase()),
+                  style: const TextStyle(fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'Поиск по разделам и логам...',
+                    hintStyle: TextStyle(fontSize: 12, color: _subtleText),
+                    prefixIcon:
+                        Icon(Icons.search, size: 17, color: _subtleText),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close, size: 15),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: widget.isDark
+                        ? const Color(0xFF182235)
+                        : const Color(0xFFF1F5F9),
+                    contentPadding: EdgeInsets.zero,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(width: 8),
+          if (!Platform.isWindows)
+            IconButton(
+              tooltip: _isVoiceEnabled ? 'Звук включен' : 'Звук выключен',
+              icon: Icon(
+                _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
+                color: _isVoiceEnabled ? const Color(0xFF14B8A6) : _subtleText,
+              ),
+              onPressed: () async {
+                final newVal = !_isVoiceEnabled;
+                if (!newVal) await _stopVoice();
+                setState(() => _isVoiceEnabled = newVal);
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setBool('is_voice_enabled', newVal);
+                _showSnackbar(
+                    newVal ? 'Автоозвучка включена' : 'Автоозвучка выключена');
+              },
+            ),
+          IconButton(
+            tooltip: widget.isDark ? 'Светлая тема' : 'Тёмная тема',
+            icon: Icon(
+              widget.isDark
+                  ? Icons.light_mode_outlined
+                  : Icons.dark_mode_outlined,
+              size: 20,
+            ),
+            onPressed: widget.onToggleTheme,
+          ),
+          IconButton(
+            tooltip: 'История чатов',
+            icon: const Icon(Icons.chat_bubble_outline, size: 20),
+            onPressed: () => _showChatsDrawer(context),
+          ),
+          IconButton(
+            tooltip: 'Журнал операций (${_operationLogs.length})',
+            icon: Badge(
+              isLabelVisible: _operationLogs.isNotEmpty,
+              label: Text('${_operationLogs.length}'),
+              child: const Icon(Icons.notifications_none_rounded, size: 22),
+            ),
+            onPressed: () => setState(() => _selectedNavIndex = 4),
+          ),
+          IconButton(
+            tooltip: 'Настройки API и системы',
+            icon: const Icon(Icons.settings_outlined, size: 20),
+            onPressed: () => _showSettingsDialog(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActiveWorkspace() {
+    switch (_selectedNavIndex) {
+      case 0:
+        return _buildDashboardAndChatView();
+      case 1:
+        return _buildLogisticsWorkspace();
+      case 2:
+        return _buildMajorCourierWorkspace(isPlaty: false);
+      case 3:
+        return _buildMajorCourierWorkspace(isPlaty: true);
+      case 4:
+        return _buildLogsWorkspace();
+      default:
+        return _buildDashboardAndChatView();
+    }
+  }
+
+  // =========================================================================
+  // ЭКРАН 0: ДАШБОРД С КАРТОЧКАМИ МОДУЛЕЙ + ЧАТ С ГЕНОЙ
+  // =========================================================================
+
+  Widget _buildDashboardAndChatView() {
+    final rawMessages = _currentSession?.messages as List? ?? [];
+    final isWin = Platform.isWindows;
+
+    final cards = [
+      (
+        navIdx: 1,
+        title: 'Сведение накладных',
+        subtitle: 'Посылки и сводки (ПП + Филиал)',
+        status: _lastCsvResult != null ? 'Готово' : 'Ожидает',
+        statusColor: _lastCsvResult != null
+            ? const Color(0xFF10B981)
+            : const Color(0xFF38BDF8),
+        metric: _lastLogisticsAction,
+        icon: Icons.table_chart_rounded,
+        accent: const Color(0xFF38BDF8),
+      ),
+      (
+        navIdx: 2,
+        title: 'Электроконнект',
+        subtitle: 'Вызов курьера Major Express (УПД)',
+        status: 'Онлайн',
+        statusColor: const Color(0xFFF59E0B),
+        metric: _lastMajorAction,
+        icon: Icons.local_shipping_rounded,
+        accent: const Color(0xFFF59E0B),
+      ),
+      (
+        navIdx: 3,
+        title: 'Печатные платы',
+        subtitle: 'Вызов курьера Major Express (с/ч)',
+        status: 'Активно',
+        statusColor: const Color(0xFFA855F7),
+        metric: _lastPlatyAction,
+        icon: Icons.developer_board_rounded,
+        accent: const Color(0xFFA855F7),
+      ),
+    ];
+
+    final filteredCards = _searchQuery.isEmpty
+        ? cards
+        : cards
+            .where((c) =>
+                c.title.toLowerCase().contains(_searchQuery) ||
+                c.subtitle.toLowerCase().contains(_searchQuery) ||
+                c.metric.toLowerCase().contains(_searchQuery))
+            .toList();
+
+    return Column(
+      key: const ValueKey('dashboard_view'),
+      children: [
+        // Сетка карточек модулей
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isRow = constraints.maxWidth >= 720;
+              if (filteredCards.isEmpty) return const SizedBox.shrink();
+
+              if (isRow) {
+                return Row(
+                  children: filteredCards
+                      .map((c) => Expanded(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 6),
+                              child: _buildModuleCard(c),
+                            ),
+                          ))
+                      .toList(),
+                );
+              } else {
+                return SizedBox(
+                  height: 138,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: filteredCards.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, idx) => SizedBox(
+                      width: 265,
+                      child: _buildModuleCard(filteredCards[idx]),
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+        ),
+        // Разделитель рабочей зоны чата
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+          child: Row(
+            children: [
+              Icon(Icons.smart_toy_outlined, size: 16, color: _subtleText),
+              const SizedBox(width: 6),
+              Text(
+                'Рабочий чат с Геной (${_currentSession?.title ?? "Чат"})',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _subtleText),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact),
+                icon: const Icon(Icons.add, size: 16),
+                label: const Text('Новый чат', style: TextStyle(fontSize: 12)),
+                onPressed: _createNewChat,
+              ),
+            ],
+          ),
+        ),
+        // Лента сообщений
+        Expanded(
+          child: rawMessages.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome,
+                          size: 38,
+                          color: const Color(0xFF14B8A6).withOpacity(0.5)),
+                      const SizedBox(height: 10),
+                      Text(
+                        'Выбери карточку модуля сверху или напиши вопрос в чат',
+                        style: TextStyle(fontSize: 14, color: _subtleText),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                  itemCount: rawMessages.length,
+                  itemBuilder: (context, idx) {
+                    final m = rawMessages[idx] as ChatMessage;
+                    if (_searchQuery.isNotEmpty &&
+                        !m.text.toLowerCase().contains(_searchQuery)) {
+                      return const SizedBox.shrink();
+                    }
+                    final isUser = m.role == 'user';
+                    final isSystem = m.role == 'system';
+
+                    return Align(
+                      alignment:
+                          isUser ? Alignment.centerRight : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 12),
+                        constraints: BoxConstraints(
+                          maxWidth: MediaQuery.of(context).size.width * 0.78,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isUser
+                              ? const Color(0xFF0F766E)
+                              : isSystem
+                                  ? const Color(0xFF7F1D1D)
+                                  : _cardBg,
+                          borderRadius: BorderRadius.only(
+                            topLeft: const Radius.circular(16),
+                            topRight: const Radius.circular(16),
+                            bottomLeft: Radius.circular(isUser ? 16 : 4),
+                            bottomRight: Radius.circular(isUser ? 4 : 16),
+                          ),
+                          border: Border.all(
+                            color: isUser
+                                ? const Color(0xFF14B8A6).withOpacity(0.4)
+                                : isSystem
+                                    ? Colors.redAccent.withOpacity(0.4)
+                                    : _borderCol,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (m.imagePath != null &&
+                                File(m.imagePath!).existsSync())
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8.0),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Image.file(
+                                    File(m.imagePath!),
+                                    height: 180,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                              ),
+                            if (m.fileName != null && m.fileName!.isNotEmpty)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 8.0),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black26,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.insert_drive_file,
+                                        size: 16, color: Colors.greenAccent),
+                                    const SizedBox(width: 6),
+                                    Flexible(
+                                      child: Text(
+                                        m.fileName!,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.greenAccent,
+                                            fontWeight: FontWeight.w500),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            SelectableText(
+                              m.text,
+                              style: TextStyle(
+                                fontSize: 15,
+                                color: isUser || isSystem || widget.isDark
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
+                            ),
+                            if (!isUser && !isSystem && !isWin)
+                              Align(
+                                alignment: Alignment.bottomRight,
+                                child: InkWell(
+                                  onTap: () => _speak(m.text, force: true),
+                                  child: const Padding(
+                                    padding: EdgeInsets.only(top: 6.0),
+                                    child: Icon(
+                                      Icons.volume_up,
+                                      size: 20,
+                                      color: Color(0xFF14B8A6),
+                                    ),
+                                  ),
+                                ),
+                              )
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        if (_isLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Color(0xFF14B8A6)),
+                ),
+                SizedBox(width: 8),
+                Text('Обработка...', style: TextStyle(fontSize: 13)),
+              ],
+            ),
+          ),
+        _buildChatInputArea(),
+      ],
+    );
+  }
+
+  Widget _buildModuleCard(dynamic card) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => setState(() => _selectedNavIndex = card.navIdx),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _cardBg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _borderCol),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(widget.isDark ? 0.22 : 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: (card.accent as Color).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(card.icon, color: card.accent, size: 20),
+                ),
+                const Spacer(),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: (card.statusColor as Color).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    card.status,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: card.statusColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              card.title,
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              card.subtitle,
+              style: TextStyle(fontSize: 12, color: _subtleText),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    card.metric,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: card.accent,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: (card.accent as Color).withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Открыть',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                          color: card.accent,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.arrow_forward_rounded,
+                          size: 13, color: card.accent),
+                    ],
+                  ),
                 ),
               ],
             ),
           ],
         ),
-        actions: [
-          if (!isWin)
-            IconButton(
-              icon: Icon(
-                _isVoiceEnabled ? Icons.volume_up : Icons.volume_off,
-                color: _isVoiceEnabled ? const Color(0xFF38BDF8) : Colors.white38,
-              ),
-              tooltip: _isVoiceEnabled ? 'Звук включен' : 'Звук выключен',
-              onPressed: () async {
-                final newVal = !_isVoiceEnabled;
-                if (!newVal) {
-                  await _stopVoice();
-                }
-                setState(() {
-                  _isVoiceEnabled = newVal;
-                });
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setBool('is_voice_enabled', newVal);
-                _showSnackbar(newVal ? 'Автоозвучка включена' : 'Автоозвучка выключена');
-              },
-            ),
-          IconButton(
-            icon: const Icon(Icons.chat_bubble_outline, color: Colors.white70),
-            tooltip: 'История чатов',
-            onPressed: () => _showChatsDrawer(context),
-          ),
-          IconButton(
-            icon: Icon(
-              _isLogisticsExpanded
-                  ? Icons.inventory_2
-                  : Icons.inventory_2_outlined,
-              color: _isLogisticsExpanded
-                  ? const Color(0xFF38BDF8)
-                  : Colors.white70,
-            ),
-            tooltip: 'Сведение накладных',
-            onPressed: () {
-              setState(() {
-                _isLogisticsExpanded = !_isLogisticsExpanded;
-              });
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-            onPressed: () => _showSettingsDialog(context),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildLogisticsTopPanel(),
-          _buildMajorExpressTopPanel(),
-          _buildPlatyMajorExpressTopPanel(),
-          Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              itemCount: rawMessages.length,
-              itemBuilder: (context, idx) {
-                final m = rawMessages[idx] as ChatMessage;
-                final role = m.role;
-                final isUser = role == 'user';
-                final isSystem = role == 'system';
-                final text = m.text;
-                final imgPath = m.imagePath;
-                final docName = m.fileName;
-
-                return Align(
-                  alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 6),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    constraints: BoxConstraints(
-                      maxWidth: MediaQuery.of(context).size.width * 0.85,
-                    ),
-                    decoration: BoxDecoration(
-                      color: isUser
-                          ? const Color(0xFF0369A1)
-                          : isSystem
-                              ? const Color(0xFF7F1D1D)
-                              : const Color(0xFF162032),
-                      borderRadius: BorderRadius.only(
-                        topLeft: const Radius.circular(16),
-                        topRight: const Radius.circular(16),
-                        bottomLeft: Radius.circular(isUser ? 16 : 4),
-                        bottomRight: Radius.circular(isUser ? 4 : 16),
-                      ),
-                      border: Border.all(
-                        color: isUser
-                            ? const Color(0xFF38BDF8).withOpacity(0.3)
-                            : isSystem
-                                ? Colors.redAccent.withOpacity(0.3)
-                                : const Color(0xFF334155).withOpacity(0.4),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (imgPath != null && File(imgPath).existsSync())
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8.0),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(10),
-                              child: Image.file(
-                                File(imgPath),
-                                height: 180,
-                                width: double.infinity,
-                                fit: BoxFit.cover,
-                              ),
-                            ),
-                          ),
-                        if (docName != null && docName.isNotEmpty)
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 8.0),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.black26,
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.insert_drive_file, size: 16, color: Colors.greenAccent),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    docName,
-                                    style: const TextStyle(fontSize: 13, color: Colors.greenAccent, fontWeight: FontWeight.w500),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        SelectableText(
-                          text,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            color: Colors.white,
-                          ),
-                        ),
-                        if (!isUser && !isSystem && !isWin)
-                          Align(
-                            alignment: Alignment.bottomRight,
-                            child: InkWell(
-                              onTap: () => _speak(text, force: true),
-                              child: const Padding(
-                                padding: EdgeInsets.only(top: 8.0),
-                                child: Icon(
-                                  Icons.volume_up,
-                                  size: 20,
-                                  color: Color(0xFF38BDF8),
-                                ),
-                              ),
-                            ),
-                          )
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          if (_isLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Color(0xFF38BDF8),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Обработка...',
-                    style: TextStyle(fontSize: 14, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          _buildChatInputArea(),
-        ],
       ),
     );
   }
 
-  void _showChatsDrawer(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF131B2E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            height: MediaQuery.of(context).size.height * 0.6,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'История чатов',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0284C7),
-                      ),
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('Новый чат'),
-                      onPressed: () {
-                        _createNewChat();
-                        Navigator.pop(ctx);
-                        setState(() {});
-                      },
-                    ),
-                  ],
+  // =========================================================================
+  // ЭКРАН 1: ПОЛНОЭКРАННЫЙ МОДУЛЬ СВЕДЕНИЯ НАКЛАДНЫХ
+  // =========================================================================
+
+  Widget _buildLogisticsWorkspace() {
+    return SingleChildScrollView(
+      key: const ValueKey('logistics_workspace'),
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 920),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: _cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _borderCol),
                 ),
-                const Divider(color: Color(0xFF334155)),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _sessions.length,
-                    itemBuilder: (context, index) {
-                      final session = _sessions[index] as ChatSession;
-                      final isSelected = session == _currentSession;
-                      return Container(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? const Color(0xFF1E293B)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            session.title,
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: isSelected
-                                  ? const Color(0xFF38BDF8)
-                                  : Colors.white70,
-                            ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF38BDF8).withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          onTap: () {
-                            setState(() {
-                              _currentSession = session;
-                            });
-                            Navigator.pop(ctx);
-                          },
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
+                          child: const Icon(Icons.table_chart_rounded,
+                              color: Color(0xFF38BDF8), size: 24),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.edit,
-                                  size: 18,
-                                  color: Colors.white54,
-                                ),
-                                onPressed: () {
-                                  Navigator.pop(ctx);
-                                  _renameChat(session);
-                                },
+                              const Text(
+                                'Автоматическое сведение накладных',
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.bold),
                               ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.delete,
-                                  size: 18,
-                                  color: Colors.redAccent,
-                                ),
-                                onPressed: () {
-                                  _deleteChat(session);
-                                  setModalState(() {});
-                                  setState(() {});
-                                },
+                              Text(
+                                'Загрузи файл «Посылка» и сводки (ПП / Филиал) для автоматической группировки и оформления Excel',
+                                style:
+                                    TextStyle(fontSize: 13, color: _subtleText),
                               ),
                             ],
                           ),
                         ),
-                      );
-                    },
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isRow = constraints.maxWidth >= 600;
+                        final slots = [
+                          _buildFileDropSlot(
+                            step: 'Шаг 1 (Обязательно)',
+                            title: 'Файл Посылка',
+                            file: _posylkaFile,
+                            accent: const Color(0xFF38BDF8),
+                            onTap: () => _pickFile(1),
+                          ),
+                          _buildFileDropSlot(
+                            step: 'Шаг 2 (Голова)',
+                            title: 'Сводка ПП',
+                            file: _svodkaPpFile,
+                            accent: const Color(0xFF14B8A6),
+                            onTap: () => _pickFile(2),
+                          ),
+                          _buildFileDropSlot(
+                            step: 'Шаг 3 (Филиал)',
+                            title: 'Сводка Филиал',
+                            file: _svodkaFilialFile,
+                            accent: const Color(0xFFA855F7),
+                            onTap: () => _pickFile(3),
+                          ),
+                        ];
+                        if (isRow) {
+                          return Row(
+                            children: [
+                              Expanded(child: slots[0]),
+                              const SizedBox(width: 12),
+                              Expanded(child: slots[1]),
+                              const SizedBox(width: 12),
+                              Expanded(child: slots[2]),
+                            ],
+                          );
+                        }
+                        return Column(
+                          children: [
+                            slots[0],
+                            const SizedBox(height: 10),
+                            slots[1],
+                            const SizedBox(height: 10),
+                            slots[2],
+                          ],
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0284C7),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: _isLoading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Icon(Icons.play_arrow_rounded, size: 22),
+                            label: Text(
+                              _isLoading
+                                  ? 'ИДЁТ СВЕДЕНИЕ...'
+                                  : 'СВЕСТИ НАКЛАДНУЮ',
+                              style: const TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            onPressed: _isLoading ? null : _processLogistics,
+                          ),
+                        ),
+                        if (_lastCsvResult != null) ...[
+                          const SizedBox(width: 12),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF16A34A),
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 20, vertical: 15),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            icon: const Icon(Icons.download_rounded, size: 22),
+                            label: const Text(
+                              'СКАЧАТЬ EXCEL (.XLSX)',
+                              style: TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.bold),
+                            ),
+                            onPressed: _exportToFormattedExcel,
+                          ),
+                        ]
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (_lastCsvResult != null) ...[
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: _cardBg,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: const Color(0xFF10B981).withOpacity(0.4)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded,
+                              color: Color(0xFF10B981), size: 22),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Результат сведения${_lastOtpravkaHeader.isNotEmpty ? " ($_lastOtpravkaHeader)" : ""}',
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                          const Spacer(),
+                          Chip(
+                            label: Text('Голова: $_lastHeadCount'),
+                            backgroundColor:
+                                const Color(0xFF38BDF8).withOpacity(0.15),
+                          ),
+                          const SizedBox(width: 6),
+                          Chip(
+                            label: Text('Филиал: $_lastFilialCount'),
+                            backgroundColor:
+                                const Color(0xFFA855F7).withOpacity(0.15),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? const Color(0xFF0A0F1A)
+                              : const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: _borderCol),
+                        ),
+                        child: SelectableText(
+                          _lastCsvResult!,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12.5,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
-          );
-        },
+              ]
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildLogisticsTopPanel() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111A2B),
-        border: Border(
-          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
+  Widget _buildFileDropSlot({
+    required String step,
+    required String title,
+    required File? file,
+    required Color accent,
+    required VoidCallback onTap,
+  }) {
+    final isLoaded = file != null;
+    final fileName =
+        isLoaded ? file.path.split(Platform.pathSeparator).last : 'Нажми для выбора файла';
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isLoaded
+              ? const Color(0xFF10B981).withOpacity(0.08)
+              : (widget.isDark
+                  ? const Color(0xFF182235)
+                  : const Color(0xFFF8FAFC)),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isLoaded ? const Color(0xFF10B981) : _borderCol,
+            width: isLoaded ? 1.5 : 1,
+          ),
         ),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isLogisticsExpanded = !_isLogisticsExpanded;
-              });
-            },
-            child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                const Icon(
-                  Icons.local_shipping_outlined,
-                  size: 22,
-                  color: Color(0xFF38BDF8),
-                ),
-                const SizedBox(width: 10),
-                const Text(
-                  'Сведение накладных (Посылка / Сводки)',
+                Text(
+                  step,
                   style: TextStyle(
-                    fontSize: 15,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: Colors.white,
+                    color: isLoaded ? const Color(0xFF10B981) : accent,
                   ),
                 ),
                 const Spacer(),
                 Icon(
-                  _isLogisticsExpanded
-                      ? Icons.keyboard_arrow_up
-                      : Icons.keyboard_arrow_down,
-                  size: 22,
-                  color: Colors.white70,
+                  isLoaded
+                      ? Icons.check_circle_rounded
+                      : Icons.upload_file_rounded,
+                  size: 18,
+                  color: isLoaded ? const Color(0xFF10B981) : _subtleText,
                 ),
               ],
             ),
-          ),
-          if (_isLogisticsExpanded) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _fileBtn(
-                    label: _posylkaFile == null ? '1. Посылка' : 'Посылка: OK',
-                    active: _posylkaFile != null,
-                    onTap: () => _pickFile(1),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _fileBtn(
-                    label: _svodkaPpFile == null ? '2. Сводка ПП' : 'Сводка ПП: OK',
-                    active: _svodkaPpFile != null,
-                    onTap: () => _pickFile(2),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _fileBtn(
-                    label: _svodkaFilialFile == null ? '3. Филиал' : 'Филиал: OK',
-                    active: _svodkaFilialFile != null,
-                    onTap: () => _pickFile(3),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 6),
+            Text(
+              title,
+              style:
+                  const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0284C7),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text(
-                      'СВЕСТИ НАКЛАДНУЮ',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    onPressed: _isLoading ? null : _processLogistics,
-                  ),
-                ),
-                if (_lastCsvResult != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: const Icon(Icons.download),
-                    tooltip: 'Скачать Excel',
-                    onPressed: _exportToFormattedExcel,
-                  )
-                ]
-              ],
+            const SizedBox(height: 4),
+            Text(
+              fileName,
+              style: TextStyle(
+                fontSize: 12,
+                color: isLoaded ? const Color(0xFF10B981) : _subtleText,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ]
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildMajorExpressTopPanel() {
+  // =========================================================================
+  // ЭКРАНЫ 2 И 3: ПОЛНОЭКРАННЫЕ МОДУЛИ MAJOR EXPRESS
+  // =========================================================================
+
+  Widget _buildMajorCourierWorkspace({required bool isPlaty}) {
     final isWin = Platform.isWindows;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0E1626),
-        border: Border(
-          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
-        ),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isMajorExpanded = !_isMajorExpanded;
-                if (_isMajorExpanded && _majorDateController.text.trim().isEmpty) {
-                  _majorDateController.text = _todayFormatted();
-                }
-              });
-            },
-            child: Row(
+    final accent = isPlaty ? const Color(0xFFA855F7) : const Color(0xFFF59E0B);
+    final firmCtrl = isPlaty ? _platyFirmController : _majorFirmController;
+    final dateCtrl = isPlaty ? _platyDateController : _majorDateController;
+    final timeCtrl = isPlaty ? _platyTimeController : _majorTimeController;
+    final weightCtrl =
+        isPlaty ? _platyWeightController : _majorWeightController;
+    final placesCtrl =
+        isPlaty ? _platyPlacesController : _majorPlacesController;
+    final descCtrl = isPlaty ? _platyDescController : _majorDescController;
+    final infoCtrl = isPlaty ? _platyInfoController : _majorInfoController;
+    final lastScriptPath = isPlaty
+        ? _lastGeneratedPlatyScriptPath
+        : _lastGeneratedMajorScriptPath;
+
+    return SingleChildScrollView(
+      key: ValueKey(isPlaty ? 'platy_workspace' : 'electro_workspace'),
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: Container(
+            padding: const EdgeInsets.all(22),
+            decoration: BoxDecoration(
+              color: _cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _borderCol),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
-                  Icons.send_time_extension_outlined,
-                  size: 22,
-                  color: Colors.amberAccent,
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        isPlaty
+                            ? Icons.developer_board_rounded
+                            : Icons.local_shipping_rounded,
+                        color: accent,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            isPlaty
+                                ? 'ООО «Печатные платы» — Major Express'
+                                : 'ООО «ЭЛЕКТРОконнект» — Major Express',
+                            style: const TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            isPlaty
+                                ? 'Отправитель: ООО«Печатные платы» • Логин: Palat • Автопечать A4'
+                                : 'Отправитель: ООО «ЭЛЕКТРОконнект» Москва • Логин: Electroconnect • Автопечать A4',
+                            style: TextStyle(fontSize: 12.5, color: _subtleText),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                const Text(
-                  'Электроконнект Мейджер Экспресс',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
+                const SizedBox(height: 22),
+                _styledInputField(
+                  controller: firmCtrl,
+                  label: 'Фирма-получатель (например: ООО "Нейрософт")',
+                  icon: Icons.business_rounded,
                 ),
-                const Spacer(),
-                Icon(
-                  _isMajorExpanded
-                      ? Icons.keyboard_arrow_up
-                      : Icons.keyboard_arrow_down,
-                  size: 22,
-                  color: Colors.white70,
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _styledInputField(
+                        controller: dateCtrl,
+                        label: 'Дата забора',
+                        icon: Icons.calendar_today_rounded,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _styledInputField(
+                        controller: timeCtrl,
+                        label: 'Интервал времени забора',
+                        icon: Icons.access_time_rounded,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Быстрый выбор даты и интервала
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    ActionChip(
+                      label: const Text('Сегодня', style: TextStyle(fontSize: 12)),
+                      onPressed: () =>
+                          setState(() => dateCtrl.text = _todayFormatted()),
+                    ),
+                    ActionChip(
+                      label: const Text('10:00-14:00',
+                          style: TextStyle(fontSize: 12)),
+                      onPressed: () =>
+                          setState(() => timeCtrl.text = '10:00-14:00'),
+                    ),
+                    ActionChip(
+                      label: const Text('14:00-18:00',
+                          style: TextStyle(fontSize: 12)),
+                      onPressed: () =>
+                          setState(() => timeCtrl.text = '14:00-18:00'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _styledInputField(
+                        controller: weightCtrl,
+                        label: 'Вес, кг',
+                        icon: Icons.scale_rounded,
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _styledInputField(
+                        controller: placesCtrl,
+                        label: 'Кол-во мест',
+                        icon: Icons.inventory_2_outlined,
+                        keyboardType: TextInputType.number,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: _styledInputField(
+                        controller: descCtrl,
+                        label: 'Описание вложения',
+                        icon: Icons.description_outlined,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _styledInputField(
+                  controller: infoCtrl,
+                  label: 'Информация для забора груза (примечание)',
+                  icon: Icons.info_outline_rounded,
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: accent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: Icon(
+                          isWin ? Icons.rocket_launch_rounded : Icons.code_rounded,
+                          size: 20,
+                        ),
+                        label: Text(
+                          isWin
+                              ? 'ОФОРМИТЬ И РАСПЕЧАТАТЬ НАКЛАДНУЮ'
+                              : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.bold),
+                        ),
+                        onPressed: isPlaty
+                            ? _generatePlatyMajorExpressScript
+                            : _generateMajorExpressScript,
+                      ),
+                    ),
+                    if (lastScriptPath != null) ...[
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF10B981),
+                          side: const BorderSide(color: Color(0xFF10B981)),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 15),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: Icon(isWin ? Icons.replay : Icons.share),
+                        label: Text(isWin ? 'Повторить' : 'Скачать .py'),
+                        onPressed: () => _shareScriptByPath(lastScriptPath),
+                      ),
+                    ]
+                  ],
                 ),
               ],
             ),
           ),
-          if (_isMajorExpanded) ...[
-            const SizedBox(height: 10),
-            _miniInputField(
-              controller: _majorFirmController,
-              label: 'Фирма-получатель (например: ООО "Нейрософт")',
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: _miniInputField(
-                    controller: _majorDateController,
-                    label: 'Дата забора',
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _majorTimeController,
-                    label: 'Время забора',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: _miniInputField(
-                    controller: _majorWeightController,
-                    label: 'Вес, кг',
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _majorPlacesController,
-                    label: 'Кол-во мест',
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _majorDescController,
-                    label: 'Описание',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _miniInputField(
-              controller: _majorInfoController,
-              label: 'Информация для забора груза',
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFD97706),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: Icon(isWin ? Icons.rocket_launch : Icons.code, size: 18),
-                    label: Text(
-                      isWin ? 'ЗАПУСТИТЬ В БРАУЗЕРЕ' : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    onPressed: _generateMajorExpressScript,
-                  ),
-                ),
-                if (_lastGeneratedMajorScriptPath != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: Icon(isWin ? Icons.play_arrow : Icons.share),
-                    tooltip: isWin ? 'Запустить повторно' : 'Поделиться / Сохранить .py',
-                    onPressed: () =>
-                        _shareScriptByPath(_lastGeneratedMajorScriptPath),
-                  ),
-                ]
-              ],
-            ),
-          ]
-        ],
+        ),
       ),
     );
   }
 
-  Widget _buildPlatyMajorExpressTopPanel() {
-    final isWin = Platform.isWindows;
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeInOut,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1220),
-        border: Border(
-          bottom: BorderSide(color: const Color(0xFF28354D), width: 1.2),
-        ),
-      ),
-      child: Column(
-        children: [
-          InkWell(
-            onTap: () {
-              setState(() {
-                _isPlatyExpanded = !_isPlatyExpanded;
-                if (_isPlatyExpanded && _platyDateController.text.trim().isEmpty) {
-                  _platyDateController.text = _todayFormatted();
-                }
-              });
-            },
-            child: Row(
+  // =========================================================================
+  // ЭКРАН 4: ЖУРНАЛ ОПЕРАЦИЙ И УВЕДОМЛЕНИЙ
+  // =========================================================================
+
+  Widget _buildLogsWorkspace() {
+    final filteredLogs = _searchQuery.isEmpty
+        ? _operationLogs
+        : _operationLogs
+            .where((l) =>
+                l.title.toLowerCase().contains(_searchQuery) ||
+                l.details.toLowerCase().contains(_searchQuery) ||
+                l.module.toLowerCase().contains(_searchQuery))
+            .toList();
+
+    return Padding(
+      key: const ValueKey('logs_workspace'),
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 920),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _borderCol),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
-                  Icons.developer_board_outlined,
-                  size: 22,
-                  color: Colors.purpleAccent,
+                Row(
+                  children: [
+                    const Icon(Icons.history_rounded,
+                        color: Color(0xFF10B981), size: 24),
+                    const SizedBox(width: 10),
+                    const Text(
+                      'Журнал выполненных операций и ошибок',
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                    ),
+                    const Spacer(),
+                    if (_operationLogs.isNotEmpty)
+                      TextButton.icon(
+                        icon: const Icon(Icons.delete_outline,
+                            size: 18, color: Colors.redAccent),
+                        label: const Text('Очистить',
+                            style: TextStyle(color: Colors.redAccent)),
+                        onPressed: () async {
+                          setState(() => _operationLogs.clear());
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.remove('operation_logs');
+                        },
+                      ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                const Text(
-                  'Платы Мейджер Экспресс',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
-                const Spacer(),
-                Icon(
-                  _isPlatyExpanded
-                      ? Icons.keyboard_arrow_up
-                      : Icons.keyboard_arrow_down,
-                  size: 22,
-                  color: Colors.white70,
+                const SizedBox(height: 12),
+                Divider(color: _borderCol),
+                Expanded(
+                  child: filteredLogs.isEmpty
+                      ? Center(
+                          child: Text(
+                            'История операций пока пуста',
+                            style: TextStyle(fontSize: 14, color: _subtleText),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: filteredLogs.length,
+                          separatorBuilder: (_, __) =>
+                              Divider(height: 1, color: _borderCol),
+                          itemBuilder: (context, idx) {
+                            final item = filteredLogs[idx];
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 4),
+                              leading: CircleAvatar(
+                                backgroundColor: item.isError
+                                    ? Colors.redAccent.withOpacity(0.15)
+                                    : const Color(0xFF10B981)
+                                        .withOpacity(0.15),
+                                child: Icon(
+                                  item.isError
+                                      ? Icons.error_outline
+                                      : Icons.check_rounded,
+                                  color: item.isError
+                                      ? Colors.redAccent
+                                      : const Color(0xFF10B981),
+                                  size: 20,
+                                ),
+                              ),
+                              title: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF14B8A6)
+                                          .withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Text(
+                                      item.module,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF14B8A6),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      item.title,
+                                      style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w600),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Text(
+                                    item.time,
+                                    style: TextStyle(
+                                        fontSize: 11.5, color: _subtleText),
+                                  ),
+                                ],
+                              ),
+                              subtitle: Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: SelectableText(
+                                  item.details,
+                                  style: TextStyle(
+                                      fontSize: 12.5, color: _subtleText),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
           ),
-          if (_isPlatyExpanded) ...[
-            const SizedBox(height: 10),
-            _miniInputField(
-              controller: _platyFirmController,
-              label: 'Фирма-получатель (например: ООО "Нейрософт")',
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: _miniInputField(
-                    controller: _platyDateController,
-                    label: 'Дата забора',
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _platyTimeController,
-                    label: 'Время забора',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
-                  child: _miniInputField(
-                    controller: _platyWeightController,
-                    label: 'Вес, кг',
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _platyPlacesController,
-                    label: 'Кол-во мест',
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _miniInputField(
-                    controller: _platyDescController,
-                    label: 'Описание',
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _miniInputField(
-              controller: _platyInfoController,
-              label: 'Информация для забора груза',
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF7E22CE),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 11),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: Icon(isWin ? Icons.rocket_launch : Icons.code, size: 18),
-                    label: Text(
-                      isWin ? 'ЗАПУСТИТЬ В БРАУЗЕРЕ' : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    onPressed: _generatePlatyMajorExpressScript,
-                  ),
-                ),
-                if (_lastGeneratedPlatyScriptPath != null) ...[
-                  const SizedBox(width: 8),
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                    ),
-                    icon: Icon(isWin ? Icons.play_arrow : Icons.share),
-                    tooltip: isWin ? 'Запустить повторно' : 'Поделиться / Сохранить .py',
-                    onPressed: () =>
-                        _shareScriptByPath(_lastGeneratedPlatyScriptPath),
-                  ),
-                ]
-              ],
-            ),
-          ]
-        ],
+        ),
       ),
     );
   }
+
+  // =========================================================================
+  // НИЖНЯЯ ПАНЕЛЬ ВВОДА СООБЩЕНИЙ И ДИАЛОГИ
+  // =========================================================================
 
   Widget _buildChatInputArea() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFF101726),
-        border: Border(top: BorderSide(color: Color(0xFF1E293B))),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        border: Border(top: BorderSide(color: _borderCol)),
       ),
       child: SafeArea(
         top: false,
@@ -2901,11 +3918,8 @@ $finalCsv
                             color: Colors.black54,
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(
-                            Icons.close,
-                            color: Colors.white,
-                            size: 16,
-                          ),
+                          child: const Icon(Icons.close,
+                              color: Colors.white, size: 16),
                         ),
                       ),
                     ),
@@ -2916,28 +3930,35 @@ $finalCsv
               Container(
                 alignment: Alignment.centerLeft,
                 margin: const EdgeInsets.only(bottom: 8, left: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B),
+                  color: widget.isDark
+                      ? const Color(0xFF1E293B)
+                      : const Color(0xFFE2E8F0),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.greenAccent.withOpacity(0.5)),
+                  border:
+                      Border.all(color: Colors.greenAccent.withOpacity(0.5)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.insert_drive_file, color: Colors.greenAccent, size: 18),
+                    const Icon(Icons.insert_drive_file,
+                        color: Colors.greenAccent, size: 18),
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        _chatAttachedFile!.path.split(Platform.pathSeparator).last,
-                        style: const TextStyle(color: Colors.white, fontSize: 13),
+                        _chatAttachedFile!.path
+                            .split(Platform.pathSeparator)
+                            .last,
+                        style: const TextStyle(fontSize: 13),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: () => setState(() => _chatAttachedFile = null),
-                      child: const Icon(Icons.close, color: Colors.white70, size: 16),
+                      child: const Icon(Icons.close, size: 16),
                     ),
                   ],
                 ),
@@ -2946,52 +3967,46 @@ $finalCsv
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.attach_file, color: Colors.white70),
+                  tooltip: 'Прикрепить файл или фото',
+                  icon: Icon(Icons.attach_file_rounded, color: _subtleText),
                   onPressed: _showAttachmentMenu,
                 ),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFF182235),
+                      color: widget.isDark
+                          ? const Color(0xFF182235)
+                          : const Color(0xFFF1F5F9),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: const Color(0xFF334155).withOpacity(0.5),
-                      ),
+                      border: Border.all(color: _borderCol),
                     ),
                     child: TextField(
                       focusNode: _inputFocusNode,
                       controller: _chatInputController,
                       maxLines: 4,
                       minLines: 1,
-                      style: const TextStyle(fontSize: 16),
-                      decoration: const InputDecoration(
-                        hintText: 'Спроси или отправь фото/файл...',
-                        hintStyle: TextStyle(
-                          color: Colors.white38,
-                          fontSize: 15,
-                        ),
+                      style: const TextStyle(fontSize: 15),
+                      decoration: InputDecoration(
+                        hintText: 'Напиши сообщение или прикрепи документ...',
+                        hintStyle: TextStyle(color: _subtleText, fontSize: 14),
                         border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
                       ),
                       onSubmitted: (_) => _sendChatMessage(),
                     ),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Container(
                   decoration: const BoxDecoration(
-                    color: Color(0xFF0284C7),
+                    color: Color(0xFF14B8A6),
                     shape: BoxShape.circle,
                   ),
                   child: IconButton(
-                    icon: const Icon(
-                      Icons.arrow_upward,
-                      color: Colors.white,
-                      size: 20,
-                    ),
+                    tooltip: 'Отправить',
+                    icon: const Icon(Icons.arrow_upward_rounded,
+                        color: Colors.white, size: 20),
                     onPressed: _isLoading ? null : _sendChatMessage,
                   ),
                 ),
@@ -3003,26 +4018,104 @@ $finalCsv
     );
   }
 
-  Widget _fileBtn({
-    required String label,
-    required bool active,
-    required VoidCallback onTap,
-  }) {
-    return OutlinedButton(
-      style: OutlinedButton.styleFrom(
-        foregroundColor: active ? Colors.greenAccent : Colors.grey,
-        side: BorderSide(
-          color: active ? Colors.greenAccent : Colors.grey.shade700,
-        ),
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+  void _showChatsDrawer(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      onPressed: onTap,
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'История чатов',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF14B8A6),
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('Новый чат'),
+                      onPressed: () {
+                        _createNewChat();
+                        Navigator.pop(ctx);
+                        setState(() {});
+                      },
+                    ),
+                  ],
+                ),
+                const Divider(),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: _sessions.length,
+                    itemBuilder: (context, index) {
+                      final session = _sessions[index] as ChatSession;
+                      final isSelected = session == _currentSession;
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? const Color(0xFF14B8A6).withOpacity(0.15)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: ListTile(
+                          title: Text(
+                            session.title,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color:
+                                  isSelected ? const Color(0xFF14B8A6) : null,
+                            ),
+                          ),
+                          onTap: () {
+                            setState(() => _currentSession = session);
+                            Navigator.pop(ctx);
+                          },
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.edit, size: 18),
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _renameChat(session);
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete,
+                                    size: 18, color: Colors.redAccent),
+                                onPressed: () {
+                                  _deleteChat(session);
+                                  setModalState(() {});
+                                  setState(() {});
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -3035,8 +4128,7 @@ $finalCsv
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            backgroundColor: const Color(0xFF162032),
-            title: const Text('Настройки API (Groq)'),
+            title: const Text('Настройки API и системы'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3080,8 +4172,8 @@ $finalCsv
                 ),
                 const SizedBox(height: 15),
                 const Text(
-                  'Модель для обычного чата:',
-                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                  'Модель ИИ для чата:',
+                  style: TextStyle(fontSize: 12),
                 ),
                 const SizedBox(height: 5),
                 DropdownButtonFormField<String>(
@@ -3089,12 +4181,9 @@ $finalCsv
                   isExpanded: true,
                   decoration: const InputDecoration(
                     border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 0,
-                    ),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 10, vertical: 0),
                   ),
-                  dropdownColor: const Color(0xFF1E293B),
                   items: _availableModels.map((m) {
                     return DropdownMenuItem(
                       value: m,
@@ -3105,6 +4194,29 @@ $finalCsv
                     if (val != null) setDialogState(() => tempModel = val);
                   },
                 ),
+                if (Platform.isWindows) ...[
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Icon(
+                        _sumatraFound ? Icons.check_circle : Icons.error,
+                        size: 16,
+                        color: _sumatraFound
+                            ? Colors.greenAccent
+                            : Colors.amberAccent,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _sumatraFound
+                              ? 'SumatraPDF.exe обнаружен (автопечать активна)'
+                              : 'SumatraPDF.exe не найден в папке программы',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ]
               ],
             ),
             actions: [
@@ -3113,18 +4225,11 @@ $finalCsv
                 onPressed: () => Navigator.pop(ctx),
               ),
               OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF38BDF8),
-                  side: const BorderSide(color: Color(0xFF38BDF8)),
-                ),
                 child: _isKeyValidating
                     ? const SizedBox(
                         width: 14,
                         height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xFF38BDF8),
-                        ),
+                        child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Text('Проверить ключ'),
                 onPressed: _isKeyValidating
@@ -3136,7 +4241,8 @@ $finalCsv
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0284C7),
+                  backgroundColor: const Color(0xFF14B8A6),
+                  foregroundColor: Colors.white,
                 ),
                 child: const Text('Сохранить'),
                 onPressed: () {
