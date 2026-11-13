@@ -256,7 +256,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final TextEditingController _chatInputController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
 
-  // Контроллеры путей для Панели 1: Сведение накладных (локальные и сетевые пути)
+  // Контроллеры путей для Панели 1: Сведение накладных
   final TextEditingController _posylkaPathController = TextEditingController();
   final TextEditingController _svodkaPpPathController = TextEditingController();
   final TextEditingController _svodkaFilialPathController =
@@ -270,6 +270,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   late final TextEditingController _majorPlacesController;
   late final TextEditingController _majorDescController;
   late final TextEditingController _majorInfoController;
+  final TextEditingController _majorFirmSearchController =
+      TextEditingController();
 
   // Контроллеры для Панели 3: Платы Мейджер Экспресс
   late final TextEditingController _platyFirmController;
@@ -279,6 +281,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   late final TextEditingController _platyPlacesController;
   late final TextEditingController _platyDescController;
   late final TextEditingController _platyInfoController;
+  final TextEditingController _platyFirmSearchController =
+      TextEditingController();
 
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocusNode = FocusNode();
@@ -308,6 +312,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   ChatSession? _currentSession;
   List<OperationLogEntry> _operationLogs = [];
 
+  List<String> _electroFirms = [];
+  List<String> _platyFirms = [];
+  String _majorFirmFilter = '';
+  String _platyFirmFilter = '';
+
   String? _lastCsvResult;
   String _lastOtpravkaHeader = '';
   int _lastHeadCount = 0;
@@ -327,6 +336,332 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   String _selectedModel = 'qwen/qwen3.8-27b';
 
+  // Встроенная база получателей Электроконнект (из шаблонов Major Express)
+  static const List<String> _defaultElectroconnectFirms = [
+    'ООО "РУТСТЕР"',
+    'ООО "СТК"',
+    'АО "Концерн Вега"',
+    'АО "НИИСТТ"',
+    'ООО "МЭЩ"',
+    'ООО "ЭМУЛС"',
+    'ООО "Техноресурс"',
+    'ООО "РДВ-Технолоджи"',
+    'ООО "ФОРВАРД-ВЕНТ"',
+    'ИП Годына Александр Николаевич',
+    'ООО « ЦЕНТР ИНЖЕНЕРНЫХ РАЗРАБОТОК « ПАРУС »',
+    'ООО "КВ СИСТЕМЫ"',
+    'ООО " НПК ИСКРА"',
+    'ООО " Международный центр квантовой оптики',
+    'ООО "Электроконнект" Питер',
+    'ООО "Электроконнект" Санкт-Петербург',
+    'Электроконнект Новосибирск завод',
+    'ООО "ДИСТАНЦИЯ"',
+    'АО "Мостком"',
+    'ИП Лебедев Олег Александрович',
+    'ООО "АТС Т"',
+    'ООО "ПЛ ИНЖИНИРИНГ"',
+    'АНО " Школа 21"',
+    'ООО "АЙСИЭЛ ЭЛЕКТРОНИКС"',
+    'ООО "КОМПАНИЯ "СТРИМ ЛАБС"',
+    'ООО "Дельта Солюшнс"',
+    'Упак-Лайнер',
+    'ООО "Олл ин пром"',
+    'ИП Гулин Станислав Евгеньевич',
+    'АО "Научно-производственное "Рязаньприбор"',
+    'АО"ГЗАС им Попова"',
+    'ООО "Корд-группа"',
+    'ООО "МИР-СПОРТ-ЦЕНТР"',
+    'ЗАО "Сетевые Технологии"',
+    'ООО "Лигель"',
+    'ООО «АВТОМАТИКА плюс»',
+    'ООО "Гидравлические Комплексные Системы"',
+    'ООО "РТЦ"',
+    'ООО" Грош Торг"',
+    'АО "ИНФОРМТЕХНИКА И СВЯЗЬ"',
+    'ООО "НПО "ОРИГИНАЛЬНЫЕ РУССКИЕ КОНТРОЛЛЕРЫ"',
+    'ООО "НПО "ОРК"',
+    'ООО "Деко-сервис"',
+    'ИП Рухлов Дмитрий Сергеевич',
+    'ООО"Натшелл"',
+    'АО "НПО "Радиозавод им. А.С.Попова"',
+    'ООО "Ателье Гончарова"',
+    'АО "Электромеханика"',
+    'ООО "РЭСТОК"',
+    'ООО "МикроЭМ Технологии"',
+    'ООО "Декаст"',
+    'ООО "Технологии Света"',
+    'АО ПФ "ЭЛВИРА"',
+    'ООО "Гемодженикс"',
+    'ООО "Комито"',
+    'ООО "НПО "Вольт инжиниринг"',
+    'ООО "Ревотех"',
+    'ООО "Орион-Р"',
+    'ООО "Трансаммиак"',
+    'ООО "Промприбор-Р"',
+    'ООО "Галс плюс"',
+    'ООО НПО "Грань"',
+    'ИП Козин Дмитрий Владимирович',
+    'ООО "Нетстелл"',
+    'ООО "ТИОН"',
+    'ИП Отчерцов Андрей Владимирович',
+    'ИП Румянцев Андрей Александрович',
+    'АО "РНТ"',
+    'Бриз-Ал',
+    'ООО "РТК-Технологии"',
+    'ООО "Мотив НТ"',
+    'ООО ПКФ "Экс-Форма"',
+    'КБ Урал',
+    'ООО "СД Группа"',
+    'ООО "Элпром"',
+    'АО "НПП "Исток" им. Шокина"',
+    'ООО "Видар"',
+    'АО "СИП РС"',
+    'ООО "ИВК АИР ГРУПП"',
+    'ООО ВНПЗ "Куб"',
+    'ООО "Интегра Про"',
+    'ООО "Смарт Групп"',
+    'ООО "Максбионик"',
+    'ООО "ЭН-ЭС-ДЖИ"',
+    'ООО "ПЦРНИК"',
+    'ООО "Катран-Интех"',
+    'ООО "Энерготрейд"',
+    'АО "Аэроэлектромаш"',
+    'ООО "Фирма "Радиал"',
+    'АО "АМТЕО М"',
+    'ООО "Милти"',
+    'ООО "Цезарь Системс"',
+    'ООО "ИЦ "Лебер"',
+    'ООО "НПО "Визит" им. В.Ф. Сотникова"',
+    'ООО "РЭМО-Технологии"',
+    'ПАО "Вектор"',
+    'ООО НПФ "Радиосервис"',
+    'МФТИ, ФИЗТЕХ',
+    'ИП Рыбкина Светлана Александровна',
+    'ООО "Парк Чудес"',
+    'ПАКС',
+    'ООО "Радиотехнологии"',
+    'ООО "Эмеральд Экотехнологии"',
+    'ООО "Лаборатория электроприводов "АДАПТТО"',
+    'ООО "Фактор спецэлектроника"',
+    'ООО "С-Компонент Дубна"',
+    'АО "Росатом РДС"',
+    'ООО "Чистое небо"',
+    'ООО "НВС Навигационные Технологии"',
+    'ООО "Панометрик"',
+    'Аквариус Москва',
+    'Аквариус Шуя',
+    'Аквариус Тверь',
+    'АО "КМК"',
+    'ФГУП "ВНИИФТРИ"',
+    'ООО "Интехпро"',
+    'АО "Коралл-Телеком"',
+    'АО "НИИП имени В.В. Тихомирова"',
+    'ООО "ТУРКОВ"',
+    'ООО "НИИКАМ"',
+    'ООО "Три точки мануфактуринг"',
+    'ООО "Неовэлл"',
+    'ООО "СГ-Терм"',
+    'ИП Громов Андрей Васильевич',
+    'ООО "ИРЗ"',
+    'ООО "Динакор Силовые Технологии"',
+    'ООО "ТД "Энергостандарт"',
+    'ООО "Карат Рус"',
+    'ООО "Амперка Роботс"',
+    'АО "НИИМА "Прогресс"',
+    'ООО "ПРОТОН"',
+    'АО "БСЗ"',
+    'АО "ПИК ПРОГРЕСС"',
+    'ООО "Образование Будущего"',
+    'ООО "ИНТ"',
+    'ООО "Ольвия"',
+    'ООО "Перспективная Электроника"',
+    'ООО "Лиитс"',
+    'ООО "Производственное предприятие КОНСТАР"',
+    'АО "РНИЦ по Рязанской области"',
+    'АО "НПО "Орион"',
+    'АО "Лаборатория Электроники"',
+    'АО "ОДК"',
+    'ООО "Хьюман Филмс"',
+    'ИП Кузьменко Лариса Юрьевна',
+    'АО НПЦ "ЭЛВИС"',
+    'ООО "Дантекс Рус"',
+    'АО "Альбатрос"',
+    'ООО "САУК"',
+    'ООО "НТР"',
+    'ООО "Инженерные решения"',
+    'ООО "МКМ"',
+    'ООО "СФТ центр"',
+    'ООО "Зов птицы"',
+    'ИП Смирнов Сергей Андреевич',
+    'ООО "НПЦ "Аналитех"',
+    'ООО "Кортэк"',
+    'ООО "Монитрон"',
+    'ООО "ЛТ"',
+    'ООО "Экзоатлет"',
+    'ООО "КБ Основание"',
+    'ООО "Универсал Акустикс"',
+    'АО "МикроЭМ"',
+    'ООО "ФЛАВТ"',
+    'ООО "РусИнтелл"',
+    'АО "Центр ВОСПИ"',
+    'ООО НПП "Фликс"',
+    'ИП Талалаев Александр Леонидович',
+    'ИП Инкин Владимир Викторович',
+    'ООО "НПП Антарес"',
+    'ООО УК "ЭТАЛОН"',
+    'ООО "ТД « ДЕЛОВЫЕ ТЕХНОЛОГИИ"',
+    'ООО"КОАЛИЦИЯ"',
+    'ООО "СТМ-К"',
+    'ИП Бизяев Юрий Михайлович',
+    'ООО "Сомтек"',
+    'ООО "Инвапром"',
+    'АО "ГНПП "Регион"',
+    'АО "ОКБ "Кристалл"',
+    'ООО "Меанотек"',
+    'ИП Потягова Инесса Геннадьевна',
+    'ИП Есин Юрий Дмитриевич',
+    'ООО "Радиоавтоматика"',
+    'ООО "Промсветмонтаж"',
+    'ООО "ЧЗПЭ"',
+    'ООО "ПРОМАВТОМАТИКА – КД"',
+    'ООО"ВКМЗ"',
+    'ООО НПФ "ЭТНА ПЛЮС"',
+    'ИП Лыга Михаил Александрович',
+    'ООО НТЦ "ПИК"',
+    'АО "ОКБ МЭИ"',
+    'ИП Оголихин Александр Дмитриевич',
+    'ООО "АП"',
+    'ООО "Новиком"',
+    'ООО "Арт Аудио Лаб"',
+    'ООО "Ювента"',
+    'ИП Лебедев Александр Владимирович',
+    'ООО "АС Полюс"',
+    'АО "ВПК НПО Машиностроения"',
+    'ООО "Техноквант"',
+    'ООО "АВБ Лабс"',
+    'ООО "Л-Петро"',
+    'ООО "Элдике-системы"',
+    'ООО "СОРБ Инжиниринг"',
+    'ООО "БА"',
+    'АО "Термотехник-МЛ"',
+    'ООО "РСВ Консалт"',
+    'ООО "Ампермагнит"',
+    'ООО "Группа компаний Эмулсол"',
+    'ИПФ РАН',
+    'ООО "ПЭ Контракт Электроника"',
+    'ИП Катаев Роман Алексеевич',
+    'ООО "ПИЭЛСИ Технолоджи"',
+    'ООО" Электрорешения"',
+    'ООО "Финанстерра"',
+    'ООО "МПС"',
+    'ООО "НПО Сфера Безопасности"',
+    'АО "ЛИКК"',
+    'АО "НПО "ПЭС"',
+    'ООО "МСП"',
+    'ИП Белова Татьяна Юрьевна',
+    'ООО "НТЦ "Разработка сложных систем"',
+    'ООО "НПП "Когерент"',
+    'АО "САРАТОВСКИЙ АГРЕГАТНЫЙ ЗАВОД"',
+    'ООО "Завод Конвертор"',
+    'АО "ПОЗиС"',
+    'ООО "Гумич РТК"',
+    'ПАО "ЯЗКМ"',
+    'ООО "ТЗВТО"',
+    'ООО "Инферит"',
+    'ООО "ТСДСТОР"',
+    'АО "Авиакор - авиационный завод"',
+    'ООО "АВСистемы"',
+    'ООО "АДФ"',
+    'ИП Дудулин Аркадий Львович',
+    'ООО "ВЦТО"',
+    'АО "Эка"',
+    'ООО "НПП "МЕРА"',
+    'ООО "Трансгард"',
+    'ООО "Софтитек"',
+    'ООО "Крокс Плюс"',
+    'ООО "Основа Безопасности"',
+    'АО "Микрон"',
+    'ООО "НПП Энерготехника"',
+    'АО "ТРИНИТИ СОЛЮШНС"',
+    'ООО "ЭСВО"',
+    'ИП Косых Бронислав Викторович',
+    'Кузьмичев Дмитрий Олегович',
+    'Аверьянов Юрий Иванович',
+    'Виноградов Максим Владимирович',
+    'Касьяненко Евгений Евгеньевич',
+    'Воробьёв Сергей Викторович',
+    'Максумов Осман Сары Оглы',
+    'Сапаров Никита Сергеевич',
+    'Иванов Алексей Валерьевич',
+    'Евдокимов Даниил Алексеевич',
+    'Куприянов Егор Сергеевич',
+    'Вашкевич Сергей Александрович',
+    'Алеев Азиз Шамильевич',
+    'Войцеховский Сергей Евгеньевич',
+    'Александр Кузнецов',
+    'Киселёв Николай Владимирович',
+    'Чесноков Артур Александрович',
+    'Соколов Павел Андреевич',
+    'Галаев Дмитрий Александрович',
+    'Федянин Владислав Станиславович',
+    'Равочкин Александр Сергеевич',
+    'Ракуль Алексей Юрьевич',
+    'Русанюк Роман Васильевич',
+    'Клочков Роман Сергеевич',
+    'Кадыков Павел Юрьевич',
+    'Мельников Денис Юрьевич',
+    'Киян Сергей Андреевич',
+    'Притугин Алексей Валерьевич',
+    'Лукин Кирилл Андреевич',
+    'Плотников Игорь Владимирович',
+    'Яковлев Михаил Валерьевич',
+    'Шашков Павел Сергеевич',
+    'Гусейнов Давуд Вадимович',
+    'Донин Антон Сергеевич',
+    'Смирнов Игорь Викторович',
+    'Шахов Александр Юрьевич',
+    'Ильичев Иван Геннадьевич',
+    'Чепель Владимир Александрович',
+    'Крутилин Алексей Владимирович',
+    'Гончаров Дмитрий Михайлович',
+    'Сильченко Анна Викторовна',
+    'Орджоникидзе Михаил Андреевич',
+    'Арефьев Денис Владимирович',
+    'Грибов Алексей Алексеевич',
+    'Левицкий Виктор Иосифович',
+    'Чекмарев Николай Владимирович',
+    'Кузьмин Александр Владиславович',
+    'Полозов Виктор Иванович',
+    'Прохоров Евгений Александрович',
+    'Кондрашов Алексей Владимирович',
+    'Киселев Василий Александрович',
+    'Бровкин Олег Юрьевич',
+    'Закора Игорь Викторович',
+    'Попелышко Михаил Валентинович',
+    'Бойченко Дмитрий Сергеевич',
+    'Лещев Сергей Сергеевич',
+    'Хорькин Андрей Юрьевич',
+    'Шевелько Александр Петрович',
+    'Козьменко Светлана Васильевна',
+    'Ильин Ефим Алексеевич',
+    'Нефедов Дмитрий Сергеевич',
+    'Рупасов Дмитрий Васильевич',
+    'Белоусов Дмитрий Николаевич',
+    'Тиунов Михаил Юрьевич',
+    'Кожухов Евгений Викторович',
+    'Лавренко Олег Георгиевич',
+    'Туровский Евгений Валерьевич',
+    'Андреев Дмитрий Алексеевич',
+    'Кнышев Александр Леонидович',
+    'Субботин Валентин Викторович',
+    'Романов Дмитрий Анатольевич',
+    'Селивановский Всеволод Сергеевич',
+    'Маслов Юрий Яковлевич',
+    'Ерусланов Дмитрий Сергеевич',
+    'Лукин Феликс Александрович',
+    'Смирнов Алексей Викторович',
+  ];
+
   String _todayFormatted() {
     final now = DateTime.now();
     final d = now.day.toString().padLeft(2, '0');
@@ -344,7 +679,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   String _normalizePathInput(String raw) {
     var cleaned = raw.trim();
-    if (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) {
+    if (cleaned.startsWith('"') &&
+        cleaned.endsWith('"') &&
+        cleaned.length >= 2) {
       cleaned = cleaned.substring(1, cleaned.length - 1).trim();
     }
     return cleaned;
@@ -373,12 +710,143 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     WidgetsBinding.instance.addObserver(this);
     _checkSumatraPresence();
+    _initFirmsDictionaries();
     _loadSettingsAndChats();
     _inputFocusNode.addListener(() {
       if (_inputFocusNode.hasFocus) {
         _scrollToBottom(delayMs: 300);
       }
     });
+  }
+
+  // =========================================================================
+  // СПРАВОЧНИК КОМПАНИЙ В ТЕКСТОВОМ БЛОКНОТЕ (.TXT) + ПАМЯТЬ ПРОГРАММЫ
+  // =========================================================================
+
+  Future<File> _getFirmsDictionaryFile(bool isPlaty) async {
+    final fileName = isPlaty ? 'platy_firms.txt' : 'electroconnect_firms.txt';
+    if (Platform.isWindows) {
+      final exeDir = File(Platform.resolvedExecutable).parent.path;
+      return File('$exeDir\\$fileName');
+    }
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/$fileName');
+  }
+
+  Future<void> _initFirmsDictionaries() async {
+    await _loadFirmsFromDisk(isPlaty: false);
+    await _loadFirmsFromDisk(isPlaty: true);
+  }
+
+  Future<void> _loadFirmsFromDisk({required bool isPlaty}) async {
+    try {
+      final file = await _getFirmsDictionaryFile(isPlaty);
+      if (!file.existsSync()) {
+        final initialList =
+            isPlaty ? <String>[] : List<String>.from(_defaultElectroconnectFirms);
+        await file.writeAsString(initialList.join('\n'), encoding: utf8);
+        setState(() {
+          if (isPlaty) {
+            _platyFirms = initialList;
+          } else {
+            _electroFirms = initialList;
+          }
+        });
+        return;
+      }
+
+      final content = await file.readAsString(encoding: utf8);
+      final parsed = content
+          .split(RegExp(r'\r?\n'))
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
+
+      if (!isPlaty && parsed.isEmpty) {
+        parsed.addAll(_defaultElectroconnectFirms);
+        await file.writeAsString(parsed.join('\n'), encoding: utf8);
+      }
+
+      setState(() {
+        if (isPlaty) {
+          _platyFirms = parsed;
+        } else {
+          _electroFirms = parsed;
+        }
+      });
+    } catch (_) {
+      if (!isPlaty) {
+        setState(() {
+          _electroFirms = List<String>.from(_defaultElectroconnectFirms);
+        });
+      }
+    }
+  }
+
+  Future<void> _addFirmToDictionary({
+    required bool isPlaty,
+    required String rawName,
+  }) async {
+    final cleaned = rawName.trim();
+    if (cleaned.isEmpty) {
+      _showSnackbar('Сначала впиши название фирмы!');
+      return;
+    }
+
+    final targetList = isPlaty ? _platyFirms : _electroFirms;
+    if (targetList.any((e) => e.toLowerCase() == cleaned.toLowerCase())) {
+      _showSnackbar('Эта компания уже есть в списке!');
+      return;
+    }
+
+    final updated = [cleaned, ...targetList];
+    setState(() {
+      if (isPlaty) {
+        _platyFirms = updated;
+      } else {
+        _electroFirms = updated;
+      }
+    });
+
+    try {
+      final file = await _getFirmsDictionaryFile(isPlaty);
+      await file.writeAsString(updated.join('\n'), encoding: utf8);
+      _showSnackbar('Добавлено в справочник: $cleaned');
+    } catch (e) {
+      _showSnackbar('Ошибка сохранения в файл: $e');
+    }
+  }
+
+  Future<void> _removeFirmFromDictionary({
+    required bool isPlaty,
+    required String firmName,
+  }) async {
+    final targetList = isPlaty ? _platyFirms : _electroFirms;
+    final updated = targetList.where((e) => e != firmName).toList();
+    setState(() {
+      if (isPlaty) {
+        _platyFirms = updated;
+      } else {
+        _electroFirms = updated;
+      }
+    });
+    try {
+      final file = await _getFirmsDictionaryFile(isPlaty);
+      await file.writeAsString(updated.join('\n'), encoding: utf8);
+    } catch (_) {}
+  }
+
+  Future<void> _openFirmsTxtInNotepad({required bool isPlaty}) async {
+    try {
+      final file = await _getFirmsDictionaryFile(isPlaty);
+      if (!file.existsSync()) {
+        await file.writeAsString('', encoding: utf8);
+      }
+      await OpenFilex.open(file.path);
+    } catch (e) {
+      _showSnackbar('Не удалось открыть файл: $e');
+    }
   }
 
   void _checkSumatraPresence() {
@@ -412,6 +880,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _majorPlacesController.dispose();
     _majorDescController.dispose();
     _majorInfoController.dispose();
+    _majorFirmSearchController.dispose();
 
     _platyFirmController.dispose();
     _platyDateController.dispose();
@@ -420,6 +889,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _platyPlacesController.dispose();
     _platyDescController.dispose();
     _platyInfoController.dispose();
+    _platyFirmSearchController.dispose();
 
     super.dispose();
   }
@@ -1371,7 +1841,6 @@ if __name__ == "__main__":
   }
 
   Future<void> _processLogistics() async {
-    // Синхронизируем пути из текстовых полей (локальные и сетевые UNC-пути)
     final p1 = _normalizePathInput(_posylkaPathController.text);
     final p2 = _normalizePathInput(_svodkaPpPathController.text);
     final p3 = _normalizePathInput(_svodkaFilialPathController.text);
@@ -2526,7 +2995,7 @@ $finalCsv
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            'Logistics Suite v2.7',
+                            'Logistics Suite v2.8',
                             style: TextStyle(fontSize: 11, color: _subtleText),
                           ),
                         ],
@@ -3629,7 +4098,7 @@ $finalCsv
   }
 
   // =========================================================================
-  // ЭКРАНЫ 2 И 3: ПОЛНОЭКРАННЫЕ МОДУЛИ MAJOR EXPRESS
+  // ЭКРАНЫ 2 И 3: MAJOR EXPRESS + ПРАВЫЙ СПРАВОЧНИК КОМПАНИЙ (.TXT)
   // =========================================================================
 
   Widget _buildMajorCourierWorkspace({required bool isPlaty}) {
@@ -3649,203 +4118,459 @@ $finalCsv
         ? _lastGeneratedPlatyScriptPath
         : _lastGeneratedMajorScriptPath;
 
-    return SingleChildScrollView(
-      key: ValueKey(isPlaty ? 'platy_workspace' : 'electro_workspace'),
-      padding: const EdgeInsets.all(20),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
-          child: Container(
-            padding: const EdgeInsets.all(22),
-            decoration: BoxDecoration(
-              color: _cardBg,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _borderCol),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    final formCard = Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderCol),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  isPlaty
+                      ? Icons.developer_board_rounded
+                      : Icons.local_shipping_rounded,
+                  color: accent,
+                  size: 26,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: accent.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        isPlaty
-                            ? Icons.developer_board_rounded
-                            : Icons.local_shipping_rounded,
-                        color: accent,
-                        size: 26,
-                      ),
+                    Text(
+                      isPlaty
+                          ? 'ООО «Печатные платы» — Major Express'
+                          : 'ООО «ЭЛЕКТРОконнект» — Major Express',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isPlaty
-                                ? 'ООО «Печатные платы» — Major Express'
-                                : 'ООО «ЭЛЕКТРОконнект» — Major Express',
-                            style: const TextStyle(
-                                fontSize: 18, fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            isPlaty
-                                ? 'Отправитель: ООО«Печатные платы» • Логин: Palat • Автопечать A4'
-                                : 'Отправитель: ООО «ЭЛЕКТРОконнект» Москва • Логин: Electroconnect • Автопечать A4',
-                            style: TextStyle(fontSize: 12.5, color: _subtleText),
-                          ),
-                        ],
-                      ),
+                    Text(
+                      isPlaty
+                          ? 'Отправитель: ООО«Печатные платы» • Логин: Palat • Автопечать A4'
+                          : 'Отправитель: ООО «ЭЛЕКТРОконнект» Москва • Логин: Electroconnect • Автопечать A4',
+                      style: TextStyle(fontSize: 12.5, color: _subtleText),
                     ),
                   ],
                 ),
-                const SizedBox(height: 22),
-                _styledInputField(
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _styledInputField(
                   controller: firmCtrl,
-                  label: 'Фирма-получатель (например: ООО "Нейрософт")',
+                  label: 'Фирма-получатель (выбери справа или впиши)',
                   icon: Icons.business_rounded,
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _styledInputField(
-                        controller: dateCtrl,
-                        label: 'Дата забора',
-                        icon: Icons.calendar_today_rounded,
-                      ),
+              ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Добавить эту компанию в справочник (.txt)',
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981).withOpacity(0.18),
+                    foregroundColor: const Color(0xFF10B981),
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      side: BorderSide(
+                          color: const Color(0xFF10B981).withOpacity(0.45)),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _styledInputField(
-                        controller: timeCtrl,
-                        label: 'Интервал времени забора',
-                        icon: Icons.access_time_rounded,
-                      ),
-                    ),
-                  ],
+                  ),
+                  icon: const Icon(Icons.bookmark_add_outlined, size: 18),
+                  label: const Text('+ В базу',
+                      style:
+                          TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  onPressed: () => _addFirmToDictionary(
+                    isPlaty: isPlaty,
+                    rawName: firmCtrl.text,
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [
-                    ActionChip(
-                      label:
-                          const Text('Сегодня', style: TextStyle(fontSize: 12)),
-                      onPressed: () =>
-                          setState(() => dateCtrl.text = _todayFormatted()),
-                    ),
-                    ActionChip(
-                      label: const Text('10:00-14:00',
-                          style: TextStyle(fontSize: 12)),
-                      onPressed: () =>
-                          setState(() => timeCtrl.text = '10:00-14:00'),
-                    ),
-                    ActionChip(
-                      label: const Text('14:00-18:00',
-                          style: TextStyle(fontSize: 12)),
-                      onPressed: () =>
-                          setState(() => timeCtrl.text = '14:00-18:00'),
-                    ),
-                  ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _styledInputField(
+                  controller: dateCtrl,
+                  label: 'Дата забора',
+                  icon: Icons.calendar_today_rounded,
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _styledInputField(
-                        controller: weightCtrl,
-                        label: 'Вес, кг',
-                        icon: Icons.scale_rounded,
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _styledInputField(
-                        controller: placesCtrl,
-                        label: 'Кол-во мест',
-                        icon: Icons.inventory_2_outlined,
-                        keyboardType: TextInputType.number,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: _styledInputField(
-                        controller: descCtrl,
-                        label: 'Описание вложения',
-                        icon: Icons.description_outlined,
-                      ),
-                    ),
-                  ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _styledInputField(
+                  controller: timeCtrl,
+                  label: 'Интервал времени забора',
+                  icon: Icons.access_time_rounded,
                 ),
-                const SizedBox(height: 14),
-                _styledInputField(
-                  controller: infoCtrl,
-                  label: 'Информация для забора груза (примечание)',
-                  icon: Icons.info_outline_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              ActionChip(
+                label: const Text('Сегодня', style: TextStyle(fontSize: 12)),
+                onPressed: () =>
+                    setState(() => dateCtrl.text = _todayFormatted()),
+              ),
+              ActionChip(
+                label:
+                    const Text('10:00-14:00', style: TextStyle(fontSize: 12)),
+                onPressed: () => setState(() => timeCtrl.text = '10:00-14:00'),
+              ),
+              ActionChip(
+                label:
+                    const Text('14:00-18:00', style: TextStyle(fontSize: 12)),
+                onPressed: () => setState(() => timeCtrl.text = '14:00-18:00'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _styledInputField(
+                  controller: weightCtrl,
+                  label: 'Вес, кг',
+                  icon: Icons.scale_rounded,
+                  keyboardType: TextInputType.number,
                 ),
-                const SizedBox(height: 22),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: accent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: Icon(
-                          isWin
-                              ? Icons.rocket_launch_rounded
-                              : Icons.code_rounded,
-                          size: 20,
-                        ),
-                        label: Text(
-                          isWin
-                              ? 'ОФОРМИТЬ И РАСПЕЧАТАТЬ НАКЛАДНУЮ'
-                              : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
-                          style: const TextStyle(
-                              fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                        onPressed: isPlaty
-                            ? _generatePlatyMajorExpressScript
-                            : _generateMajorExpressScript,
-                      ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _styledInputField(
+                  controller: placesCtrl,
+                  label: 'Кол-во мест',
+                  icon: Icons.inventory_2_outlined,
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: _styledInputField(
+                  controller: descCtrl,
+                  label: 'Описание вложения',
+                  icon: Icons.description_outlined,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _styledInputField(
+            controller: infoCtrl,
+            label: 'Информация для забора груза (примечание)',
+            icon: Icons.info_outline_rounded,
+          ),
+          const SizedBox(height: 22),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    if (lastScriptPath != null) ...[
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF10B981),
-                          side: const BorderSide(color: Color(0xFF10B981)),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 15),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        icon: Icon(isWin ? Icons.replay : Icons.share),
-                        label: Text(isWin ? 'Повторить' : 'Скачать .py'),
-                        onPressed: () => _shareScriptByPath(lastScriptPath),
-                      ),
-                    ]
-                  ],
+                  ),
+                  icon: Icon(
+                    isWin ? Icons.rocket_launch_rounded : Icons.code_rounded,
+                    size: 20,
+                  ),
+                  label: Text(
+                    isWin
+                        ? 'ОФОРМИТЬ И РАСПЕЧАТАТЬ НАКЛАДНУЮ'
+                        : 'СФОРМИРОВАТЬ СКРИПТ (.PY)',
+                    style: const TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                  onPressed: isPlaty
+                      ? _generatePlatyMajorExpressScript
+                      : _generateMajorExpressScript,
+                ),
+              ),
+              if (lastScriptPath != null) ...[
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF10B981),
+                    side: const BorderSide(color: Color(0xFF10B981)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 15),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  icon: Icon(isWin ? Icons.replay : Icons.share),
+                  label: Text(isWin ? 'Повторить' : 'Скачать .py'),
+                  onPressed: () => _shareScriptByPath(lastScriptPath),
+                ),
+              ]
+            ],
+          ),
+        ],
+      ),
+    );
+
+    final directoryCard = _buildFirmsDirectoryPanel(
+      isPlaty: isPlaty,
+      accent: accent,
+      onSelectFirm: (selectedName) {
+        setState(() {
+          firmCtrl.text = selectedName;
+        });
+        _showSnackbar('Выбрано: $selectedName');
+      },
+    );
+
+    return LayoutBuilder(
+      key: ValueKey(isPlaty ? 'platy_workspace' : 'electro_workspace'),
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 960;
+        if (isWide) {
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 6,
+                  child: SingleChildScrollView(child: formCard),
+                ),
+                const SizedBox(width: 18),
+                Expanded(
+                  flex: 4,
+                  child: directoryCard,
                 ),
               ],
             ),
+          );
+        }
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              formCard,
+              const SizedBox(height: 16),
+              SizedBox(height: 420, child: directoryCard),
+            ],
           ),
-        ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFirmsDirectoryPanel({
+    required bool isPlaty,
+    required Color accent,
+    required ValueChanged<String> onSelectFirm,
+  }) {
+    final searchCtrl =
+        isPlaty ? _platyFirmSearchController : _majorFirmSearchController;
+    final filter = isPlaty ? _platyFirmFilter : _majorFirmFilter;
+    final fullList = isPlaty ? _platyFirms : _electroFirms;
+
+    final filtered = filter.isEmpty
+        ? fullList
+        : fullList
+            .where((f) => f.toLowerCase().contains(filter.toLowerCase()))
+            .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _borderCol),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.contacts_rounded, color: accent, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Справочник получателей (${fullList.length})',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Tooltip(
+                message: 'Открыть файл списка в Блокноте (.txt)',
+                child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.edit_note_rounded, size: 20),
+                  onPressed: () => _openFirmsTxtInNotepad(isPlaty: isPlaty),
+                ),
+              ),
+              Tooltip(
+                message: 'Обновить список из файла (.txt)',
+                child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.refresh_rounded, size: 19),
+                  onPressed: () async {
+                    await _loadFirmsFromDisk(isPlaty: isPlaty);
+                    _showSnackbar('Список обновлён из блокнота!');
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: searchCtrl,
+            onChanged: (val) {
+              setState(() {
+                if (isPlaty) {
+                  _platyFirmFilter = val.trim();
+                } else {
+                  _majorFirmFilter = val.trim();
+                }
+              });
+            },
+            style: const TextStyle(fontSize: 13),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Поиск компании (введи часть названия)...',
+              hintStyle: TextStyle(fontSize: 12, color: _subtleText),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              suffixIcon: filter.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () {
+                        searchCtrl.clear();
+                        setState(() {
+                          if (isPlaty) {
+                            _platyFirmFilter = '';
+                          } else {
+                            _majorFirmFilter = '';
+                          }
+                        });
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: widget.isDark
+                  ? const Color(0xFF182235)
+                  : const Color(0xFFF8FAFC),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: _borderCol),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide(color: _borderCol),
+              ),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          isPlaty && fullList.isEmpty
+                              ? 'Список для Плат пока пуст.\nДобавь компанию кнопкой «+ В базу» или в файл platy_firms.txt'
+                              : 'Ничего не найдено по запросу «$filter»',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12.5, color: _subtleText),
+                        ),
+                        if (filter.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: accent,
+                              foregroundColor: Colors.white,
+                            ),
+                            icon: const Icon(Icons.add, size: 16),
+                            label: Text('Добавить «$filter» в базу'),
+                            onPressed: () {
+                              _addFirmToDictionary(
+                                  isPlaty: isPlaty, rawName: filter);
+                              onSelectFirm(filter);
+                            },
+                          ),
+                        ]
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(height: 1, color: _borderCol.withOpacity(0.6)),
+                    itemBuilder: (context, idx) {
+                      final name = filtered[idx];
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: () => onSelectFirm(name),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 8),
+                          child: Row(
+                            children: [
+                              Icon(Icons.apartment_rounded,
+                                  size: 16, color: accent.withOpacity(0.85)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  style: const TextStyle(fontSize: 13),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              InkWell(
+                                onTap: () => _removeFirmFromDictionary(
+                                  isPlaty: isPlaty,
+                                  firmName: name,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(4),
+                                  child: Icon(Icons.close,
+                                      size: 14,
+                                      color: _subtleText.withOpacity(0.6)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }
