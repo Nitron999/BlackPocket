@@ -7,7 +7,6 @@ import 'package:excel/excel.dart' as ex;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -297,7 +296,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   bool? _isKeyWorking;
   bool _isKeyValidating = false;
 
-  final FlutterTts _flutterTts = FlutterTts();
   bool _isVoiceEnabled = false;
 
   List<ChatSession> _sessions = [];
@@ -802,10 +800,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     await _loadFirmsFromDisk(isPlaty: false);
     await _loadFirmsFromDisk(isPlaty: true);
 
-    if (!Platform.isWindows) {
-      await _flutterTts.setLanguage('ru-RU');
-      await _flutterTts.setSpeechRate(0.5);
-    }
     if (_apiKeyController.text.trim().isNotEmpty) {
       _validateKeyOnly(_apiKeyController.text);
     }
@@ -921,17 +915,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  Future<void> _speak(String text, {bool force = false}) async {
-    if (Platform.isWindows || (!_isVoiceEnabled && !force)) return;
-    final clean = text
-        .replaceAll(RegExp(r'```[\s\S]*?```'), '')
-        .replaceAll(RegExp(r'[#*`_>]'), '');
-    if (clean.trim().isNotEmpty) await _flutterTts.speak(clean);
-  }
-
-  Future<void> _stopVoice() async {
-    if (!Platform.isWindows) await _flutterTts.stop();
-  }
+  Future<void> _speak(String text, {bool force = false}) async {}
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1201,7 +1185,6 @@ def main():
             page.wait_for_load_state('networkidle')
             page.wait_for_timeout(1200)
 
-            # Заполнение веса, мест, описания и примечания, если поля доступны
             inputs = page.locator('input[type="text"]')
             for idx in range(inputs.count()):
                 el = inputs.nth(idx)
@@ -1221,7 +1204,6 @@ def main():
                 if areas.count() > 0:
                     areas.first.fill(EXTRA_INFO)
 
-        # Ожидание скачивания накладной PDF и автоматическая печать
         try:
             with page.expect_download(timeout=120000) as download_info:
                 pass
@@ -1718,7 +1700,8 @@ if __name__ == '__main__':
     } else {
       await OpenFilex.open(url);
     }
-  }// =========================================================================
+  }
+  // =========================================================================
   // СВЕДЕНИЕ НАКЛАДНЫХ (ПОСЫЛКА + СВОДКА ПП + СВОДКА ФИЛИАЛ)
   // =========================================================================
 
@@ -2057,7 +2040,7 @@ if __name__ == '__main__':
     final bytes = await file.readAsBytes();
     final archive = ZipDecoder().decodeBytes(bytes);
 
-    List<String> sharedStrings = [];
+    final List<String> sharedStrings = [];
     final sharedStringsFile = archive.findFile('xl/sharedStrings.xml');
     if (sharedStringsFile != null) {
       final document = XmlDocument.parse(utf8.decode(
@@ -2086,7 +2069,7 @@ if __name__ == '__main__':
       final relsDoc = XmlDocument.parse(
           utf8.decode(relsFile.content as List<int>, allowMalformed: true));
 
-      Map<String, String> rIdToTarget = {};
+      final Map<String, String> rIdToTarget = {};
       for (final rel in relsDoc.findAllElements('Relationship')) {
         final id = rel.getAttribute('Id');
         final target = rel.getAttribute('Target');
@@ -2127,12 +2110,12 @@ if __name__ == '__main__':
 
     final sheetDoc = XmlDocument.parse(
         utf8.decode(targetSheetFile.content as List<int>, allowMalformed: true));
-    List<List<String>> matrix = [];
+    final List<List<String>> matrix = [];
 
     for (final rowEl in sheetDoc.findAllElements('row')) {
       final cells = rowEl.findAllElements('c').toList();
       if (cells.isEmpty) continue;
-      List<String> rowValues = List.filled(maxCols, '');
+      final List<String> rowValues = List.filled(maxCols, '');
       bool hasAnyData = false;
 
       for (final c in cells) {
@@ -2447,7 +2430,7 @@ if __name__ == '__main__':
     String? overrideLastUserText,
     File? imageFile,
   }) async {
-    final formatted = >[
+    final List> formatted = [
       {'role': 'system', 'content': systemInstruction}
     ];
     final startIdx = messages.length > 6 ? messages.length - 6 : 0;
