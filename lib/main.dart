@@ -1,2163 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:open_filex/open_filex.dart';
-import 'package:excel/excel.dart' as ex;
-import 'package:archive/archive.dart';
-import 'package:xml/xml.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:share_plus/share_plus.dart';
-
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isAndroid || Platform.isIOS) {
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-  }
-  runApp(const PechatnyePlatyApp());
-}
-
-class PechatnyePlatyApp extends StatefulWidget {
-  const PechatnyePlatyApp({super.key});
-
-  @override
-  State<PechatnyePlatyApp> createState() => _PechatnyePlatyAppState();
-}
-
-class _PechatnyePlatyAppState extends State<PechatnyePlatyApp> {
-  ThemeMode _themeMode = ThemeMode.dark;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadTheme();
-  }
-
-  Future<void> _loadTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    final isDark = prefs.getBool('is_dark_theme') ?? true;
-    setState(() {
-      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
-    });
-  }
-
-  Future<void> _toggleTheme() async {
-    final prefs = await SharedPreferences.getInstance();
-    final nextDark = _themeMode != ThemeMode.dark;
-    await prefs.setBool('is_dark_theme', nextDark);
-    setState(() {
-      _themeMode = nextDark ? ThemeMode.dark : ThemeMode.light;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Печатные платы Pro',
-      debugShowCheckedModeBanner: false,
-      themeMode: _themeMode,
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0A0F1A),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF14B8A6),
-          secondary: Color(0xFF38BDF8),
-          surface: Color(0xFF111827),
-          surfaceVariant: Color(0xFF1E293B),
-          error: Color(0xFFEF4444),
-        ),
-        fontFamily: 'Roboto',
-      ),
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: const Color(0xFFF1F5F9),
-        colorScheme: const ColorScheme.light(
-          primary: Color(0xFF0D9488),
-          secondary: Color(0xFF0284C7),
-          surface: Colors.white,
-          surfaceVariant: Color(0xFFE2E8F0),
-          error: Color(0xFFDC2626),
-        ),
-        fontFamily: 'Roboto',
-      ),
-      home: MainScreen(
-        isDark: _themeMode == ThemeMode.dark,
-        onToggleTheme: _toggleTheme,
-      ),
-    );
-  }
-}
-
-class ChatMessage {
-  final String role;
-  final String text;
-  final String? imagePath;
-  final String? fileName;
-
-  ChatMessage({
-    required this.role,
-    required this.text,
-    this.imagePath,
-    this.fileName,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'role': role,
-        'text': text,
-        'imagePath': imagePath,
-        'fileName': fileName,
-      };
-
-  factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-        role: json['role'] ?? 'assistant',
-        text: json['text'] ?? '',
-        imagePath: json['imagePath'],
-        fileName: json['fileName'],
-      );
-}
-
-class ChatSession {
-  String id;
-  String title;
-  dynamic messages;
-
-  ChatSession({required this.id, required this.title, required this.messages});
-
-  Map<String, dynamic> toJson() {
-    var rawList = messages as List;
-    return {
-      'id': id,
-      'title': title,
-      'messages': rawList.map((m) => m.toJson()).toList(),
-    };
-  }
-
-  factory ChatSession.fromJson(Map<String, dynamic> json) {
-    var rawMsgs = json['messages'] as List? ?? [];
-    var parsedMsgs = rawMsgs
-        .map((m) => ChatMessage.fromJson(Map<String, dynamic>.from(m)))
-        .toList();
-    return ChatSession(
-      id: json['id'] ?? '',
-      title: json['title'] ?? 'Чат',
-      messages: parsedMsgs,
-    );
-  }
-}
-
-class OperationLogEntry {
-  final String time;
-  final String module;
-  final String title;
-  final String details;
-  final bool isError;
-
-  OperationLogEntry({
-    required this.time,
-    required this.module,
-    required this.title,
-    required this.details,
-    this.isError = false,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'time': time,
-        'module': module,
-        'title': title,
-        'details': details,
-        'isError': isError,
-      };
-
-  factory OperationLogEntry.fromJson(Map<String, dynamic> json) =>
-      OperationLogEntry(
-        time: json['time'] ?? '',
-        module: json['module'] ?? '',
-        title: json['title'] ?? '',
-        details: json['details'] ?? '',
-        isError: json['isError'] ?? false,
-      );
-}
-
-class _LogisticsItem {
-  String firm;
-  String ps;
-  String schetPp;
-  String schN;
-  String poSchetu;
-  String polucheno;
-  String otgruzit;
-  String etiketka;
-  String naSklade;
-  String dolg;
-  String dostavka;
-  String raskhodnaya;
-  String major;
-  bool isFilial;
-
-  _LogisticsItem({
-    required this.firm,
-    required this.ps,
-    required this.schetPp,
-    required this.schN,
-    required this.poSchetu,
-    required this.polucheno,
-    required this.otgruzit,
-    required this.etiketka,
-    this.naSklade = '',
-    this.dolg = '',
-    required this.dostavka,
-    this.raskhodnaya = '',
-    this.major = '',
-    required this.isFilial,
-  });
-
-  List<String> toRowCells() => [
-        firm,
-        ps,
-        schetPp,
-        schN,
-        poSchetu,
-        polucheno,
-        otgruzit,
-        etiketka,
-        naSklade,
-        dolg,
-        dostavka,
-        raskhodnaya,
-        major,
-      ];
-}
-
-class MainScreen extends StatefulWidget {
-  final bool isDark;
-  final VoidCallback onToggleTheme;
-
-  const MainScreen({
-    super.key,
-    required this.isDark,
-    required this.onToggleTheme,
-  });
-
-  @override
-  State<MainScreen> createState() => _MainScreenState();
-}
-
-class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
-  final TextEditingController _apiKeyController = TextEditingController();
-  final TextEditingController _chatInputController = TextEditingController();
-  final TextEditingController _searchController = TextEditingController();
-
-  // Контроллеры путей для Панели 1: Сведение накладных
-  final TextEditingController _posylkaPathController = TextEditingController();
-  final TextEditingController _svodkaPpPathController = TextEditingController();
-  final TextEditingController _svodkaFilialPathController =
-      TextEditingController();
-
-  // Контроллеры для Панели 2: Электроконнект Мейджер Экспресс
-  late final TextEditingController _majorFirmController;
-  late final TextEditingController _majorDateController;
-  late final TextEditingController _majorTimeController;
-  late final TextEditingController _majorWeightController;
-  late final TextEditingController _majorPlacesController;
-  late final TextEditingController _majorDescController;
-  late final TextEditingController _majorInfoController;
-  final TextEditingController _majorFirmSearchController =
-      TextEditingController();
-
-  // Контроллеры для Панели 3: Платы Мейджер Экспресс
-  late final TextEditingController _platyFirmController;
-  late final TextEditingController _platyDateController;
-  late final TextEditingController _platyTimeController;
-  late final TextEditingController _platyWeightController;
-  late final TextEditingController _platyPlacesController;
-  late final TextEditingController _platyDescController;
-  late final TextEditingController _platyInfoController;
-  final TextEditingController _platyFirmSearchController =
-      TextEditingController();
-
-  final ScrollController _scrollController = ScrollController();
-  final FocusNode _inputFocusNode = FocusNode();
-
-  static const MethodChannel _ttsChannel =
-      MethodChannel('blackpocket/native_tts');
-
-  int _selectedNavIndex = 0;
-  bool _isSidebarCollapsed = false;
-  String _searchQuery = '';
-  bool _sumatraFound = false;
-
-  bool _isLoading = false;
-  String _apiStatus = 'Ключ не настроен';
-  bool _isKeyValidating = false;
-  bool? _isKeyWorking;
-  bool _isVoiceEnabled = false;
-
-  File? _posylkaFile;
-  File? _svodkaPpFile;
-  File? _svodkaFilialFile;
-
-  File? _chatImage;
-  File? _chatAttachedFile;
-
-  var _sessions = [];
-  ChatSession? _currentSession;
-  List<OperationLogEntry> _operationLogs = [];
-
-  List<String> _electroFirms = [];
-  List<String> _platyFirms = [];
-  String _majorFirmFilter = '';
-  String _platyFirmFilter = '';
-
-  String? _lastCsvResult;
-  String _lastOtpravkaHeader = '';
-  int _lastHeadCount = 0;
-  int _lastFilialCount = 0;
-  String? _lastGeneratedMajorScriptPath;
-  String? _lastGeneratedPlatyScriptPath;
-  String _lastMajorAction = 'Готов к запуску';
-  String _lastPlatyAction = 'Готов к запуску';
-  String _lastLogisticsAction = 'Ожидает файлы';
-
-  final _availableModels = [
-    'qwen/qwen3.8-27b',
-    'openai/gpt-oss-120b',
-    'openai/gpt-oss-20b',
-    'llama-3.2-11b-vision-preview',
-  ];
-
-  String _selectedModel = 'qwen/qwen3.8-27b';
-
-  // Встроенная база получателей Электроконнект (из шаблонов Major Express)
-  static const List<String> _defaultElectroconnectFirms = [
-    'ООО "РУТСТЕР"',
-    'ООО "СТК"',
-    'АО "Концерн Вега"',
-    'АО "НИИСТТ"',
-    'ООО "МЭЩ"',
-    'ООО "ЭМУЛС"',
-    'ООО "Техноресурс"',
-    'ООО "РДВ-Технолоджи"',
-    'ООО "ФОРВАРД-ВЕНТ"',
-    'ИП Годына Александр Николаевич',
-    'ООО « ЦЕНТР ИНЖЕНЕРНЫХ РАЗРАБОТОК « ПАРУС »',
-    'ООО "КВ СИСТЕМЫ"',
-    'ООО " НПК ИСКРА"',
-    'ООО " Международный центр квантовой оптики',
-    'ООО "Электроконнект" Питер',
-    'ООО "Электроконнект" Санкт-Петербург',
-    'Электроконнект Новосибирск завод',
-    'ООО "ДИСТАНЦИЯ"',
-    'АО "Мостком"',
-    'ИП Лебедев Олег Александрович',
-    'ООО "АТС Т"',
-    'ООО "ПЛ ИНЖИНИРИНГ"',
-    'АНО " Школа 21"',
-    'ООО "АЙСИЭЛ ЭЛЕКТРОНИКС"',
-    'ООО "КОМПАНИЯ "СТРИМ ЛАБС"',
-    'ООО "Дельта Солюшнс"',
-    'Упак-Лайнер',
-    'ООО "Олл ин пром"',
-    'ИП Гулин Станислав Евгеньевич',
-    'АО "Научно-производственное "Рязаньприбор"',
-    'АО"ГЗАС им Попова"',
-    'ООО "Корд-группа"',
-    'ООО "МИР-СПОРТ-ЦЕНТР"',
-    'ЗАО "Сетевые Технологии"',
-    'ООО "Лигель"',
-    'ООО «АВТОМАТИКА плюс»',
-    'ООО "Гидравлические Комплексные Системы"',
-    'ООО "РТЦ"',
-    'ООО" Грош Торг"',
-    'АО "ИНФОРМТЕХНИКА И СВЯЗЬ"',
-    'ООО "НПО "ОРИГИНАЛЬНЫЕ РУССКИЕ КОНТРОЛЛЕРЫ"',
-    'ООО "НПО "ОРК"',
-    'ООО "Деко-сервис"',
-    'ИП Рухлов Дмитрий Сергеевич',
-    'ООО"Натшелл"',
-    'АО "НПО "Радиозавод им. А.С.Попова"',
-    'ООО "Ателье Гончарова"',
-    'АО "Электромеханика"',
-    'ООО "РЭСТОК"',
-    'ООО "МикроЭМ Технологии"',
-    'ООО "Декаст"',
-    'ООО "Технологии Света"',
-    'АО ПФ "ЭЛВИРА"',
-    'ООО "Гемодженикс"',
-    'ООО "Комито"',
-    'ООО "НПО "Вольт инжиниринг"',
-    'ООО "Ревотех"',
-    'ООО "Орион-Р"',
-    'ООО "Трансаммиак"',
-    'ООО "Промприбор-Р"',
-    'ООО "Галс плюс"',
-    'ООО НПО "Грань"',
-    'ИП Козин Дмитрий Владимирович',
-    'ООО "Нетстелл"',
-    'ООО "ТИОН"',
-    'ИП Отчерцов Андрей Владимирович',
-    'ИП Румянцев Андрей Александрович',
-    'АО "РНТ"',
-    'Бриз-Ал',
-    'ООО "РТК-Технологии"',
-    'ООО "Мотив НТ"',
-    'ООО ПКФ "Экс-Форма"',
-    'КБ Урал',
-    'ООО "СД Группа"',
-    'ООО "Элпром"',
-    'АО "НПП "Исток" им. Шокина"',
-    'ООО "Видар"',
-    'АО "СИП РС"',
-    'ООО "ИВК АИР ГРУПП"',
-    'ООО ВНПЗ "Куб"',
-    'ООО "Интегра Про"',
-    'ООО "Смарт Групп"',
-    'ООО "Максбионик"',
-    'ООО "ЭН-ЭС-ДЖИ"',
-    'ООО "ПЦРНИК"',
-    'ООО "Катран-Интех"',
-    'ООО "Энерготрейд"',
-    'АО "Аэроэлектромаш"',
-    'ООО "Фирма "Радиал"',
-    'АО "АМТЕО М"',
-    'ООО "Милти"',
-    'ООО "Цезарь Системс"',
-    'ООО "ИЦ "Лебер"',
-    'ООО "НПО "Визит" им. В.Ф. Сотникова"',
-    'ООО "РЭМО-Технологии"',
-    'ПАО "Вектор"',
-    'ООО НПФ "Радиосервис"',
-    'МФТИ, ФИЗТЕХ',
-    'ИП Рыбкина Светлана Александровна',
-    'ООО "Парк Чудес"',
-    'ПАКС',
-    'ООО "Радиотехнологии"',
-    'ООО "Эмеральд Экотехнологии"',
-    'ООО "Лаборатория электроприводов "АДАПТТО"',
-    'ООО "Фактор спецэлектроника"',
-    'ООО "С-Компонент Дубна"',
-    'АО "Росатом РДС"',
-    'ООО "Чистое небо"',
-    'ООО "НВС Навигационные Технологии"',
-    'ООО "Панометрик"',
-    'Аквариус Москва',
-    'Аквариус Шуя',
-    'Аквариус Тверь',
-    'АО "КМК"',
-    'ФГУП "ВНИИФТРИ"',
-    'ООО "Интехпро"',
-    'АО "Коралл-Телеком"',
-    'АО "НИИП имени В.В. Тихомирова"',
-    'ООО "ТУРКОВ"',
-    'ООО "НИИКАМ"',
-    'ООО "Три точки мануфактуринг"',
-    'ООО "Неовэлл"',
-    'ООО "СГ-Терм"',
-    'ИП Громов Андрей Васильевич',
-    'ООО "ИРЗ"',
-    'ООО "Динакор Силовые Технологии"',
-    'ООО "ТД "Энергостандарт"',
-    'ООО "Карат Рус"',
-    'ООО "Амперка Роботс"',
-    'АО "НИИМА "Прогресс"',
-    'ООО "ПРОТОН"',
-    'АО "БСЗ"',
-    'АО "ПИК ПРОГРЕСС"',
-    'ООО "Образование Будущего"',
-    'ООО "ИНТ"',
-    'ООО "Ольвия"',
-    'ООО "Перспективная Электроника"',
-    'ООО "Лиитс"',
-    'ООО "Производственное предприятие КОНСТАР"',
-    'АО "РНИЦ по Рязанской области"',
-    'АО "НПО "Орион"',
-    'АО "Лаборатория Электроники"',
-    'АО "ОДК"',
-    'ООО "Хьюман Филмс"',
-    'ИП Кузьменко Лариса Юрьевна',
-    'АО НПЦ "ЭЛВИС"',
-    'ООО "Дантекс Рус"',
-    'АО "Альбатрос"',
-    'ООО "САУК"',
-    'ООО "НТР"',
-    'ООО "Инженерные решения"',
-    'ООО "МКМ"',
-    'ООО "СФТ центр"',
-    'ООО "Зов птицы"',
-    'ИП Смирнов Сергей Андреевич',
-    'ООО "НПЦ "Аналитех"',
-    'ООО "Кортэк"',
-    'ООО "Монитрон"',
-    'ООО "ЛТ"',
-    'ООО "Экзоатлет"',
-    'ООО "КБ Основание"',
-    'ООО "Универсал Акустикс"',
-    'АО "МикроЭМ"',
-    'ООО "ФЛАВТ"',
-    'ООО "РусИнтелл"',
-    'АО "Центр ВОСПИ"',
-    'ООО НПП "Фликс"',
-    'ИП Талалаев Александр Леонидович',
-    'ИП Инкин Владимир Викторович',
-    'ООО "НПП Антарес"',
-    'ООО УК "ЭТАЛОН"',
-    'ООО "ТД « ДЕЛОВЫЕ ТЕХНОЛОГИИ"',
-    'ООО"КОАЛИЦИЯ"',
-    'ООО "СТМ-К"',
-    'ИП Бизяев Юрий Михайлович',
-    'ООО "Сомтек"',
-    'ООО "Инвапром"',
-    'АО "ГНПП "Регион"',
-    'АО "ОКБ "Кристалл"',
-    'ООО "Меанотек"',
-    'ИП Потягова Инесса Геннадьевна',
-    'ИП Есин Юрий Дмитриевич',
-    'ООО "Радиоавтоматика"',
-    'ООО "Промсветмонтаж"',
-    'ООО "ЧЗПЭ"',
-    'ООО "ПРОМАВТОМАТИКА – КД"',
-    'ООО"ВКМЗ"',
-    'ООО НПФ "ЭТНА ПЛЮС"',
-    'ИП Лыга Михаил Александрович',
-    'ООО НТЦ "ПИК"',
-    'АО "ОКБ МЭИ"',
-    'ИП Оголихин Александр Дмитриевич',
-    'ООО "АП"',
-    'ООО "Новиком"',
-    'ООО "Арт Аудио Лаб"',
-    'ООО "Ювента"',
-    'ИП Лебедев Александр Владимирович',
-    'ООО "АС Полюс"',
-    'АО "ВПК НПО Машиностроения"',
-    'ООО "Техноквант"',
-    'ООО "АВБ Лабс"',
-    'ООО "Л-Петро"',
-    'ООО "Элдике-системы"',
-    'ООО "СОРБ Инжиниринг"',
-    'ООО "БА"',
-    'АО "Термотехник-МЛ"',
-    'ООО "РСВ Консалт"',
-    'ООО "Ампермагнит"',
-    'ООО "Группа компаний Эмулсол"',
-    'ИПФ РАН',
-    'ООО "ПЭ Контракт Электроника"',
-    'ИП Катаев Роман Алексеевич',
-    'ООО "ПИЭЛСИ Технолоджи"',
-    'ООО" Электрорешения"',
-    'ООО "Финанстерра"',
-    'ООО "МПС"',
-    'ООО "НПО Сфера Безопасности"',
-    'АО "ЛИКК"',
-    'АО "НПО "ПЭС"',
-    'ООО "МСП"',
-    'ИП Белова Татьяна Юрьевна',
-    'ООО "НТЦ "Разработка сложных систем"',
-    'ООО "НПП "Когерент"',
-    'АО "САРАТОВСКИЙ АГРЕГАТНЫЙ ЗАВОД"',
-    'ООО "Завод Конвертор"',
-    'АО "ПОЗиС"',
-    'ООО "Гумич РТК"',
-    'ПАО "ЯЗКМ"',
-    'ООО "ТЗВТО"',
-    'ООО "Инферит"',
-    'ООО "ТСДСТОР"',
-    'АО "Авиакор - авиационный завод"',
-    'ООО "АВСистемы"',
-    'ООО "АДФ"',
-    'ИП Дудулин Аркадий Львович',
-    'ООО "ВЦТО"',
-    'АО "Эка"',
-    'ООО "НПП "МЕРА"',
-    'ООО "Трансгард"',
-    'ООО "Софтитек"',
-    'ООО "Крокс Плюс"',
-    'ООО "Основа Безопасности"',
-    'АО "Микрон"',
-    'ООО "НПП Энерготехника"',
-    'АО "ТРИНИТИ СОЛЮШНС"',
-    'ООО "ЭСВО"',
-    'ИП Косых Бронислав Викторович',
-    'Кузьмичев Дмитрий Олегович',
-    'Аверьянов Юрий Иванович',
-    'Виноградов Максим Владимирович',
-    'Касьяненко Евгений Евгеньевич',
-    'Воробьёв Сергей Викторович',
-    'Максумов Осман Сары Оглы',
-    'Сапаров Никита Сергеевич',
-    'Иванов Алексей Валерьевич',
-    'Евдокимов Даниил Алексеевич',
-    'Куприянов Егор Сергеевич',
-    'Вашкевич Сергей Александрович',
-    'Алеев Азиз Шамильевич',
-    'Войцеховский Сергей Евгеньевич',
-    'Александр Кузнецов',
-    'Киселёв Николай Владимирович',
-    'Чесноков Артур Александрович',
-    'Соколов Павел Андреевич',
-    'Галаев Дмитрий Александрович',
-    'Федянин Владислав Станиславович',
-    'Равочкин Александр Сергеевич',
-    'Ракуль Алексей Юрьевич',
-    'Русанюк Роман Васильевич',
-    'Клочков Роман Сергеевич',
-    'Кадыков Павел Юрьевич',
-    'Мельников Денис Юрьевич',
-    'Киян Сергей Андреевич',
-    'Притугин Алексей Валерьевич',
-    'Лукин Кирилл Андреевич',
-    'Плотников Игорь Владимирович',
-    'Яковлев Михаил Валерьевич',
-    'Шашков Павел Сергеевич',
-    'Гусейнов Давуд Вадимович',
-    'Донин Антон Сергеевич',
-    'Смирнов Игорь Викторович',
-    'Шахов Александр Юрьевич',
-    'Ильичев Иван Геннадьевич',
-    'Чепель Владимир Александрович',
-    'Крутилин Алексей Владимирович',
-    'Гончаров Дмитрий Михайлович',
-    'Сильченко Анна Викторовна',
-    'Орджоникидзе Михаил Андреевич',
-    'Арефьев Денис Владимирович',
-    'Грибов Алексей Алексеевич',
-    'Левицкий Виктор Иосифович',
-    'Чекмарев Николай Владимирович',
-    'Кузьмин Александр Владиславович',
-    'Полозов Виктор Иванович',
-    'Прохоров Евгений Александрович',
-    'Кондрашов Алексей Владимирович',
-    'Киселев Василий Александрович',
-    'Бровкин Олег Юрьевич',
-    'Закора Игорь Викторович',
-    'Попелышко Михаил Валентинович',
-    'Бойченко Дмитрий Сергеевич',
-    'Лещев Сергей Сергеевич',
-    'Хорькин Андрей Юрьевич',
-    'Шевелько Александр Петрович',
-    'Козьменко Светлана Васильевна',
-    'Ильин Ефим Алексеевич',
-    'Нефедов Дмитрий Сергеевич',
-    'Рупасов Дмитрий Васильевич',
-    'Белоусов Дмитрий Николаевич',
-    'Тиунов Михаил Юрьевич',
-    'Кожухов Евгений Викторович',
-    'Лавренко Олег Георгиевич',
-    'Туровский Евгений Валерьевич',
-    'Андреев Дмитрий Алексеевич',
-    'Кнышев Александр Леонидович',
-    'Субботин Валентин Викторович',
-    'Романов Дмитрий Анатольевич',
-    'Селивановский Всеволод Сергеевич',
-    'Маслов Юрий Яковлевич',
-    'Ерусланов Дмитрий Сергеевич',
-    'Лукин Феликс Александрович',
-    'Смирнов Алексей Викторович',
-  ];
-
-  String _todayFormatted() {
-    final now = DateTime.now();
-    final d = now.day.toString().padLeft(2, '0');
-    final m = now.month.toString().padLeft(2, '0');
-    return '$d.$m.${now.year}';
-  }
-
-  String _nowTimeFormatted() {
-    final now = DateTime.now();
-    final h = now.hour.toString().padLeft(2, '0');
-    final m = now.minute.toString().padLeft(2, '0');
-    final s = now.second.toString().padLeft(2, '0');
-    return '$h:$m:$s';
-  }
-
-  String _normalizePathInput(String raw) {
-    var cleaned = raw.trim();
-    if (cleaned.startsWith('"') &&
-        cleaned.endsWith('"') &&
-        cleaned.length >= 2) {
-      cleaned = cleaned.substring(1, cleaned.length - 1).trim();
-    }
-    return cleaned;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    final today = _todayFormatted();
-
-    _majorFirmController = TextEditingController();
-    _majorDateController = TextEditingController(text: today);
-    _majorTimeController = TextEditingController(text: '14:00-18:00');
-    _majorWeightController = TextEditingController(text: '1');
-    _majorPlacesController = TextEditingController(text: '1');
-    _majorDescController = TextEditingController(text: 'платы');
-    _majorInfoController = TextEditingController(text: 'УПД');
-
-    _platyFirmController = TextEditingController();
-    _platyDateController = TextEditingController(text: today);
-    _platyTimeController = TextEditingController(text: '14:00-18:00');
-    _platyWeightController = TextEditingController(text: '1');
-    _platyPlacesController = TextEditingController(text: '1');
-    _platyDescController = TextEditingController(text: 'платы');
-    _platyInfoController = TextEditingController(text: 'с/ч');
-
-    WidgetsBinding.instance.addObserver(this);
-    _checkSumatraPresence();
-    _initFirmsDictionaries();
-    _loadSettingsAndChats();
-    _inputFocusNode.addListener(() {
-      if (_inputFocusNode.hasFocus) {
-        _scrollToBottom(delayMs: 300);
-      }
-    });
-  }
-
-  // =========================================================================
-  // СПРАВОЧНИК КОМПАНИЙ В ТЕКСТОВОМ БЛОКНОТЕ (.TXT) + ПАМЯТЬ ПРОГРАММЫ
-  // =========================================================================
-
-  Future<File> _getFirmsDictionaryFile(bool isPlaty) async {
-    final fileName = isPlaty ? 'platy_firms.txt' : 'electroconnect_firms.txt';
-    if (Platform.isWindows) {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      return File('$exeDir\\$fileName');
-    }
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}/$fileName');
-  }
-
-  Future<void> _initFirmsDictionaries() async {
-    await _loadFirmsFromDisk(isPlaty: false);
-    await _loadFirmsFromDisk(isPlaty: true);
-  }
-
-  Future<void> _loadFirmsFromDisk({required bool isPlaty}) async {
-    try {
-      final file = await _getFirmsDictionaryFile(isPlaty);
-      if (!file.existsSync()) {
-        final initialList =
-            isPlaty ? <String>[] : List<String>.from(_defaultElectroconnectFirms);
-        await file.writeAsString(initialList.join('\n'), encoding: utf8);
-        setState(() {
-          if (isPlaty) {
-            _platyFirms = initialList;
-          } else {
-            _electroFirms = initialList;
-          }
-        });
-        return;
-      }
-
-      final content = await file.readAsString(encoding: utf8);
-      final parsed = content
-          .split(RegExp(r'\r?\n'))
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toSet()
-          .toList();
-
-      if (!isPlaty && parsed.isEmpty) {
-        parsed.addAll(_defaultElectroconnectFirms);
-        await file.writeAsString(parsed.join('\n'), encoding: utf8);
-      }
-
-      setState(() {
-        if (isPlaty) {
-          _platyFirms = parsed;
-        } else {
-          _electroFirms = parsed;
-        }
-      });
-    } catch (_) {
-      if (!isPlaty) {
-        setState(() {
-          _electroFirms = List<String>.from(_defaultElectroconnectFirms);
-        });
-      }
-    }
-  }
-
-  Future<void> _addFirmToDictionary({
-    required bool isPlaty,
-    required String rawName,
-  }) async {
-    final cleaned = rawName.trim();
-    if (cleaned.isEmpty) {
-      _showSnackbar('Сначала впиши название фирмы!');
-      return;
-    }
-
-    final targetList = isPlaty ? _platyFirms : _electroFirms;
-    if (targetList.any((e) => e.toLowerCase() == cleaned.toLowerCase())) {
-      _showSnackbar('Эта компания уже есть в списке!');
-      return;
-    }
-
-    final updated = [cleaned, ...targetList];
-    setState(() {
-      if (isPlaty) {
-        _platyFirms = updated;
-      } else {
-        _electroFirms = updated;
-      }
-    });
-
-    try {
-      final file = await _getFirmsDictionaryFile(isPlaty);
-      await file.writeAsString(updated.join('\n'), encoding: utf8);
-      _showSnackbar('Добавлено в справочник: $cleaned');
-    } catch (e) {
-      _showSnackbar('Ошибка сохранения в файл: $e');
-    }
-  }
-
-  Future<void> _removeFirmFromDictionary({
-    required bool isPlaty,
-    required String firmName,
-  }) async {
-    final targetList = isPlaty ? _platyFirms : _electroFirms;
-    final updated = targetList.where((e) => e != firmName).toList();
-    setState(() {
-      if (isPlaty) {
-        _platyFirms = updated;
-      } else {
-        _electroFirms = updated;
-      }
-    });
-    try {
-      final file = await _getFirmsDictionaryFile(isPlaty);
-      await file.writeAsString(updated.join('\n'), encoding: utf8);
-    } catch (_) {}
-  }
-
-  Future<void> _openFirmsTxtInNotepad({required bool isPlaty}) async {
-    try {
-      final file = await _getFirmsDictionaryFile(isPlaty);
-      if (!file.existsSync()) {
-        await file.writeAsString('', encoding: utf8);
-      }
-      await OpenFilex.open(file.path);
-    } catch (e) {
-      _showSnackbar('Не удалось открыть файл: $e');
-    }
-  }
-
-  void _checkSumatraPresence() {
-    if (!Platform.isWindows) return;
-    final appExeDir = File(Platform.resolvedExecutable).parent.path;
-    final candidates = [
-      '$appExeDir\\SumatraPDF.exe',
-      r'C:\PechatnyePlaty\SumatraPDF.exe',
-      r'C:\SumatraPDF.exe',
-    ];
-    final exists = candidates.any((p) => File(p).existsSync());
-    setState(() {
-      _sumatraFound = exists;
-    });
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _inputFocusNode.dispose();
-    _searchController.dispose();
-
-    _posylkaPathController.dispose();
-    _svodkaPpPathController.dispose();
-    _svodkaFilialPathController.dispose();
-
-    _majorFirmController.dispose();
-    _majorDateController.dispose();
-    _majorTimeController.dispose();
-    _majorWeightController.dispose();
-    _majorPlacesController.dispose();
-    _majorDescController.dispose();
-    _majorInfoController.dispose();
-    _majorFirmSearchController.dispose();
-
-    _platyFirmController.dispose();
-    _platyDateController.dispose();
-    _platyTimeController.dispose();
-    _platyWeightController.dispose();
-    _platyPlacesController.dispose();
-    _platyDescController.dispose();
-    _platyInfoController.dispose();
-    _platyFirmSearchController.dispose();
-
-    super.dispose();
-  }
-
-  @override
-  void didChangeMetrics() {
-    super.didChangeMetrics();
-    final bottomInset = WidgetsBinding.instance.window.viewInsets.bottom;
-    if (bottomInset > 0) {
-      _scrollToBottom(delayMs: 150);
-    }
-  }
-
-  void _scrollToBottom({int delayMs = 100}) {
-    Future.delayed(Duration(milliseconds: delayMs), () {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
-  Future<void> _addOperationLog(
-    String module,
-    String title,
-    String details, {
-    bool isError = false,
-  }) async {
-    final entry = OperationLogEntry(
-      time: '${_todayFormatted()} ${_nowTimeFormatted()}',
-      module: module,
-      title: title,
-      details: details,
-      isError: isError,
-    );
-    setState(() {
-      _operationLogs.insert(0, entry);
-      if (_operationLogs.length > 50) {
-        _operationLogs = _operationLogs.sublist(0, 50);
-      }
-    });
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      'operation_logs',
-      jsonEncode(_operationLogs.map((e) => e.toJson()).toList()),
-    );
-  }
-
-  Future<void> _speak(String text, {bool force = false}) async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
-    if (!_isVoiceEnabled && !force) return;
-    try {
-      await _ttsChannel.invokeMethod('speak', {'text': text});
-    } catch (_) {}
-  }
-
-  Future<void> _stopVoice() async {
-    if (!Platform.isAndroid && !Platform.isIOS) return;
-    try {
-      await _ttsChannel.invokeMethod('stop');
-    } catch (_) {}
-  }
-
-  Future<void> _saveSavedLogisticsPaths() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-        'saved_posylka_path', _normalizePathInput(_posylkaPathController.text));
-    await prefs.setString('saved_svodka_pp_path',
-        _normalizePathInput(_svodkaPpPathController.text));
-    await prefs.setString('saved_svodka_filial_path',
-        _normalizePathInput(_svodkaFilialPathController.text));
-  }
-
-  void _syncFileFromPath(int type, String rawPath) {
-    final cleaned = _normalizePathInput(rawPath);
-    setState(() {
-      if (type == 1) {
-        _posylkaFile = cleaned.isNotEmpty ? File(cleaned) : null;
-      } else if (type == 2) {
-        _svodkaPpFile = cleaned.isNotEmpty ? File(cleaned) : null;
-      } else if (type == 3) {
-        _svodkaFilialFile = cleaned.isNotEmpty ? File(cleaned) : null;
-      }
-    });
-    _saveSavedLogisticsPaths();
-  }
-
-  Future<void> _loadSettingsAndChats() async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = prefs.getString('groq_api_key') ?? '';
-    final savedModel = prefs.getString('groq_model') ?? 'qwen/qwen3.8-27b';
-    final savedVoice = prefs.getBool('is_voice_enabled') ?? false;
-    final sidebarCollapsed = prefs.getBool('sidebar_collapsed') ?? false;
-
-    final savedPosPath = prefs.getString('saved_posylka_path') ?? '';
-    final savedPpPath = prefs.getString('saved_svodka_pp_path') ?? '';
-    final savedFilPath = prefs.getString('saved_svodka_filial_path') ?? '';
-
-    setState(() {
-      _isVoiceEnabled = savedVoice;
-      _isSidebarCollapsed = sidebarCollapsed;
-      if (savedPosPath.isNotEmpty) {
-        _posylkaPathController.text = savedPosPath;
-        _posylkaFile = File(savedPosPath);
-      }
-      if (savedPpPath.isNotEmpty) {
-        _svodkaPpPathController.text = savedPpPath;
-        _svodkaPpFile = File(savedPpPath);
-      }
-      if (savedFilPath.isNotEmpty) {
-        _svodkaFilialPathController.text = savedFilPath;
-        _svodkaFilialFile = File(savedFilPath);
-      }
-    });
-
-    if (key.isNotEmpty) {
-      _apiKeyController.text = key;
-      setState(() {
-        _apiStatus = 'Ключ сохранен';
-        _isKeyWorking = true;
-      });
-    }
-
-    if (_availableModels.contains(savedModel)) {
-      setState(() {
-        _selectedModel = savedModel;
-      });
-    }
-
-    final logsJson = prefs.getString('operation_logs');
-    if (logsJson != null) {
-      try {
-        final decodedLogs = jsonDecode(logsJson) as List;
-        setState(() {
-          _operationLogs = decodedLogs
-              .map((e) =>
-                  OperationLogEntry.fromJson(Map<String, dynamic>.from(e)))
-              .toList();
-        });
-      } catch (_) {}
-    }
-
-    final chatsJson = prefs.getString('chat_sessions');
-    if (chatsJson != null) {
-      try {
-        final decoded = jsonDecode(chatsJson) as List;
-        setState(() {
-          _sessions = decoded
-              .map((e) => ChatSession.fromJson(Map<String, dynamic>.from(e)))
-              .toList();
-        });
-      } catch (_) {}
-    }
-
-    if (_sessions.isEmpty) {
-      _createNewChat();
-    } else {
-      setState(() {
-        _currentSession = _sessions.first as ChatSession;
-      });
-    }
-  }
-
-  Future<void> _saveChats() async {
-    final prefs = await SharedPreferences.getInstance();
-    final encoded = jsonEncode(_sessions.map((e) => e.toJson()).toList());
-    await prefs.setString('chat_sessions', encoded);
-  }
-
-  void _createNewChat() {
-    final newSession = ChatSession(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      title:
-          'Чат от ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}',
-      messages: <ChatMessage>[],
-    );
-    setState(() {
-      _sessions.insert(0, newSession);
-      _currentSession = newSession;
-    });
-    _saveChats();
-  }
-
-  void _renameChat(ChatSession session) {
-    final titleController = TextEditingController(text: session.title);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Переименовать чат'),
-        content: TextField(
-          controller: titleController,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Отмена'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                session.title = titleController.text.trim().isEmpty
-                    ? 'Без названия'
-                    : titleController.text.trim();
-              });
-              _saveChats();
-              Navigator.pop(ctx);
-            },
-            child: const Text('Сохранить'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _deleteChat(ChatSession session) {
-    setState(() {
-      _sessions.remove(session);
-      if (_sessions.isEmpty) {
-        _createNewChat();
-      } else if (_currentSession == session) {
-        _currentSession = _sessions.first as ChatSession;
-      }
-    });
-    _saveChats();
-  }
-
-  Future<void> _saveSettingsOnly(String key, String model) async {
-    final prefs = await SharedPreferences.getInstance();
-    final trimmedKey = key.trim();
-    await prefs.setString('groq_api_key', trimmedKey);
-    await prefs.setString('groq_model', model);
-    setState(() {
-      _selectedModel = model;
-      if (trimmedKey.isNotEmpty) {
-        _apiStatus = 'Ключ сохранен';
-        _isKeyWorking = true;
-      } else {
-        _apiStatus = 'Ключ не настроен';
-        _isKeyWorking = false;
-      }
-    });
-    _showSnackbar('Настройки успешно сохранены!');
-  }
-
-  Future<void> _validateKeyOnly(String key) async {
-    final trimmedKey = key.trim();
-    if (trimmedKey.isEmpty) {
-      setState(() {
-        _isKeyWorking = false;
-        _apiStatus = 'Ключ не введен';
-      });
-      _showSnackbar('Сначала введите ключ!');
-      return;
-    }
-
-    setState(() {
-      _isKeyValidating = true;
-    });
-
-    try {
-      final url = Uri.https('api.groq.com', '/openai/v1/models');
-      final resp = await http.get(
-        url,
-        headers: {'Authorization': 'Bearer $trimmedKey'},
-      );
-
-      if (resp.statusCode == 200) {
-        setState(() {
-          _isKeyWorking = true;
-          _apiStatus = 'Ключ активен и проверен';
-        });
-        _showSnackbar('Ключ рабочий и активен!');
-      } else {
-        setState(() {
-          _isKeyWorking = false;
-          _apiStatus = 'Ошибка: неверный ключ';
-        });
-        _showSnackbar('Ошибка: неверный API ключ!');
-      }
-    } catch (_) {
-      setState(() {
-        _isKeyWorking = false;
-        _apiStatus = 'Ошибка сети';
-      });
-      _showSnackbar('Ошибка сети при проверке.');
-    } finally {
-      setState(() {
-        _isKeyValidating = false;
-      });
-    }
-  }
-
-  Future<void> _pickFile(int type) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['xlsx', 'xls', 'csv', 'txt'],
-    );
-
-    if (result != null && result.files.isNotEmpty) {
-      final path = result.files.single.path;
-      if (path != null && path.isNotEmpty) {
-        setState(() {
-          if (type == 1) {
-            _posylkaFile = File(path);
-            _posylkaPathController.text = path;
-          }
-          if (type == 2) {
-            _svodkaPpFile = File(path);
-            _svodkaPpPathController.text = path;
-          }
-          if (type == 3) {
-            _svodkaFilialFile = File(path);
-            _svodkaFilialPathController.text = path;
-          }
-        });
-        await _saveSavedLogisticsPaths();
-      }
-    }
-  }
-
-  Future<void> _pickChatImage(ImageSource source) async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(
-      source: source,
-      imageQuality: 70,
-      maxWidth: 1200,
-      maxHeight: 1200,
-    );
-    if (picked != null) {
-      setState(() {
-        _chatImage = File(picked.path);
-        _chatAttachedFile = null;
-      });
-    }
-  }
-
-  Future<void> _pickChatDocument() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-    );
-
-    if (result != null && result.files.isNotEmpty) {
-      final path = result.files.single.path;
-      if (path != null && path.isNotEmpty) {
-        setState(() {
-          _chatAttachedFile = File(path);
-          _chatImage = null;
-        });
-      }
-    }
-  }
-
-  void _showAttachmentMenu() {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Wrap(
-          children: [
-            if (Platform.isAndroid || Platform.isIOS)
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
-                title: const Text('Сделать фото'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickChatImage(ImageSource.camera);
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Color(0xFF38BDF8)),
-              title: const Text('Выбрать изображение'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickChatImage(ImageSource.gallery);
-              },
-            ),
-            ListTile(
-              leading:
-                  const Icon(Icons.insert_drive_file, color: Colors.greenAccent),
-              title: const Text('Прикрепить файл (Excel, CSV, TXT, и др.)'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _pickChatDocument();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================================================================
-  // МОДУЛИ 2 И 3: MAJOR EXPRESS (ЭЛЕКТРОКОННЕКТ И ПЛАТЫ) — ЛОГИКА СОХРАНЕНА
-  // =========================================================================
-
-  String _sanitizeFilename(String raw) {
-    final cleaned = raw
-        .replaceAll('"', '')
-        .replaceAll('«', '')
-        .replaceAll('»', '')
-        .replaceAll(RegExp(r'[\\/:*?<>|]'), '_')
-        .trim();
-    return cleaned.isEmpty ? 'Major_Express_Order' : cleaned;
-  }
-
-  String _buildMajorExpressPythonScript({
-    required String login,
-    required String password,
-    required String shipperName,
-    required String consigneeName,
-    required String pickupDate,
-    required String pickupTime,
-    required String weight,
-    required String places,
-    required String description,
-    required String pickupInfo,
-    required String appExeDir,
-  }) {
-    final escapedShipper = shipperName.replaceAll("'", "\\'");
-    final escapedFirm = consigneeName.replaceAll("'", "\\'");
-    final safeDate =
-        pickupDate.trim().isEmpty ? _todayFormatted() : pickupDate.trim();
-    final safeTimeFull =
-        pickupTime.trim().isEmpty ? '14:00-18:00' : pickupTime.trim();
-    final timePrefixMatch = RegExp(r'^\d{1,2}').firstMatch(safeTimeFull);
-    final timeFilterCode = timePrefixMatch?.group(0) ?? '14';
-
-    final safeWeight = weight.trim().isEmpty ? '1' : weight.trim();
-    final safePlaces = places.trim().isEmpty ? '1' : places.trim();
-    final escapedDesc =
-        (description.trim().isEmpty ? 'платы' : description.trim())
-            .replaceAll('"', '\\"');
-    final escapedInfo = (pickupInfo.trim().isEmpty ? 'УПД' : pickupInfo.trim())
-        .replaceAll('"', '\\"');
-    final escapedAppDir = appExeDir.replaceAll('\\', '\\\\');
-
-    return '''import os
-import sys
-import datetime
-import time
-import tempfile
-import subprocess
-from urllib.parse import urlparse, parse_qs, urlencode
-from playwright.sync_api import sync_playwright
-
-LOGIN = "$login"
-PASSWORD = "$password"
-APP_DIR = "$escapedAppDir"
-
-def find_sumatra_pdf():
-    candidates = [
-        os.path.join(APP_DIR, "SumatraPDF.exe"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "SumatraPDF.exe"),
-        r"C:\\SumatraPDF.exe",
-        r"C:\\SumatraPDF\\SumatraPDF.exe",
-        r"C:\\Program Files\\SumatraPDF\\SumatraPDF.exe",
-        r"C:\\Program Files (x86)\\SumatraPDF\\SumatraPDF.exe",
-        os.path.join(os.environ.get("LOCALAPPDATA", ""), "SumatraPDF", "SumatraPDF.exe"),
-    ]
-    for path in candidates:
-        if path and os.path.exists(path):
-            return path
-    return None
-
-def main():
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=False,
-                slow_mo=100,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-infobars",
-                    "--no-sandbox"
-                ]
-            )
-            context = browser.new_context(
-                viewport={'width': 1280, 'height': 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
-            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-            page = context.new_page()
-
-            print("1. Открываю страницу входа Major Express...")
-            page.goto("https://lke.major-express.ru/login.aspx")
-            page.wait_for_load_state("domcontentloaded")
-
-            # Ввод логина
-            login_input = page.locator("input[name='TextBox1']")
-            login_input.click()
-            login_input.fill(LOGIN)
-
-            # Ввод пароля
-            pass_input = page.locator("input[name='TextBox2']")
-            pass_input.click()
-            pass_input.fill(PASSWORD)
-            page.wait_for_timeout(500)
-
-            print("-> Нажимаю 'Вход'...")
-            pass_input.press("Enter")
-            try:
-                page.locator("#Button1, input[name='Button1'], input[value='Вход']").first.click(timeout=3000)
-            except Exception:
-                pass
-
-            print("\\n>>> Если появилась капча — реши её в браузере и нажми 'Вход'!")
-            page.wait_for_selector("a:has-text('ЗАКАЗЫ')", timeout=180000)
-            print("-> Вход выполнен. Перехожу к созданию заказа...")
-
-            page.get_by_role("link", name="ЗАКАЗЫ").click()
-            page.get_by_role("button", name="Вызвать курьера").click()
-            page.wait_for_load_state("networkidle")
-
-            print("2. Заполняю данные...")
-
-            # =========================================================
-            # 1. ОТПРАВИТЕЛЬ: $escapedShipper
-            # =========================================================
-            shipper_name = '$escapedShipper'
-            print(f"-> Фиксирую отправителя: {shipper_name}...")
-            shipper_inp = page.locator("#ctl00_MainPlaceHolder_o_cs_ddlListShippers_I")
-            shipper_inp.click()
-            shipper_inp.press("ControlOrMeta+A")
-            shipper_inp.press("Backspace")
-            shipper_inp.fill(shipper_name)
-            page.wait_for_timeout(1500)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-
-            # =========================================================
-            # 2. ПОЛУЧАТЕЛЬ: $escapedFirm
-            # =========================================================
-            consignee_name = '$escapedFirm'
-            print(f"-> Вбиваю получателя: {consignee_name}...")
-            
-            consignee_inp = page.locator("#ctl00_MainPlaceHolder_o_cc_ddlConsignee_I")
-            consignee_inp.click()
-            consignee_inp.press("ControlOrMeta+A")
-            consignee_inp.press("Backspace")
-            consignee_inp.fill(consignee_name)
-            page.wait_for_timeout(1500)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(1000)
-
-            # --- 3. Дата забора ---
-            date_inp = page.locator("#ctl00_MainPlaceHolder_o_deDateZabor_I")
-            date_inp.click()
-            date_inp.press("ControlOrMeta+A")
-            date_inp.press("Backspace")
-            date_inp.fill("$safeDate")
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(500)
-
-            # --- 4. Время забора ($safeTimeFull) ---
-            print("-> Устанавливаю интервал $safeTimeFull...")
-            time_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlZakazTimeNum_I")
-            time_inp.click()
-            time_inp.press("ControlOrMeta+A")
-            time_inp.press("Backspace")
-            time_inp.fill("$timeFilterCode")
-            page.wait_for_timeout(1500)
-            try:
-                page.locator("[id*='ctl00_MainPlaceHolder_o_ddlZakazTimeNum_DDD'] td").filter(has_text="$timeFilterCode").first.click(timeout=3000)
-            except Exception:
-                page.keyboard.press("ArrowDown")
-                page.keyboard.press("Enter")
-            page.wait_for_timeout(500)
-
-            # --- 5. Параметры груза ---
-            page.locator("#ctl00_MainPlaceHolder_o_tbWeight_I").fill("$safeWeight")
-            page.locator("#ctl00_MainPlaceHolder_o_tbPlaceCount_I").fill("$safePlaces")
-            
-            # Описание груза
-            desc_inp = page.locator("#ctl00_MainPlaceHolder_o_ddlDescription_I")
-            desc_inp.click()
-            desc_inp.press("ControlOrMeta+A")
-            desc_inp.press("Backspace")
-            desc_inp.fill("$escapedDesc")
-            page.keyboard.press("Enter")
-
-            # Информация для забора груза
-            rem_inp = page.locator("#ctl00_MainPlaceHolder_o_tbRem")
-            rem_inp.fill("$escapedInfo")
-
-            print("-> Все поля заполнены. Создаю заказ...")
-            page.wait_for_timeout(1000)
-
-            # --- 6. Создание заказа ---
-            page.once("dialog", lambda dialog: dialog.accept())
-            page.get_by_role("button", name="Создать заказ").click()
-
-            try:
-                page.get_by_role("button", name="OK").click(timeout=6000)
-            except Exception:
-                pass
-
-            print("-> Перехожу к созданию накладной...")
-            page.locator("span").filter(has_text="Создать накладную").click()
-            page.wait_for_load_state("networkidle")
-
-            page.get_by_role("button", name="Сохранить накладную").click()
-            page.wait_for_load_state("networkidle")
-
-            # Ждем генерацию PDF на сервере Major Express
-            print("-> Жду подготовку PDF на сервере...")
-            page.wait_for_timeout(3000)
-
-            # Перехватываем чистый PDF по сети во время открытия страницы печати
-            pdf_bytes_holder = []
-            def handle_response(response):
-                try:
-                    ct = response.headers.get("content-type", "").lower()
-                    if "application/pdf" in ct or "invoicereportviewer.ashx" in response.url.lower():
-                        body = response.body()
-                        if body and body.startswith(b"%PDF"):
-                            pdf_bytes_holder.append(body)
-                except Exception:
-                    pass
-
-            page.on("response", handle_response)
-
-            print("-> Открываю страницу печати накладной...")
-            page.get_by_role("button", name="Печать", exact=True).click()
-            page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(3000)
-
-            # Если перехватчик не успел — вытаскиваем чистый параметр data= (без &returnUrl) и качаем PDF
-            if not pdf_bytes_holder:
-                try:
-                    parsed = urlparse(page.url)
-                    qs = parse_qs(parsed.query)
-                    if "data" in qs and qs["data"]:
-                        clean_query = urlencode({"data": qs["data"][0]})
-                        direct_url = f"https://lke.major-express.ru/Handlers/InvoiceReportViewer.ashx?{clean_query}"
-                        print("-> Скачиваю PDF напрямую по параметру data...")
-                        resp = context.request.get(direct_url)
-                        if resp.ok and resp.body().startswith(b"%PDF"):
-                            pdf_bytes_holder.append(resp.body())
-                except Exception as e_dl:
-                    print(f"-> Ошибка загрузки PDF по data: {e_dl}")
-
-            # --- 7. Железная прямая печать через SumatraPDF.exe ---
-            if pdf_bytes_holder:
-                tmp_pdf = os.path.join(tempfile.gettempdir(), f"major_invoice_{int(time.time())}.pdf")
-                with open(tmp_pdf, "wb") as f_pdf:
-                    f_pdf.write(pdf_bytes_holder[-1])
-                print(f"-> Чистый PDF сохранен: {tmp_pdf}")
-
-                sumatra_exe = find_sumatra_pdf()
-                if sumatra_exe:
-                    print(f"-> Печатаю через {sumatra_exe}...")
-                    subprocess.run([sumatra_exe, "-print-to-default", "-silent", tmp_pdf], check=False)
-                    print("-> ГОТОВО! Накладная мгновенно отправлена на принтер по умолчанию!")
-                    page.wait_for_timeout(2000)
-                    browser.close()
-                    return
-                else:
-                    print("-> [ВНИМАНИЕ] SumatraPDF.exe не найден рядом с программой!")
-                    print(f"-> Положи SumatraPDF.exe в папку: {APP_DIR}")
-                    if os.name == "nt":
-                        os.startfile(tmp_pdf)
-            else:
-                print("-> Не удалось скачать PDF автоматически, распечатай вручную из окна браузера.")
-
-            input("Нажми ENTER в этой консоли, чтобы закрыть браузер...")
-            browser.close()
-
-    except Exception as e:
-        print(f"\\n[ОШИБКА]: {e}")
-        input("Нажми ENTER для выхода...")
-
-if __name__ == "__main__":
-    main()
-''';
-  }
-
-  Future<void> _executeOrShareScript(
-      String filePath, String safeFileName) async {
-    if (Platform.isWindows) {
-      try {
-        await Process.start(
-          'python',
-          [filePath],
-          mode: ProcessStartMode.detached,
-        );
-        _showSnackbar('Запускаю браузер Major Express ($safeFileName)...');
-      } catch (e) {
-        _showSnackbar(
-            'Ошибка запуска Python: $e. Проверь, установлен ли Python.');
-      }
-    } else {
-      await _shareScriptByPath(filePath);
-    }
-  }
-
-  // Генерация для Панели 2: Электроконнект Мейджер Экспресс
-  Future<void> _generateMajorExpressScript() async {
-    final firmName = _majorFirmController.text.trim();
-    if (firmName.isEmpty) {
-      _showSnackbar('Впиши название фирмы-получателя!');
-      return;
-    }
-
-    final pickupDate = _majorDateController.text.trim().isEmpty
-        ? _todayFormatted()
-        : _majorDateController.text.trim();
-    final pickupTime = _majorTimeController.text.trim().isEmpty
-        ? '14:00-18:00'
-        : _majorTimeController.text.trim();
-    final weight = _majorWeightController.text.trim().isEmpty
-        ? '1'
-        : _majorWeightController.text.trim();
-    final places = _majorPlacesController.text.trim().isEmpty
-        ? '1'
-        : _majorPlacesController.text.trim();
-    final desc = _majorDescController.text.trim().isEmpty
-        ? 'платы'
-        : _majorDescController.text.trim();
-    final pickupInfo = _majorInfoController.text.trim().isEmpty
-        ? 'УПД'
-        : _majorInfoController.text.trim();
-
-    try {
-      final appExeDir = File(Platform.resolvedExecutable).parent.path;
-      final scriptContent = _buildMajorExpressPythonScript(
-        login: 'Electroconnect',
-        password: 'Y2501212e4e5d62',
-        shipperName: 'ООО «ЭЛЕКТРОконнект» Москва',
-        consigneeName: firmName,
-        pickupDate: pickupDate,
-        pickupTime: pickupTime,
-        weight: weight,
-        places: places,
-        description: desc,
-        pickupInfo: pickupInfo,
-        appExeDir: appExeDir,
-      );
-
-      final dir = await getApplicationDocumentsDirectory();
-      final safeFileName = '${_sanitizeFilename(firmName)}.py';
-      final filePath = '${dir.path}${Platform.pathSeparator}$safeFileName';
-
-      final f = File(filePath);
-      await f.writeAsString(scriptContent, encoding: utf8);
-
-      if (Platform.isAndroid) {
-        try {
-          final downloadDir = Directory('/storage/emulated/0/Download');
-          if (downloadDir.existsSync()) {
-            final publicFile = File('${downloadDir.path}/$safeFileName');
-            await publicFile.writeAsString(scriptContent, encoding: utf8);
-          }
-        } catch (_) {}
-      }
-
-      setState(() {
-        _lastGeneratedMajorScriptPath = filePath;
-        _lastMajorAction = '$firmName ($pickupDate)';
-      });
-
-      final details =
-          '$firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)';
-      _appendMessage('user', '🚚 Электроконнект Мейджер Экспресс: $details');
-      _appendMessage('assistant', scriptContent);
-      await _addOperationLog(
-        'Электроконнект',
-        'Вызов курьера Major Express',
-        details,
-      );
-      await _speak('Скрипт Электроконнект для фирмы $firmName готов, Шурик!');
-
-      await _executeOrShareScript(filePath, safeFileName);
-    } catch (e) {
-      await _addOperationLog(
-        'Электроконнект',
-        'Ошибка запуска',
-        '$e',
-        isError: true,
-      );
-      _showSnackbar('Ошибка создания скрипта: $e');
-    }
-  }
-
-  // Генерация для Панели 3: Платы Мейджер Экспресс
-  Future<void> _generatePlatyMajorExpressScript() async {
-    final firmName = _platyFirmController.text.trim();
-    if (firmName.isEmpty) {
-      _showSnackbar('Впиши название фирмы-получателя!');
-      return;
-    }
-
-    final pickupDate = _platyDateController.text.trim().isEmpty
-        ? _todayFormatted()
-        : _platyDateController.text.trim();
-    final pickupTime = _platyTimeController.text.trim().isEmpty
-        ? '14:00-18:00'
-        : _platyTimeController.text.trim();
-    final weight = _platyWeightController.text.trim().isEmpty
-        ? '1'
-        : _platyWeightController.text.trim();
-    final places = _platyPlacesController.text.trim().isEmpty
-        ? '1'
-        : _platyPlacesController.text.trim();
-    final desc = _platyDescController.text.trim().isEmpty
-        ? 'платы'
-        : _platyDescController.text.trim();
-    final pickupInfo = _platyInfoController.text.trim().isEmpty
-        ? 'с/ч'
-        : _platyInfoController.text.trim();
-
-    try {
-      final appExeDir = File(Platform.resolvedExecutable).parent.path;
-      final scriptContent = _buildMajorExpressPythonScript(
-        login: 'Palat',
-        password: 'Z250121e9a7a762',
-        shipperName: 'ООО«Печатные платы»',
-        consigneeName: firmName,
-        pickupDate: pickupDate,
-        pickupTime: pickupTime,
-        weight: weight,
-        places: places,
-        description: desc,
-        pickupInfo: pickupInfo,
-        appExeDir: appExeDir,
-      );
-
-      final dir = await getApplicationDocumentsDirectory();
-      final safeFileName = '${_sanitizeFilename(firmName)}.py';
-      final filePath = '${dir.path}${Platform.pathSeparator}$safeFileName';
-
-      final f = File(filePath);
-      await f.writeAsString(scriptContent, encoding: utf8);
-
-      if (Platform.isAndroid) {
-        try {
-          final downloadDir = Directory('/storage/emulated/0/Download');
-          if (downloadDir.existsSync()) {
-            final publicFile = File('${downloadDir.path}/$safeFileName');
-            await publicFile.writeAsString(scriptContent, encoding: utf8);
-          }
-        } catch (_) {}
-      }
-
-      setState(() {
-        _lastGeneratedPlatyScriptPath = filePath;
-        _lastPlatyAction = '$firmName ($pickupDate)';
-      });
-
-      final details =
-          '$firmName ($pickupDate, $pickupTime, $weight кг, $places мест, $desc, $pickupInfo)';
-      _appendMessage('user', '📦 Платы Мейджер Экспресс: $details');
-      _appendMessage('assistant', scriptContent);
-      await _addOperationLog(
-        'Печатные платы',
-        'Вызов курьера Major Express',
-        details,
-      );
-      await _speak('Скрипт Платы для фирмы $firmName готов, Шурик!');
-
-      await _executeOrShareScript(filePath, safeFileName);
-    } catch (e) {
-      await _addOperationLog(
-        'Печатные платы',
-        'Ошибка запуска',
-        '$e',
-        isError: true,
-      );
-      _showSnackbar('Ошибка создания скрипта: $e');
-    }
-  }
-
-  Future<void> _shareScriptByPath(String? path) async {
-    if (path == null || !File(path).existsSync()) {
-      _showSnackbar('Сначала сформируй скрипт!');
-      return;
-    }
-    final fileName = path.split(Platform.pathSeparator).last;
-    if (Platform.isWindows) {
-      await _executeOrShareScript(path, fileName);
-      return;
-    }
-    await Share.shareXFiles(
-      [XFile(path, mimeType: 'text/x-python')],
-      text: fileName,
-    );
-  }
-
-  // =========================================================================
-  // МОДУЛЬ 1: ПРЯМОЙ АВТОНОМНЫЙ АЛГОРИТМ СВЕДЕНИЯ НАКЛАДНЫХ (БЕЗ ЛИМИТОВ)
-  // =========================================================================
-
-  String _cleanNumStr(String raw) {
-    final trimmed = raw.trim();
-    if (trimmed.endsWith('.0')) {
-      return trimmed.substring(0, trimmed.length - 2);
-    }
-    return trimmed;
-  }
-
-  String _extractDigitsOnly(String raw) {
-    final match = RegExp(r'\d+').firstMatch(raw.trim());
-    return match?.group(0) ?? '';
-  }
-
-  bool _isOtpravkaHeaderCell(String text) {
-    final up = text
-        .toUpperCase()
-        .replaceAll('O', 'О')
-        .replaceAll('T', 'Т')
-        .replaceAll('P', 'Р')
-        .replaceAll('A', 'А')
-        .replaceAll('B', 'В')
-        .replaceAll('K', 'К')
-        .replaceAll('H', 'Н')
-        .replaceAll('X', 'Х');
-    return up.contains('ОТПРАВК') || up.contains('ПРИХОД');
-  }
-
-  String _mapDeliveryKeyword(String rawText) {
-    final low = rawText.toLowerCase();
-    if (low.contains('доставка москва') || low == 'дм') return 'ДМ';
-    if (low.contains('сдэк')) return 'СДЭК';
-    if (low.contains('самовывоз')) return 'Самовывоз';
-    if (low.contains('курьер') || low == 'к') return 'К';
-    return '';
-  }
-
-  int _deliverySortWeight(String delivery) {
-    switch (delivery.trim().toUpperCase()) {
-      case 'ДМ':
-        return 1;
-      case 'СДЭК':
-        return 2;
-      case 'К':
-        return 3;
-      case 'САМОВЫВОЗ':
-        return 4;
-      default:
-        return 5;
-    }
-  }
-
-  Future<void> _processLogistics() async {
-    final p1 = _normalizePathInput(_posylkaPathController.text);
-    final p2 = _normalizePathInput(_svodkaPpPathController.text);
-    final p3 = _normalizePathInput(_svodkaFilialPathController.text);
-
-    if (p1.isNotEmpty) _posylkaFile = File(p1);
-    if (p2.isNotEmpty) _svodkaPpFile = File(p2);
-    if (p3.isNotEmpty) _svodkaFilialFile = File(p3);
-    await _saveSavedLogisticsPaths();
-
-    final posFile = _posylkaFile;
-    if (posFile == null || !posFile.existsSync()) {
-      _showSnackbar(
-          'Файл Посылки не найден! Укажи верный путь или выбери файл.');
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _lastCsvResult = null;
-      _lastOtpravkaHeader = '';
-    });
-
-    final fileName = posFile.path.split(Platform.pathSeparator).last;
-    _appendMessage(
-      'user',
-      '📦 Прямое сведение накладной (авто-движок без лимитов): $fileName',
-    );
-
-    try {
-      final posRows = await _extractSheetMatrix(posFile,
-          preferredSheetName: 'Посылка', maxCols: 14);
-      if (posRows.isEmpty) {
-        throw Exception('Лист "Посылка" пуст или не найден.');
-      }
-
-      int startRowIdx = 0;
-      for (int i = posRows.length - 1; i >= 0; i--) {
-        final rowJoined = posRows[i].join(' ');
-        if (_isOtpravkaHeaderCell(rowJoined)) {
-          startRowIdx = i;
-          for (final cell in posRows[i]) {
-            if (_isOtpravkaHeaderCell(cell)) {
-              _lastOtpravkaHeader = cell.trim();
-              break;
-            }
-          }
-          break;
-        }
-      }
-
-      final headItems = <_LogisticsItem>[];
-      final filialItems = <_LogisticsItem>[];
-      bool inFilial = false;
-
-      for (int i = startRowIdx + 1; i < posRows.length; i++) {
-        final r = posRows[i];
-        final c0 = r.isNotEmpty ? r[0].trim() : '';
-        final c1 = r.length > 1 ? _cleanNumStr(r[1]) : '';
-        final c2 = r.length > 2 ? r[2].trim() : '';
-        final c3 = r.length > 3 ? _cleanNumStr(r[3]) : '';
-        final c4 = r.length > 4 ? _cleanNumStr(r[4]) : '';
-        final c5 = r.length > 5 ? _cleanNumStr(r[5]) : '';
-        final c6 = r.length > 6 ? _cleanNumStr(r[6]) : '';
-        final c7 = r.length > 7 ? r[7].trim() : '';
-        final c8 = r.length > 8 ? r[8].trim() : '';
-        final c9 = r.length > 9 ? r[9].trim() : '';
-        final c10 = r.length > 10 ? r[10].trim() : '';
-        final c11 = r.length > 11 ? r[11].trim() : '';
-        final c12 = r.length > 12 ? r[12].trim() : '';
-
-        if (c0.toLowerCase() == 'филиал') {
-          inFilial = true;
-          continue;
-        }
-
-        if (c1.isEmpty && c3.isEmpty) continue;
-
-        final item = _LogisticsItem(
-          firm: c0,
-          ps: c1,
-          schetPp: c2,
-          schN: c3,
-          poSchetu: c4,
-          polucheno: c5.isNotEmpty ? c5 : c4,
-          otgruzit: c6.isNotEmpty ? c6 : (c5.isNotEmpty ? c5 : c4),
-          etiketka: c7,
-          naSklade: c8,
-          dolg: c9,
-          dostavka: c10,
-          raskhodnaya: c11,
-          major: c12,
-          isFilial: inFilial,
-        );
-
-        if (inFilial) {
-          filialItems.add(item);
-        } else {
-          headItems.add(item);
-        }
-      }
-
-      // Индексируем Сводку ПП
-      final Map<String, Map<String, String>> ppByPs = {};
-      if (_svodkaPpFile != null && _svodkaPpFile!.existsSync()) {
-        final ppRows = await _extractSheetMatrix(_svodkaPpFile!,
-            preferredSheetName: 'СВОДКА', maxCols: 16);
-        String currentMoscowSchet = '';
-        String currentFirm = '';
-        String currentDelivery = '';
-
-        for (int i = 3; i < ppRows.length; i++) {
-          final r = ppRows[i];
-          final colA = r.isNotEmpty ? r[0].trim() : '';
-          final psVal = r.length > 2 ? _cleanNumStr(r[2]) : '';
-          final qtyVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
-          final moscowVal = r.length > 12 ? r[12].trim() : '';
-          final colN = r.length > 13 ? _cleanNumStr(r[13]) : '';
-          final firmVal = r.length > 14 ? r[14].trim() : '';
-
-          if (colA.isNotEmpty || firmVal.isNotEmpty) {
-            if (moscowVal.isNotEmpty && RegExp(r'^\d+$').hasMatch(moscowVal)) {
-              currentMoscowSchet = moscowVal;
-            } else if (colA.isNotEmpty && moscowVal.isEmpty) {
-              currentMoscowSchet = '';
-            }
-            if (firmVal.isNotEmpty &&
-                !firmVal.toLowerCase().startsWith('заявка')) {
-              currentFirm = firmVal;
-            }
-            currentDelivery = '';
-          }
-
-          for (final cell in r) {
-            final mapped = _mapDeliveryKeyword(cell);
-            if (mapped.isNotEmpty) {
-              currentDelivery = mapped;
-            }
-          }
-
-          if (psVal.isNotEmpty && RegExp(r'^\d{5,}$').hasMatch(psVal)) {
-            ppByPs[psVal] = {
-              'firm': currentFirm,
-              'schetPp': currentMoscowSchet,
-              'poSchetu': qtyVal,
-              'schn': RegExp(r'^\d+$').hasMatch(colN) ? colN : '',
-              'dostavka': currentDelivery,
-            };
-          }
-        }
-      }
-
-      // Индексируем Сводку Филиал
-      final Map<String, Map<String, String>> filBySchnPs = {};
-      final Map<String, Map<String, String>> filByPs = {};
-
-      if (_svodkaFilialFile != null && _svodkaFilialFile!.existsSync()) {
-        final filRows = await _extractSheetMatrix(_svodkaFilialFile!,
-            preferredSheetName: 'ФИЛИАЛ', maxCols: 16);
-        String currentSchn = '';
-        String currentFirm = '';
-        String currentDelivery = '';
-
-        for (int i = 5; i < filRows.length; i++) {
-          final r = filRows[i];
-          final colA = r.isNotEmpty ? _cleanNumStr(r[0]) : '';
-          final colB = r.length > 1 ? r[1].trim() : '';
-          final psVal = r.length > 4 ? _cleanNumStr(r[4]) : '';
-          final qtyVal = r.length > 7 ? _cleanNumStr(r[7]) : '';
-
-          final extractedSchn = _extractDigitsOnly(colA);
-          if (extractedSchn.isNotEmpty &&
-              extractedSchn.length >= 4 &&
-              extractedSchn.length <= 6) {
-            currentSchn = extractedSchn;
-            if (colB.isNotEmpty) {
-              currentFirm = colB;
-            }
-            currentDelivery = '';
-          }
-
-          if (colB.isNotEmpty) {
-            final mapped = _mapDeliveryKeyword(colB);
-            if (mapped.isNotEmpty) {
-              currentDelivery = mapped;
-              if (currentSchn.isNotEmpty) {
-                for (final entry in filBySchnPs.entries) {
-                  if (entry.key.startsWith('${currentSchn}_') &&
-                      (entry.value['dostavka'] ?? '').isEmpty) {
-                    entry.value['dostavka'] = currentDelivery;
-                  }
-                }
-              }
-            }
-          }
-
-          if (psVal.isNotEmpty && RegExp(r'^\d{5,}$').hasMatch(psVal)) {
-            final record = {
-              'firm': currentFirm,
-              'schn': currentSchn,
-              'poSchetu': qtyVal,
-              'dostavka': currentDelivery,
-            };
-            if (currentSchn.isNotEmpty) {
-              filBySchnPs['${currentSchn}_$psVal'] = record;
-            }
-            filByPs[psVal] = record;
-          }
-        }
-      }
-
-      // Заполняем блок "Голова"
-      for (final item in headItems) {
-        final info = ppByPs[item.ps];
-        if (info != null) {
-          if (item.firm.isEmpty && (info['firm'] ?? '').isNotEmpty) {
-            item.firm = info['firm']!;
-          }
-          if (item.schetPp.isEmpty && (info['schetPp'] ?? '').isNotEmpty) {
-            item.schetPp = info['schetPp']!;
-          }
-          if ((info['poSchetu'] ?? '').isNotEmpty) {
-            item.poSchetu = info['poSchetu']!;
-          }
-          if (item.dostavka.isEmpty && (info['dostavka'] ?? '').isNotEmpty) {
-            item.dostavka = info['dostavka']!;
-          }
-        }
-        if (item.poSchetu.isEmpty) {
-          item.poSchetu =
-              item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
-        }
-        item.etiketka = 'ОТК';
-        if (item.dostavka.isEmpty) {
-          final fLow = item.firm.toLowerCase();
-          if (fLow.contains('авэкс') || fLow.contains('марс')) {
-            item.dostavka = 'ДМ';
-          } else if (fLow.contains('внииа')) {
-            item.dostavka = 'Самовывоз';
-          } else {
-            item.dostavka = 'К';
-          }
-        }
-      }
-
-      // Заполняем блок "Филиал"
-      for (final item in filialItems) {
-        item.schetPp = '';
-        item.etiketka = '';
-
-        final cleanSchn = _extractDigitsOnly(item.schN);
-        final info = filBySchnPs['${cleanSchn}_${item.ps}'] ??
-            filBySchnPs['${item.schN}_${item.ps}'] ??
-            filByPs[item.ps];
-
-        if (info != null) {
-          if ((info['poSchetu'] ?? '').isNotEmpty) {
-            item.poSchetu = info['poSchetu']!;
-          }
-          if (item.dostavka.isEmpty && (info['dostavka'] ?? '').isNotEmpty) {
-            item.dostavka = info['dostavka']!;
-          }
-        }
-
-        if (item.poSchetu.isEmpty) {
-          item.poSchetu =
-              item.polucheno.isNotEmpty ? item.polucheno : item.otgruzit;
-        }
-
-        final fLow = item.firm.toLowerCase();
-        if (fLow.contains('нейрософт') || fLow.contains('кузьминский')) {
-          item.dostavka = 'К';
-        } else if (fLow.contains('атб-электроника') ||
-            fLow.contains('атб электроника')) {
-          item.dostavka = 'ДМ';
-        } else if (item.dostavka.isEmpty) {
-          item.dostavka = 'К';
-        }
-      }
-
-      // Сортируем внутри каждого блока: ДМ -> СДЭК -> К -> Самовывоз
-      headItems.sort((a, b) => _deliverySortWeight(a.dostavka)
-          .compareTo(_deliverySortWeight(b.dostavka)));
-      filialItems.sort((a, b) => _deliverySortWeight(a.dostavka)
-          .compareTo(_deliverySortWeight(b.dostavka)));
-
-      final csvBuffer = StringBuffer();
-      csvBuffer.writeln(
-          'Фирма;PS;Счет пп;Сч/Н;По счету;Получено;Отгрузить!;Этикетка;на складе!;долг;Доставка;Расходная накладная;Major');
-
-      for (final item in headItems) {
-        csvBuffer.writeln(item.toRowCells().join(';'));
-      }
-
-      if (filialItems.isNotEmpty) {
-        csvBuffer.writeln('филиал;;;;;;;;;;;;');
-        for (final item in filialItems) {
-          csvBuffer.writeln(item.toRowCells().join(';'));
-        }
-      }
-
-      final finalCsv = csvBuffer.toString().trim();
-      setState(() {
-        _lastCsvResult = finalCsv;
-        _lastHeadCount = headItems.length;
-        _lastFilialCount = filialItems.length;
-        _lastLogisticsAction =
-            'Голова: ${headItems.length} • Филиал: ${filialItems.length}';
-      });
-
-      final summaryMsg = '''
-✅ Накладная сведена автоматически!
-${_lastOtpravkaHeader.isNotEmpty ? '📅 Блок: $_lastOtpravkaHeader\n' : ''}• Голова (ООО «Печатные платы»): ${headItems.length} поз.
-• Филиал (ЭЛЕКТРОконнект): ${filialItems.length} поз.
-
-Нажми зелёную кнопку «Скачать Excel», чтобы открыть готовый оформленный файл.
-
-```csv
 $finalCsv
 ```''';
 
@@ -2415,7 +255,6 @@ $finalCsv
 
       int currentRow = 0;
 
-      // 1. Шапка таблицы
       final headerCells = rawLines[0].split(';');
       sheet.setRowHeight(currentRow, 42);
       for (int c = 0; c < 13; c++) {
@@ -2442,7 +281,6 @@ $finalCsv
       }
       currentRow++;
 
-      // 2. Пустой отступ + строка даты отправки + пустой отступ
       _styleEmptyRowWithThickGrid(sheet, currentRow, rowHeight: 18);
       currentRow++;
 
@@ -2462,7 +300,6 @@ $finalCsv
         currentRow++;
       }
 
-      // 3. Строки данных
       bool isInsideFilialBlock = false;
 
       for (int i = 1; i < rawLines.length; i++) {
@@ -2556,7 +393,6 @@ $finalCsv
         currentRow++;
       }
 
-      // 4. Протягиваем жирную сетку и формат ячеек (18 для Фирмы, 16 для остальных) на 35 пустых строк вниз
       final totalRowsWithBuffer = currentRow + 35;
       for (int r = currentRow; r < totalRowsWithBuffer; r++) {
         _styleEmptyRowWithThickGrid(sheet, r, rowHeight: 24);
@@ -2857,10 +693,12 @@ $finalCsv
     required String label,
     IconData? icon,
     TextInputType keyboardType = TextInputType.text,
+    ValueChanged<String>? onChanged,
   }) {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
+      onChanged: onChanged,
       style: const TextStyle(fontSize: 14),
       decoration: InputDecoration(
         labelText: label,
@@ -2947,6 +785,13 @@ $finalCsv
       ),
       (
         index: 4,
+        title: 'Анализ Gerber и ТЗ',
+        subtitle: 'DFM • ЭЛЕКТРОконнект',
+        icon: Icons.precision_manufacturing_rounded,
+        color: const Color(0xFFEC4899),
+      ),
+      (
+        index: 5,
         title: 'Журнал операций',
         subtitle: 'История и логи',
         icon: Icons.history_rounded,
@@ -2995,7 +840,7 @@ $finalCsv
                             overflow: TextOverflow.ellipsis,
                           ),
                           Text(
-                            'Logistics Suite v2.8',
+                            'Logistics & CAM v3.0',
                             style: TextStyle(fontSize: 11, color: _subtleText),
                           ),
                         ],
@@ -3212,6 +1057,7 @@ $finalCsv
       'Сведение накладных (Посылка / Сводки)',
       'Электроконнект — Major Express',
       'Печатные платы — Major Express',
+      'Анализ Gerber и DFM-контроль (ЭЛЕКТРОконнект)',
       'Журнал операций',
     ];
 
@@ -3345,7 +1191,7 @@ $finalCsv
               label: Text('${_operationLogs.length}'),
               child: const Icon(Icons.notifications_none_rounded, size: 22),
             ),
-            onPressed: () => setState(() => _selectedNavIndex = 4),
+            onPressed: () => setState(() => _selectedNavIndex = 5),
           ),
           IconButton(
             tooltip: 'Настройки API и системы',
@@ -3368,6 +1214,8 @@ $finalCsv
       case 3:
         return _buildMajorCourierWorkspace(isPlaty: true);
       case 4:
+        return _buildGerberAnalysisWorkspace();
+      case 5:
         return _buildLogsWorkspace();
       default:
         return _buildDashboardAndChatView();
@@ -3398,7 +1246,7 @@ $finalCsv
       (
         navIdx: 2,
         title: 'Электроконнект',
-        subtitle: 'Вызов курьера Major Express (УПД)',
+        subtitle: 'Major Express (УПД)',
         status: 'Онлайн',
         statusColor: const Color(0xFFF59E0B),
         metric: _lastMajorAction,
@@ -3408,12 +1256,22 @@ $finalCsv
       (
         navIdx: 3,
         title: 'Печатные платы',
-        subtitle: 'Вызов курьера Major Express (с/ч)',
+        subtitle: 'Major Express (с/ч)',
         status: 'Активно',
         statusColor: const Color(0xFFA855F7),
         metric: _lastPlatyAction,
         icon: Icons.developer_board_rounded,
         accent: const Color(0xFFA855F7),
+      ),
+      (
+        navIdx: 4,
+        title: 'Анализ Gerber и ТЗ',
+        subtitle: 'DFM • Нормы ЭЛЕКТРОконнект',
+        status: _gerberAnalysis != null ? 'Проверено' : 'DFM',
+        statusColor: const Color(0xFFEC4899),
+        metric: _lastGerberAction,
+        icon: Icons.precision_manufacturing_rounded,
+        accent: const Color(0xFFEC4899),
       ),
     ];
 
@@ -3433,7 +1291,7 @@ $finalCsv
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final isRow = constraints.maxWidth >= 720;
+              final isRow = constraints.maxWidth >= 920;
               if (filteredCards.isEmpty) return const SizedBox.shrink();
 
               if (isRow) {
@@ -3442,7 +1300,7 @@ $finalCsv
                       .map((c) => Expanded(
                             child: Padding(
                               padding:
-                                  const EdgeInsets.symmetric(horizontal: 6),
+                                  const EdgeInsets.symmetric(horizontal: 5),
                               child: _buildModuleCard(c),
                             ),
                           ))
@@ -3456,7 +1314,7 @@ $finalCsv
                     itemCount: filteredCards.length,
                     separatorBuilder: (_, __) => const SizedBox(width: 10),
                     itemBuilder: (_, idx) => SizedBox(
-                      width: 265,
+                      width: 245,
                       child: _buildModuleCard(filteredCards[idx]),
                     ),
                   ),
@@ -3703,13 +1561,13 @@ $finalCsv
             Text(
               card.title,
               style:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
             Text(
               card.subtitle,
-              style: TextStyle(fontSize: 12, color: _subtleText),
+              style: TextStyle(fontSize: 11.5, color: _subtleText),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -3720,7 +1578,7 @@ $finalCsv
                   child: Text(
                     card.metric,
                     style: TextStyle(
-                      fontSize: 11.5,
+                      fontSize: 11,
                       fontWeight: FontWeight.w600,
                       color: card.accent,
                     ),
@@ -3730,7 +1588,7 @@ $finalCsv
                 ),
                 Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                   decoration: BoxDecoration(
                     color: (card.accent as Color).withOpacity(0.14),
                     borderRadius: BorderRadius.circular(8),
@@ -3741,12 +1599,12 @@ $finalCsv
                       Text(
                         'Открыть',
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 11,
                           fontWeight: FontWeight.bold,
                           color: card.accent,
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      const SizedBox(width: 3),
                       Icon(Icons.arrow_forward_rounded,
                           size: 13, color: card.accent),
                     ],
@@ -4501,9 +2359,7 @@ $finalCsv
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          isPlaty && fullList.isEmpty
-                              ? 'Список для Плат пока пуст.\nДобавь компанию кнопкой «+ В базу» или в файл platy_firms.txt'
-                              : 'Ничего не найдено по запросу «$filter»',
+                          'Ничего не найдено по запросу «$filter»',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 12.5, color: _subtleText),
                         ),
@@ -4576,7 +2432,723 @@ $finalCsv
   }
 
   // =========================================================================
-  // ЭКРАН 4: ЖУРНАЛ ОПЕРАЦИЙ И УВЕДОМЛЕНИЙ
+  // ЭКРАН 4: АНАЛИЗ GERBER, DFM-КОНТРОЛЬ ЭЛЕКТРОКОННЕКТ И СПЕЦИФИКАЦИЯ КП
+  // =========================================================================
+
+  Widget _buildGerberAnalysisWorkspace() {
+    const accent = Color(0xFFEC4899);
+    final w = double.tryParse(_gerberWidthController.text.replaceAll(',', '.'));
+    final h =
+        double.tryParse(_gerberHeightController.text.replaceAll(',', '.'));
+    final qty = int.tryParse(_gerberQtyController.text.trim()) ?? 10;
+
+    final singleAreaDm2 = (w != null && h != null) ? (w * h) / 10000.0 : null;
+    final totalAreaDm2 =
+        singleAreaDm2 != null ? singleAreaDm2 * math.max(qty, 1) : null;
+
+    final dfmChecks = _evaluateElectroconnectDfm();
+    final specLine = _buildSpecificationLine();
+
+    return SingleChildScrollView(
+      key: const ValueKey('gerber_workspace'),
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1120),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Верхний блок загрузки архива
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: _cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _borderCol),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.precision_manufacturing_rounded,
+                          color: accent, size: 28),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Анализ Gerber / Excellon и технологический контроль',
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            _gerberAnalysis != null
+                                ? 'Загружен архив: ${_gerberAnalysis!.archiveName} (${_gerberAnalysis!.layers.length} файлов)'
+                                : 'Загрузи .zip архив проекта (PCAD .TOP/.BOT/.DRL или Gerber .GTL/.GBL/.GKO) для авто-проверки норм ЭЛЕКТРОконнект',
+                            style: TextStyle(fontSize: 13, color: _subtleText),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 18, vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      icon: const Icon(Icons.folder_zip_rounded, size: 20),
+                      label: const Text(
+                        'ЗАГРУЗИТЬ .ZIP ПРОЕКТА',
+                        style: TextStyle(
+                            fontSize: 13.5, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: _pickAndAnalyzeGerberZip,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 18),
+
+              // Основная сетка: слева параметры и спецификация КП, справа DFM и слои
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final isTwoCol = constraints.maxWidth >= 900;
+
+                  final leftColumn = Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: _cardBg,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: _borderCol),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Параметры платы и спецификация КП',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: _styledInputField(
+                                controller: _gerberOrderNameController,
+                                label: 'Обозначение платы / децимальный номер',
+                                icon: Icons.tag_rounded,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Тип заказа',
+                                value: _gerberOrderType,
+                                items: const ['Новый', 'Повтор'],
+                                onChanged: (v) =>
+                                    setState(() => _gerberOrderType = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _styledInputField(
+                                controller: _gerberWidthController,
+                                label: 'Длина X, мм',
+                                icon: Icons.straighten_rounded,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _styledInputField(
+                                controller: _gerberHeightController,
+                                label: 'Ширина Y, мм',
+                                icon: Icons.straighten_rounded,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _styledInputField(
+                                controller: _gerberQtyController,
+                                label: 'Тираж, шт.',
+                                icon: Icons.layers_rounded,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (singleAreaDm2 != null) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF14B8A6).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color:
+                                      const Color(0xFF14B8A6).withOpacity(0.3)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'Площадь 1 платы: ${singleAreaDm2.toStringAsFixed(3)} дм²',
+                                  style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                Text(
+                                  'Партия ($qty шт.): ${totalAreaDm2!.toStringAsFixed(2)} дм²',
+                                  style: const TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF14B8A6),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Слои',
+                                value: '$_gerberLayersCount',
+                                items: const [
+                                  '1',
+                                  '2',
+                                  '4',
+                                  '6',
+                                  '8',
+                                  '10',
+                                  '12',
+                                  '16'
+                                ],
+                                onChanged: (v) => setState(
+                                    () => _gerberLayersCount = int.parse(v!)),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Материал',
+                                value: _gerberMaterial,
+                                items: const ['FR4', 'Алюминий', 'Rogers'],
+                                onChanged: (v) =>
+                                    setState(() => _gerberMaterial = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Толщина, мм',
+                                value: _gerberThickness,
+                                items: const [
+                                  '0.5',
+                                  '0.8',
+                                  '1.0',
+                                  '1.5',
+                                  '2.0',
+                                  '2.5',
+                                  '3.0'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberThickness = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Фольга, мкм',
+                                value: _gerberFoil,
+                                items: const [
+                                  '12',
+                                  '18',
+                                  '35',
+                                  '50',
+                                  '70',
+                                  '105'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberFoil = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Маска (стороны)',
+                                value: _gerberMaskSide,
+                                items: const [
+                                  'С двух сторон',
+                                  'С одной стороны',
+                                  'Без маски'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberMaskSide = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Цвет маски',
+                                value: _gerberMaskColor,
+                                items: const [
+                                  'Зеленая',
+                                  'Синяя',
+                                  'Черная',
+                                  'Белая',
+                                  'Красная'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberMaskColor = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Покрытие',
+                                value: _gerberFinish,
+                                items: const [
+                                  'HAL',
+                                  'Иммерсионное золото',
+                                  'Иммерсионное олово',
+                                  'Без покрытия'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberFinish = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Маркировка',
+                                value: _gerberSilkSide,
+                                items: const [
+                                  'С двух сторон',
+                                  'С одной стороны',
+                                  'Без маркировки'
+                                ],
+                                onChanged: (v) =>
+                                    setState(() => _gerberSilkSide = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Цвет маркировки',
+                                value: _gerberSilkColor,
+                                items: const ['Белая', 'Черная'],
+                                onChanged: (v) =>
+                                    setState(() => _gerberSilkColor = v!),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _buildDropdownField(
+                                label: 'Контур',
+                                value: _gerberContour,
+                                items: const ['фрезеровка', 'скрайбирование'],
+                                onChanged: (v) =>
+                                    setState(() => _gerberContour = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _styledInputField(
+                                controller: _gerberMinTrackController,
+                                label: 'Мин. дорожка, мм',
+                                icon: Icons.timeline_rounded,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _styledInputField(
+                                controller: _gerberMinHoleController,
+                                label: 'Мин. сверло, мм',
+                                icon: Icons.radio_button_unchecked,
+                                keyboardType: TextInputType.number,
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: CheckboxListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                title: const Text('Эл. тест',
+                                    style: TextStyle(fontSize: 13)),
+                                value: _gerberElectroTest,
+                                onChanged: (v) => setState(
+                                    () => _gerberElectroTest = v ?? true),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Готовая строка спецификации (для 1С / КП / Счёта):',
+                          style: TextStyle(
+                              fontSize: 12.5, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? const Color(0xFF0A0F1A)
+                                : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _borderCol),
+                          ),
+                          child: SelectableText(
+                            specLine,
+                            style: const TextStyle(
+                                fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0D9488),
+                                  foregroundColor: Colors.white,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                icon: const Icon(Icons.copy_rounded, size: 18),
+                                label: const Text(
+                                  'КОПИРОВАТЬ СТРОКУ ДЛЯ КП',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                onPressed: () {
+                                  Clipboard.setData(
+                                      ClipboardData(text: specLine));
+                                  _showSnackbar(
+                                      'Строка спецификации скопирована в буфер!');
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: accent,
+                                side: const BorderSide(color: accent),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              icon: const Icon(Icons.open_in_new_rounded,
+                                  size: 18),
+                              label: const Text(
+                                'Калькулятор сайта',
+                                style: TextStyle(
+                                    fontSize: 13, fontWeight: FontWeight.bold),
+                              ),
+                              onPressed: _openPselectroCalculator,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+
+                  final rightColumn = Column(
+                    children: [
+                      // Карточка проверки DFM норм ЭЛЕКТРОконнект
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: _cardBg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: _borderCol),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Row(
+                              children: [
+                                Icon(Icons.verified_outlined,
+                                    color: Color(0xFF10B981), size: 20),
+                                SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Контроль норм «ЭЛЕКТРОконнект»',
+                                    style: TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (_gerberAnalysis?.hasBinaryBrdOnly == true)
+                              Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: Colors.amberAccent.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                      color:
+                                          Colors.amberAccent.withOpacity(0.4)),
+                                ),
+                                child: const Text(
+                                  'В архиве обнаружен бинарный .BRD (PCAD) без отдельного текстового контура .GKO — впиши длину X и ширину Y вручную слева.',
+                                  style: TextStyle(fontSize: 12),
+                                ),
+                              ),
+                            ...dfmChecks.map((chk) {
+                              final col = chk.level == 'error'
+                                  ? Colors.redAccent
+                                  : chk.level == 'warn'
+                                      ? Colors.amberAccent
+                                      : const Color(0xFF10B981);
+                              final ic = chk.level == 'error'
+                                  ? Icons.cancel_rounded
+                                  : chk.level == 'warn'
+                                      ? Icons.warning_amber_rounded
+                                      : Icons.check_circle_rounded;
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.all(10),
+                                decoration: BoxDecoration(
+                                  color: col.withOpacity(0.09),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border:
+                                      Border.all(color: col.withOpacity(0.35)),
+                                ),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(ic, color: col, size: 18),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            chk.title,
+                                            style: TextStyle(
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.bold,
+                                              color: col,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            chk.detail,
+                                            style: TextStyle(
+                                                fontSize: 11.5,
+                                                color: _subtleText),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
+                      if (_gerberAnalysis != null) ...[
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            color: _cardBg,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: _borderCol),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Состав архива и сверловка (${_gerberAnalysis!.totalHoles} отв.)',
+                                style: const TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 10),
+                              ..._gerberAnalysis!.layers.map((l) => Padding(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 3),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.insert_drive_file_outlined,
+                                            size: 15, color: accent),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            l.fileName,
+                                            style: const TextStyle(
+                                                fontSize: 12.5,
+                                                fontWeight: FontWeight.w600),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        Text(
+                                          l.role,
+                                          style: TextStyle(
+                                              fontSize: 11.5,
+                                              color: _subtleText),
+                                        ),
+                                      ],
+                                    ),
+                                  )),
+                              if (_gerberAnalysis!
+                                  .drillToolsBreakdown.isNotEmpty) ...[
+                                Divider(height: 18, color: _borderCol),
+                                const Text(
+                                  'Инструменты сверловки (.DRL):',
+                                  style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: (_gerberAnalysis!
+                                          .drillToolsBreakdown.entries
+                                          .toList()
+                                        ..sort((a, b) => a.key.compareTo(b.key)))
+                                      .map((e) => Chip(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            label: Text(
+                                              'Ø ${e.key} мм — ${e.value} шт.',
+                                              style:
+                                                  const TextStyle(fontSize: 11),
+                                            ),
+                                          ))
+                                      .toList(),
+                                ),
+                              ]
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  );
+
+                  if (isTwoCol) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(flex: 6, child: leftColumn),
+                        const SizedBox(width: 18),
+                        Expanded(flex: 5, child: rightColumn),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      leftColumn,
+                      const SizedBox(height: 16),
+                      rightColumn,
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDropdownField({
+    required String label,
+    required String value,
+    required List<String> items,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final safeValue = items.contains(value) ? value : items.first;
+    return DropdownButtonFormField<String>(
+      value: safeValue,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: TextStyle(fontSize: 12, color: _subtleText),
+        filled: true,
+        fillColor: widget.isDark
+            ? const Color(0xFF182235)
+            : const Color(0xFFF8FAFC),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _borderCol),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: BorderSide(color: _borderCol),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      ),
+      items: items
+          .map((e) => DropdownMenuItem(
+                value: e,
+                child: Text(e,
+                    style: const TextStyle(fontSize: 13),
+                    overflow: TextOverflow.ellipsis),
+              ))
+          .toList(),
+      onChanged: onChanged,
+    );
+  }
+
+  // =========================================================================
+  // ЭКРАН 5: ЖУРНАЛ ОПЕРАЦИЙ И УВЕДОМЛЕНИЙ
   // =========================================================================
 
   Widget _buildLogsWorkspace() {
