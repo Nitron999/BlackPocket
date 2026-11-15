@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:archive/archive.dart';
 import 'package:excel/excel.dart' as ex;
@@ -53,7 +52,7 @@ class _BlackPocketAppState extends State<BlackPocketApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Печатные платы — Logistics & CAM',
+      title: 'Печатные платы — Logistics & Major Express',
       debugShowCheckedModeBanner: false,
       themeMode: _isDark ? ThemeMode.dark : ThemeMode.light,
       theme: ThemeData(
@@ -204,66 +203,6 @@ class OperationLogEntry {
       );
 }
 
-class GerberLayerInfo {
-  final String fileName;
-  final String role;
-  final int sizeBytes;
-
-  GerberLayerInfo({
-    required this.fileName,
-    required this.role,
-    required this.sizeBytes,
-  });
-}
-
-class GerberAnalysisResult {
-  final String archiveName;
-  final String projectTitle;
-  final List<GerberLayerInfo> layers;
-  final int detectedLayersCount;
-  final bool hasTopMask;
-  final bool hasBottomMask;
-  final bool hasTopSilk;
-  final bool hasBottomSilk;
-  final bool hasBinaryBrdOnly;
-  final double? widthMm;
-  final double? heightMm;
-  final double? minTrackMm;
-  final double? minDrillMm;
-  final int totalHoles;
-  final Map<double, int> drillToolsBreakdown;
-
-  GerberAnalysisResult({
-    required this.archiveName,
-    required this.projectTitle,
-    required this.layers,
-    required this.detectedLayersCount,
-    required this.hasTopMask,
-    required this.hasBottomMask,
-    required this.hasTopSilk,
-    required this.hasBottomSilk,
-    required this.hasBinaryBrdOnly,
-    this.widthMm,
-    this.heightMm,
-    this.minTrackMm,
-    this.minDrillMm,
-    required this.totalHoles,
-    required this.drillToolsBreakdown,
-  });
-}
-
-class DfmCheckItem {
-  final String title;
-  final String detail;
-  final String level;
-
-  DfmCheckItem({
-    required this.title,
-    required this.detail,
-    required this.level,
-  });
-}
-
 class MainWorkspaceScreen extends StatefulWidget {
   final bool isDark;
   final VoidCallback onToggleTheme;
@@ -281,8 +220,6 @@ class MainWorkspaceScreen extends StatefulWidget {
 class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   int _selectedNavIndex = 0;
   bool _isSidebarCollapsed = false;
-  String _searchQuery = '';
-  final TextEditingController _searchController = TextEditingController();
 
   final TextEditingController _apiKeyController = TextEditingController();
   String _selectedModel = 'llama-3.3-70b-versatile';
@@ -296,13 +233,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   bool? _isKeyWorking;
   bool _isKeyValidating = false;
 
-  bool _isVoiceEnabled = false;
-
   List<ChatSession> _sessions = [];
   ChatSession? _currentSession;
   final TextEditingController _chatInputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final FocusNode _inputFocusNode = FocusNode();
   File? _chatImage;
   File? _chatAttachedFile;
   bool _isLoading = false;
@@ -339,7 +273,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       TextEditingController();
   String _majorFirmFilter = '';
   List<String> _electroFirms = [];
-  String? _lastGeneratedMajorScriptPath;
   String _lastMajorAction = 'Готов к оформлению';
 
   // Модуль 3: Печатные платы (Major Express)
@@ -358,37 +291,7 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       TextEditingController();
   String _platyFirmFilter = '';
   List<String> _platyFirms = [];
-  String? _lastGeneratedPlatyScriptPath;
   String _lastPlatyAction = 'Готов к оформлению';
-
-  // Модуль 4: Анализ Gerber и DFM-контроль ЭЛЕКТРОконнект
-  GerberAnalysisResult? _gerberAnalysis;
-  String _lastGerberAction = 'Ожидает .zip проекта';
-  final TextEditingController _gerberOrderNameController =
-      TextEditingController();
-  final TextEditingController _gerberWidthController =
-      TextEditingController(text: '64');
-  final TextEditingController _gerberHeightController =
-      TextEditingController(text: '23');
-  final TextEditingController _gerberQtyController =
-      TextEditingController(text: '10');
-  final TextEditingController _gerberMinTrackController =
-      TextEditingController(text: '0.15');
-  final TextEditingController _gerberMinHoleController =
-      TextEditingController(text: '0.30');
-
-  String _gerberOrderType = 'Новый';
-  int _gerberLayersCount = 2;
-  String _gerberMaterial = 'FR4';
-  String _gerberThickness = '1.5';
-  String _gerberFoil = '18';
-  String _gerberMaskSide = 'С двух сторон';
-  String _gerberMaskColor = 'Зеленая';
-  String _gerberSilkSide = 'С двух сторон';
-  String _gerberSilkColor = 'Белая';
-  String _gerberFinish = 'HAL';
-  String _gerberContour = 'фрезеровка';
-  bool _gerberElectroTest = true;
 
   List<OperationLogEntry> _operationLogs = [];
 
@@ -763,7 +666,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
       if (savedModel != null && _availableModels.contains(savedModel)) {
         _selectedModel = savedModel;
       }
-      _isVoiceEnabled = prefs.getBool('is_voice_enabled') ?? false;
       _isSidebarCollapsed = prefs.getBool('sidebar_collapsed') ?? false;
 
       final p1 = prefs.getString('saved_path_posylka') ?? '';
@@ -1224,10 +1126,8 @@ if __name__ == '__main__':
 
     setState(() {
       if (isPlaty) {
-        _lastGeneratedPlatyScriptPath = scriptPath;
         _lastPlatyAction = 'Оформлено: $firm';
       } else {
-        _lastGeneratedMajorScriptPath = scriptPath;
         _lastMajorAction = 'Оформлено: $firm';
       }
     });
@@ -1260,447 +1160,6 @@ if __name__ == '__main__':
     }
   }
 
-  Future<void> _pickAndAnalyzeGerberZip() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
-    );
-    if (result == null || result.files.single.path == null) return;
-
-    final zipFile = File(result.files.single.path!);
-    final archiveName = zipFile.path.split(Platform.pathSeparator).last;
-
-    try {
-      final bytes = await zipFile.readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes);
-
-      final List<GerberLayerInfo> layers = [];
-      int copperLayers = 0;
-      bool hasTopMask = false;
-      bool hasBottomMask = false;
-      bool hasTopSilk = false;
-      bool hasBottomSilk = false;
-      bool hasBinaryBrd = false;
-      bool hasTextContour = false;
-
-      double? detectedWidth;
-      double? detectedHeight;
-      double? minTrackMm;
-      double? minDrillMm;
-      int totalHoles = 0;
-      final Map<double, int> drillBreakdown = {};
-
-      for (final file in archive.files) {
-        if (!file.isFile) continue;
-        final rawName = file.name.split('/').last.split('\\').last;
-        if (rawName.isEmpty || rawName.startsWith('.')) continue;
-
-        final upper = rawName.toUpperCase();
-        String role = 'Прочий файл проекта';
-
-        if (upper.endsWith('.TOP') ||
-            upper.endsWith('.GTL') ||
-            upper.contains('F_CU') ||
-            upper.contains('TOP_COPPER')) {
-          role = 'Верхний слой меди (TOP)';
-          copperLayers++;
-        } else if (upper.endsWith('.BOT') ||
-            upper.endsWith('.GBL') ||
-            upper.contains('B_CU') ||
-            upper.contains('BOT_COPPER')) {
-          role = 'Нижний слой меди (BOT)';
-          copperLayers++;
-        } else if (RegExp(r'\.(G[1-9]|IN[1-9]|L[2-9])$').hasMatch(upper)) {
-          role = 'Внутренний слой меди';
-          copperLayers++;
-        } else if (upper.endsWith('.TMS') ||
-            upper.endsWith('.GTS') ||
-            upper.contains('F_MASK')) {
-          role = 'Верхняя паяльная маска';
-          hasTopMask = true;
-        } else if (upper.endsWith('.BMS') ||
-            upper.endsWith('.GBS') ||
-            upper.contains('B_MASK')) {
-          role = 'Нижняя паяльная маска';
-          hasBottomMask = true;
-        } else if (upper.endsWith('.GTO') ||
-            upper.endsWith('.TSK') ||
-            upper.contains('F_SILK')) {
-          role = 'Верхняя маркировка (шелкография)';
-          hasTopSilk = true;
-        } else if (upper.endsWith('.GBO') ||
-            upper.endsWith('.BSK') ||
-            upper.contains('B_SILK')) {
-          role = 'Нижняя маркировка (шелкография)';
-          hasBottomSilk = true;
-        } else if (upper.endsWith('.GKO') ||
-            upper.endsWith('.GM1') ||
-            upper.contains('EDGE') ||
-            upper.contains('OUTLINE') ||
-            upper.contains('BOARD')) {
-          role = 'Контур платы / фрезеровка';
-          hasTextContour = true;
-        } else if (upper.endsWith('.DRL') ||
-            upper.endsWith('.TXT') ||
-            upper.endsWith('.EXC') ||
-            upper.contains('DRILL')) {
-          role = 'Сверловка (Excellon)';
-        } else if (upper.endsWith('.BRD')) {
-          role = 'Файл платы P-CAD / CAD (.BRD)';
-          hasBinaryBrd = true;
-        }
-
-        layers.add(GerberLayerInfo(
-          fileName: rawName,
-          role: role,
-          sizeBytes: file.size,
-        ));
-
-        final contentBytes = file.content as List<int>;
-        final isLikelyBinary =
-            contentBytes.take(200).where((b) => b == 0).length > 5;
-
-        if (!isLikelyBinary) {
-          final textContent = utf8.decode(contentBytes, allowMalformed: true);
-          if (role.contains('Сверловка')) {
-            final drillStats = _parseExcellonDrill(textContent);
-            totalHoles += drillStats.totalHoles;
-            for (final entry in drillStats.tools.entries) {
-              drillBreakdown[entry.key] =
-                  (drillBreakdown[entry.key] ?? 0) + entry.value;
-              if (minDrillMm == null || entry.key < minDrillMm) {
-                minDrillMm = entry.key;
-              }
-            }
-          } else if (role.contains('меди') || role.contains('Контур')) {
-            final gerberStats = _parseGerberGeometry(textContent);
-            if (gerberStats.minTrackMm != null &&
-                (minTrackMm == null || gerberStats.minTrackMm! < minTrackMm)) {
-              minTrackMm = gerberStats.minTrackMm;
-            }
-            if (gerberStats.widthMm != null &&
-                gerberStats.heightMm != null &&
-                (role.contains('Контур') || detectedWidth == null)) {
-              detectedWidth = gerberStats.widthMm;
-              detectedHeight = gerberStats.heightMm;
-            }
-          }
-        }
-      }
-
-      final finalLayersCount = copperLayers > 0 ? copperLayers : 2;
-      final projectTitle =
-          archiveName.replaceAll(RegExp(r'\.zip$', caseSensitive: false), '');
-
-      final analysis = GerberAnalysisResult(
-        archiveName: archiveName,
-        projectTitle: projectTitle,
-        layers: layers,
-        detectedLayersCount: finalLayersCount,
-        hasTopMask: hasTopMask,
-        hasBottomMask: hasBottomMask,
-        hasTopSilk: hasTopSilk,
-        hasBottomSilk: hasBottomSilk,
-        hasBinaryBrdOnly: hasBinaryBrd && !hasTextContour && detectedWidth == null,
-        widthMm: detectedWidth,
-        heightMm: detectedHeight,
-        minTrackMm: minTrackMm,
-        minDrillMm: minDrillMm,
-        totalHoles: totalHoles,
-        drillToolsBreakdown: drillBreakdown,
-      );
-
-      setState(() {
-        _gerberAnalysis = analysis;
-        _gerberOrderNameController.text = projectTitle;
-        _gerberLayersCount = finalLayersCount;
-        if (detectedWidth != null) {
-          _gerberWidthController.text = detectedWidth.toStringAsFixed(1);
-        }
-        if (detectedHeight != null) {
-          _gerberHeightController.text = detectedHeight.toStringAsFixed(1);
-        }
-        if (minTrackMm != null) {
-          _gerberMinTrackController.text = minTrackMm.toStringAsFixed(3);
-        }
-        if (minDrillMm != null) {
-          _gerberMinHoleController.text = minDrillMm.toStringAsFixed(2);
-        }
-        _gerberMaskSide = (hasTopMask && hasBottomMask)
-            ? 'С двух сторон'
-            : ((hasTopMask || hasBottomMask) ? 'С одной стороны' : 'Без маски');
-        _gerberSilkSide = (hasTopSilk && hasBottomSilk)
-            ? 'С двух сторон'
-            : ((hasTopSilk || hasBottomSilk)
-                ? 'С одной стороны'
-                : 'Без маркировки');
-        _lastGerberAction = '$projectTitle ($finalLayersCount сл.)';
-      });
-
-      await _addOperationLog(
-        'Анализ Gerber',
-        'Разобран архив: $archiveName',
-        'Слоёв: $finalLayersCount, Отверстий: $totalHoles${minDrillMm != null ? ", Мин. сверло: $minDrillMm мм" : ""}',
-      );
-      _showSnackbar('Архив $archiveName успешно проанализирован!');
-    } catch (e) {
-      await _addOperationLog(
-          'Анализ Gerber', 'Ошибка разбора архива', '$e',
-          isError: true);
-      _showSnackbar('Ошибка чтения архива: $e');
-    }
-  }
-
-  ({int totalHoles, Map<double, int> tools}) _parseExcellonDrill(String text) {
-    final lines = text.split(RegExp(r'\r?\n'));
-    final Map<String, double> toolDiameters = {};
-    final Map<double, int> toolCounts = {};
-    bool isMetric = true;
-    String? activeTool;
-    int total = 0;
-
-    for (final raw in lines) {
-      final line = raw.trim().toUpperCase();
-      if (line.isEmpty || line.startsWith(';')) continue;
-      if (line.contains('INCH')) isMetric = false;
-      if (line.contains('METRIC')) isMetric = true;
-
-      final defMatch = RegExp(r'^(T\d+)C([\d.]+)').firstMatch(line);
-      if (defMatch != null) {
-        final tCode = defMatch.group(1)!;
-        double d = double.tryParse(defMatch.group(2)!) ?? 0;
-        if (!isMetric) d *= 25.4;
-        if (d > 0) toolDiameters[tCode] = double.parse(d.toStringAsFixed(3));
-        continue;
-      }
-
-      final selMatch = RegExp(r'^(T\d+)$').firstMatch(line);
-      if (selMatch != null) {
-        activeTool = selMatch.group(1);
-        continue;
-      }
-
-      if ((line.startsWith('X') || line.startsWith('Y')) &&
-          activeTool != null &&
-          toolDiameters.containsKey(activeTool)) {
-        final diam = toolDiameters[activeTool]!;
-        toolCounts[diam] = (toolCounts[diam] ?? 0) + 1;
-        total++;
-      }
-    }
-    return (totalHoles: total, tools: toolCounts);
-  }
-
-  ({double? widthMm, double? heightMm, double? minTrackMm})
-      _parseGerberGeometry(String text) {
-    final lines = text.split(RegExp(r'\r?\n'));
-    bool isInch = false;
-    int decDigits = 4;
-    double? minX, maxX, minY, maxY, minAperture;
-
-    for (final raw in lines) {
-      final line = raw.trim().toUpperCase();
-      if (line.contains('MOIN')) isInch = true;
-      if (line.contains('MOMM')) isInch = false;
-
-      final fsMatch = RegExp(r'FS[LA]AX(\d)(\d)Y(\d)(\d)').firstMatch(line);
-      if (fsMatch != null) decDigits = int.tryParse(fsMatch.group(2)!) ?? 4;
-
-      final apMatch = RegExp(r'%ADD\d+[CR],([\d.]+)').firstMatch(line);
-      if (apMatch != null) {
-        double val = double.tryParse(apMatch.group(1)!) ?? 0;
-        if (isInch) val *= 25.4;
-        if (val >= 0.05 &&
-            val <= 3.0 &&
-            (minAperture == null || val < minAperture)) {
-          minAperture = val;
-        }
-      }
-
-      final coordMatch = RegExp(r'X(-?\d+)Y(-?\d+)D0[12]').firstMatch(line);
-      if (coordMatch != null) {
-        final rawX = double.tryParse(coordMatch.group(1)!);
-        final rawY = double.tryParse(coordMatch.group(2)!);
-        if (rawX != null && rawY != null) {
-          final scale = math.pow(10, decDigits).toDouble();
-          double x = rawX / scale;
-          double y = rawY / scale;
-          if (isInch) {
-            x *= 25.4;
-            y *= 25.4;
-          }
-          if (x.abs() < 2000 && y.abs() < 2000) {
-            minX = minX == null ? x : math.min(minX, x);
-            maxX = maxX == null ? x : math.max(maxX, x);
-            minY = minY == null ? y : math.min(minY, y);
-            maxY = maxY == null ? y : math.max(maxY, y);
-          }
-        }
-      }
-    }
-
-    double? width, height;
-    if (minX != null && maxX != null && minY != null && maxY != null) {
-      final dx = (maxX - minX).abs();
-      final dy = (maxY - minY).abs();
-      if (dx > 1 && dy > 1) {
-        width = dx;
-        height = dy;
-      }
-    }
-    return (widthMm: width, heightMm: height, minTrackMm: minAperture);
-  }
-
-  List<DfmCheckItem> _evaluateElectroconnectDfm() {
-    final List<DfmCheckItem> checks = [];
-    final w =
-        double.tryParse(_gerberWidthController.text.replaceAll(',', '.')) ?? 0;
-    final h =
-        double.tryParse(_gerberHeightController.text.replaceAll(',', '.')) ?? 0;
-    final track =
-        double.tryParse(_gerberMinTrackController.text.replaceAll(',', '.')) ??
-            0;
-    final drill =
-        double.tryParse(_gerberMinHoleController.text.replaceAll(',', '.')) ??
-            0;
-    final thick = double.tryParse(_gerberThickness) ?? 1.5;
-
-    final maxSide = math.max(w, h);
-    final minSide = math.min(w, h);
-    if (maxSide > 550 || minSide > 450) {
-      checks.add(DfmCheckItem(
-        title: 'Габариты превышают предел цеха!',
-        detail:
-            'Максимум «ЭЛЕКТРОконнект»: 450×350 мм (Стандарт), 550×450 мм (Предел).',
-        level: 'error',
-      ));
-    } else if (maxSide > 450 || minSide > 350) {
-      checks.add(DfmCheckItem(
-        title: 'Габариты в зоне «Предел» (> 450×350 мм)',
-        detail: 'Изготовление возможно до 550×450 мм по согласованию.',
-        level: 'warn',
-      ));
-    } else if (w > 0 && h > 0) {
-      checks.add(DfmCheckItem(
-        title:
-            'Габариты платы в норме (${w.toStringAsFixed(1)}×${h.toStringAsFixed(1)} мм)',
-        detail: 'Укладываются в стандартное рабочее поле (до 450×350 мм).',
-        level: 'ok',
-      ));
-    }
-
-    const stdTrackMap = {
-      '12': 0.100,
-      '18': 0.125,
-      '35': 0.175,
-      '50': 0.270,
-      '70': 0.300,
-      '105': 0.350
-    };
-    const limTrackMap = {
-      '12': 0.075,
-      '18': 0.100,
-      '35': 0.150,
-      '50': 0.270,
-      '70': 0.300,
-      '105': 0.350
-    };
-    final stdT = stdTrackMap[_gerberFoil] ?? 0.125;
-    final limT = limTrackMap[_gerberFoil] ?? 0.100;
-
-    if (track > 0) {
-      if (track < limT) {
-        checks.add(DfmCheckItem(
-          title: 'Дорожка $track мм ниже предела для $_gerberFoil мкм!',
-          detail:
-              'Для фольги $_gerberFoil мкм минимум: $stdT мм (Стандарт) / $limT мм (Предел).',
-          level: 'error',
-        ));
-      } else if (track < stdT) {
-        checks.add(DfmCheckItem(
-          title: 'Дорожка $track мм попадает в «Предел»',
-          detail:
-              'Для фольги $_gerberFoil мкм стандарт ≥ $stdT мм (повышенный класс точности).',
-          level: 'warn',
-        ));
-      } else {
-        checks.add(DfmCheckItem(
-          title: 'Ширина проводников в стандарте ($track ≥ $stdT мм)',
-          detail:
-              'Соответствует нормам «ЭЛЕКТРОконнект» для фольги $_gerberFoil мкм.',
-          level: 'ok',
-        ));
-      }
-    }
-
-    if (drill > 0) {
-      if (drill < 0.20) {
-        checks.add(DfmCheckItem(
-          title: 'Отверстие Ø $drill мм меньше технологического предела!',
-          detail: 'Минимальное металлизированное отверстие завода: 0.20 мм.',
-          level: 'error',
-        ));
-      } else if (drill < 0.30) {
-        checks.add(DfmCheckItem(
-          title: 'Отверстие Ø $drill мм в зоне «Предел» (< 0.30 мм)',
-          detail:
-              'Стандарт от 0.30 мм; 0.20–0.29 мм требует уточнения соотношения к толщине.',
-          level: 'warn',
-        ));
-      } else {
-        checks.add(DfmCheckItem(
-          title: 'Сверловка в стандарте (мин. Ø $drill мм ≥ 0.30 мм)',
-          detail: 'Все отверстия проходят без удорожания за микросверление.',
-          level: 'ok',
-        ));
-      }
-    }
-
-    if (_gerberFinish == 'HAL' && thick < 1.0) {
-      checks.add(DfmCheckItem(
-        title: 'HAL (ПОС-63) запрещён для платы $thick мм!',
-        detail:
-            'По тех. возможностям завода HASL не применяется на платах тоньше 1.0 мм.',
-        level: 'error',
-      ));
-    }
-
-    if (_gerberLayersCount > 6) {
-      checks.add(DfmCheckItem(
-        title: 'Сложность МПП: $_gerberLayersCount слоёв (зона «Предел»)',
-        detail:
-            'Стандарт до 6 слоёв; производство до 28 слоёв доступно по регламенту.',
-        level: 'warn',
-      ));
-    }
-
-    return checks;
-  }
-
-  String _buildSpecificationLine() {
-    final w = _gerberWidthController.text.trim();
-    final h = _gerberHeightController.text.trim();
-    final maskPart = _gerberMaskSide == 'Без маски'
-        ? 'Без маски'
-        : '$_gerberMaskSide $_gerberMaskColor';
-    final silkPart = _gerberSilkSide == 'Без маркировки'
-        ? 'Без маркировки'
-        : '$_gerberSilkSide $_gerberSilkColor';
-    final testPart = _gerberElectroTest ? 'Эл. тест.' : 'Без эл. теста.';
-
-    return '$_gerberOrderType; $_gerberLayersCount сл; ${w}х${h}мм; $_gerberContour; '
-        '$_gerberMaterial-${_gerberThickness}мм-${_gerberFoil}мкм; '
-        'маска: $maskPart; маркировка: $silkPart; $_gerberFinish; $testPart';
-  }
-
-  Future<void> _openPselectroCalculator() async {
-    const url = 'https://pselectro.ru/calculate-cost/';
-    if (Platform.isWindows) {
-      await Process.start('cmd', ['/c', 'start', '', url]);
-    } else {
-      await OpenFilex.open(url);
-    }
-  }
   // =========================================================================
   // СВЕДЕНИЕ НАКЛАДНЫХ (ПОСЫЛКА + СВОДКА ПП + СВОДКА ФИЛИАЛ)
   // =========================================================================
@@ -2020,8 +1479,6 @@ if __name__ == '__main__':
         'Успешно сведено ($fileName)',
         'Голова: ${headItems.length}, Филиал: ${filialItems.length}',
       );
-      await _speak(
-          'Накладная сведена, Шурик! Голова: ${headItems.length}, филиал: ${filialItems.length}.');
     } catch (e) {
       await _addOperationLog(
           'Сведение накладных', 'Ошибка сведения', '$e',
@@ -2395,7 +1852,6 @@ if __name__ == '__main__':
       );
 
       _appendMessage('assistant', responseText);
-      await _speak(responseText);
     } catch (e) {
       _appendMessage('system', 'Ошибка: $e');
     } finally {
@@ -2507,10 +1963,6 @@ if __name__ == '__main__':
     );
   }
 
-  // =========================================================================
-  // UI-КОМПОНЕНТЫ И ВСЕ 6 ЭКРАНОВ
-  // =========================================================================
-
   Color get _cardBg => widget.isDark ? const Color(0xFF111827) : Colors.white;
   Color get _sidebarBg =>
       widget.isDark ? const Color(0xFF0D1320) : const Color(0xFFF8FAFC);
@@ -2548,43 +2000,6 @@ if __name__ == '__main__':
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
       ),
-    );
-  }
-
-  Widget _buildDropdownField({
-    required String label,
-    required String value,
-    required List<String> items,
-    required ValueChanged<String?> onChanged,
-  }) {
-    final safeValue = items.contains(value) ? value : items.first;
-    return DropdownButtonFormField<String>(
-      value: safeValue,
-      isExpanded: true,
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(fontSize: 12, color: _subtleText),
-        filled: true,
-        fillColor: widget.isDark
-            ? const Color(0xFF182235)
-            : const Color(0xFFF8FAFC),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: _borderCol)),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide(color: _borderCol)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-      ),
-      items: items
-          .map((e) => DropdownMenuItem(
-              value: e,
-              child: Text(e,
-                  style: const TextStyle(fontSize: 13),
-                  overflow: TextOverflow.ellipsis)))
-          .toList(),
-      onChanged: onChanged,
     );
   }
 
@@ -2643,13 +2058,6 @@ if __name__ == '__main__':
       ),
       (
         index: 4,
-        title: 'Анализ Gerber и ТЗ',
-        subtitle: 'DFM • ЭЛЕКТРОконнект',
-        icon: Icons.precision_manufacturing_rounded,
-        color: const Color(0xFFEC4899)
-      ),
-      (
-        index: 5,
         title: 'Журнал операций',
         subtitle: 'История и логи',
         icon: Icons.history_rounded,
@@ -2691,7 +2099,7 @@ if __name__ == '__main__':
                               style: TextStyle(
                                   fontSize: 15, fontWeight: FontWeight.bold),
                               overflow: TextOverflow.ellipsis),
-                          Text('Logistics & CAM v3.0',
+                          Text('Logistics v3.0',
                               style:
                                   TextStyle(fontSize: 11, color: _subtleText)),
                         ],
@@ -2840,7 +2248,6 @@ if __name__ == '__main__':
       'Сведение накладных (Посылка / Сводки)',
       'Электроконнект — Major Express',
       'Печатные платы — Major Express',
-      'Анализ Gerber и DFM-контроль (ЭЛЕКТРОконнект)',
       'Журнал операций',
     ];
 
@@ -2894,8 +2301,6 @@ if __name__ == '__main__':
       case 3:
         return _buildMajorCourierWorkspace(isPlaty: true);
       case 4:
-        return _buildGerberAnalysisWorkspace();
-      case 5:
         return _buildLogsWorkspace();
       default:
         return _buildDashboardAndChatView();
@@ -2928,14 +2333,6 @@ if __name__ == '__main__':
         metric: _lastPlatyAction,
         icon: Icons.developer_board_rounded,
         accent: const Color(0xFFA855F7)
-      ),
-      (
-        navIdx: 4,
-        title: 'Анализ Gerber и ТЗ',
-        subtitle: 'DFM • ЭЛЕКТРОконнект',
-        metric: _lastGerberAction,
-        icon: Icons.precision_manufacturing_rounded,
-        accent: const Color(0xFFEC4899)
       ),
     ];
 
@@ -3354,477 +2751,6 @@ if __name__ == '__main__':
     );
   }
 
-  Widget _buildGerberAnalysisWorkspace() {
-    const accent = Color(0xFFEC4899);
-    final w = double.tryParse(_gerberWidthController.text.replaceAll(',', '.'));
-    final h =
-        double.tryParse(_gerberHeightController.text.replaceAll(',', '.'));
-    final qty = int.tryParse(_gerberQtyController.text.trim()) ?? 10;
-    final singleAreaDm2 = (w != null && h != null) ? (w * h) / 10000.0 : null;
-    final totalAreaDm2 =
-        singleAreaDm2 != null ? singleAreaDm2 * math.max(qty, 1) : null;
-    final dfmChecks = _evaluateElectroconnectDfm();
-    final specLine = _buildSpecificationLine();
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Column(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                    color: _cardBg,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: _borderCol)),
-                child: Row(
-                  children: [
-                    const Icon(Icons.precision_manufacturing_rounded,
-                        color: accent, size: 28),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                              'Анализ Gerber / Excellon и технологический контроль',
-                              style: TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.bold)),
-                          Text(
-                            _gerberAnalysis != null
-                                ? 'Архив: ${_gerberAnalysis!.archiveName} (${_gerberAnalysis!.layers.length} файлов)'
-                                : 'Загрузи .zip проекта (PCAD .TOP/.BOT/.DRL или Gerber .GTL/.GBL/.GKO)',
-                            style: TextStyle(fontSize: 13, color: _subtleText),
-                          ),
-                        ],
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: accent,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 18, vertical: 14)),
-                      icon: const Icon(Icons.folder_zip_rounded),
-                      label: const Text('ЗАГРУЗИТЬ .ZIP ПРОЕКТА',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      onPressed: _pickAndAnalyzeGerberZip,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    flex: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                          color: _cardBg,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: _borderCol)),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Параметры платы и спецификация КП',
-                              style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                  flex: 2,
-                                  child: _styledInputField(
-                                      controller: _gerberOrderNameController,
-                                      label: 'Обозначение платы',
-                                      onChanged: (_) => setState(() {}))),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Тип заказа',
-                                      value: _gerberOrderType,
-                                      items: const ['Новый', 'Повтор'],
-                                      onChanged: (v) => setState(
-                                          () => _gerberOrderType = v!))),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                  child: _styledInputField(
-                                      controller: _gerberWidthController,
-                                      label: 'Длина X, мм',
-                                      onChanged: (_) => setState(() {}))),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                  child: _styledInputField(
-                                      controller: _gerberHeightController,
-                                      label: 'Ширина Y, мм',
-                                      onChanged: (_) => setState(() {}))),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                  child: _styledInputField(
-                                      controller: _gerberQtyController,
-                                      label: 'Тираж, шт.',
-                                      onChanged: (_) => setState(() {}))),
-                            ],
-                          ),
-                          if (singleAreaDm2 != null) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                                'Площадь 1 платы: ${singleAreaDm2.toStringAsFixed(3)} дм² • Партия ($qty шт.): ${totalAreaDm2!.toStringAsFixed(2)} дм²',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF14B8A6))),
-                          ],
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Слои',
-                                      value: '$_gerberLayersCount',
-                                      items: const [
-                                        '1',
-                                        '2',
-                                        '4',
-                                        '6',
-                                        '8',
-                                        '10',
-                                        '12',
-                                        '16'
-                                      ],
-                                      onChanged: (v) => setState(() =>
-                                          _gerberLayersCount = int.parse(v!)))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Материал',
-                                      value: _gerberMaterial,
-                                      items: const [
-                                        'FR4',
-                                        'Алюминий',
-                                        'Rogers'
-                                      ],
-                                      onChanged: (v) => setState(
-                                          () => _gerberMaterial = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Толщина, мм',
-                                      value: _gerberThickness,
-                                      items: const [
-                                        '0.5',
-                                        '0.8',
-                                        '1.0',
-                                        '1.5',
-                                        '2.0',
-                                        '2.5',
-                                        '3.0'
-                                      ],
-                                      onChanged: (v) => setState(
-                                          () => _gerberThickness = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Фольга, мкм',
-                                      value: _gerberFoil,
-                                      items: const [
-                                        '12',
-                                        '18',
-                                        '35',
-                                        '50',
-                                        '70',
-                                        '105'
-                                      ],
-                                      onChanged: (v) =>
-                                          setState(() => _gerberFoil = v!))),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Маска',
-                                      value: _gerberMaskSide,
-                                      items: const [
-                                        'С двух сторон',
-                                        'С одной стороны',
-                                        'Без маски'
-                                      ],
-                                      onChanged: (v) => setState(
-                                          () => _gerberMaskSide = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Цвет маски',
-                                      value: _gerberMaskColor,
-                                      items: const [
-                                        'Зеленая',
-                                        'Синяя',
-                                        'Черная',
-                                        'Белая',
-                                        'Красная'
-                                      ],
-                                      onChanged: (v) => setState(
-                                          () => _gerberMaskColor = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Покрытие',
-                                      value: _gerberFinish,
-                                      items: const [
-                                        'HAL',
-                                        'Иммерсионное золото',
-                                        'Иммерсионное олово',
-                                        'Без покрытия'
-                                      ],
-                                      onChanged: (v) =>
-                                          setState(() => _gerberFinish = v!))),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Маркировка',
-                                      value: _gerberSilkSide,
-                                      items: const [
-                                        'С двух сторон',
-                                        'С одной стороны',
-                                        'Без маркировки'
-                                      ],
-                                      onChanged: (v) => setState(
-                                          () => _gerberSilkSide = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Цвет марк.',
-                                      value: _gerberSilkColor,
-                                      items: const ['Белая', 'Черная'],
-                                      onChanged: (v) => setState(
-                                          () => _gerberSilkColor = v!))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _buildDropdownField(
-                                      label: 'Контур',
-                                      value: _gerberContour,
-                                      items: const [
-                                        'фрезеровка',
-                                        'скрайбирование'
-                                      ],
-                                      onChanged: (v) =>
-                                          setState(() => _gerberContour = v!))),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                  child: _styledInputField(
-                                      controller: _gerberMinTrackController,
-                                      label: 'Мин. дорожка, мм',
-                                      onChanged: (_) => setState(() {}))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                  child: _styledInputField(
-                                      controller: _gerberMinHoleController,
-                                      label: 'Мин. сверло, мм',
-                                      onChanged: (_) => setState(() {}))),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: CheckboxListTile(
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                  title: const Text('Эл. тест',
-                                      style: TextStyle(fontSize: 13)),
-                                  value: _gerberElectroTest,
-                                  onChanged: (v) => setState(
-                                      () => _gerberElectroTest = v ?? true),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                                color: widget.isDark
-                                    ? const Color(0xFF0A0F1A)
-                                    : const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: _borderCol)),
-                            child: SelectableText(specLine,
-                                style: const TextStyle(
-                                    fontSize: 13, fontWeight: FontWeight.w500)),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF0D9488),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 14)),
-                                  icon:
-                                      const Icon(Icons.copy_rounded, size: 18),
-                                  label: const Text('КОПИРОВАТЬ СТРОКУ ДЛЯ КП',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold)),
-                                  onPressed: () {
-                                    Clipboard.setData(
-                                        ClipboardData(text: specLine));
-                                    _showSnackbar(
-                                        'Строка спецификации скопирована!');
-                                  },
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              OutlinedButton.icon(
-                                style: OutlinedButton.styleFrom(
-                                    foregroundColor: accent,
-                                    side: const BorderSide(color: accent),
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 14, vertical: 14)),
-                                icon: const Icon(Icons.open_in_new_rounded,
-                                    size: 18),
-                                label: const Text('Калькулятор сайта'),
-                                onPressed: _openPselectroCalculator,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    flex: 5,
-                    child: Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(18),
-                          decoration: BoxDecoration(
-                              color: _cardBg,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: _borderCol)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Контроль норм «ЭЛЕКТРОконнект»',
-                                  style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 10),
-                              if (_gerberAnalysis?.hasBinaryBrdOnly == true)
-                                Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                      color:
-                                          Colors.amberAccent.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(10)),
-                                  child: const Text(
-                                      'В архиве бинарный .BRD (PCAD) без отдельного текстового контура — укажи длину X и ширину Y вручную слева.',
-                                      style: TextStyle(fontSize: 12)),
-                                ),
-                              ...dfmChecks.map((chk) {
-                                final col = chk.level == 'error'
-                                    ? Colors.redAccent
-                                    : (chk.level == 'warn'
-                                        ? Colors.amberAccent
-                                        : const Color(0xFF10B981));
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                      color: col.withOpacity(0.1),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                          color: col.withOpacity(0.35))),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(chk.title,
-                                          style: TextStyle(
-                                              fontSize: 12.5,
-                                              fontWeight: FontWeight.bold,
-                                              color: col)),
-                                      const SizedBox(height: 2),
-                                      Text(chk.detail,
-                                          style: TextStyle(
-                                              fontSize: 11.5,
-                                              color: _subtleText)),
-                                    ],
-                                  ),
-                                );
-                              }),
-                            ],
-                          ),
-                        ),
-                        if (_gerberAnalysis != null) ...[
-                          const SizedBox(height: 14),
-                          Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: BoxDecoration(
-                                color: _cardBg,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: _borderCol)),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                    'Состав архива и сверловка (${_gerberAnalysis!.totalHoles} отв.)',
-                                    style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.bold)),
-                                const SizedBox(height: 8),
-                                ..._gerberAnalysis!.layers.map((l) => Text(
-                                    '• ${l.fileName} — ${l.role}',
-                                    style: const TextStyle(fontSize: 12.5))),
-                                if (_gerberAnalysis!
-                                    .drillToolsBreakdown.isNotEmpty) ...[
-                                  const Divider(height: 16),
-                                  Wrap(
-                                    spacing: 6,
-                                    runSpacing: 6,
-                                    children: _gerberAnalysis!
-                                        .drillToolsBreakdown.entries
-                                        .map((e) => Chip(
-                                            label: Text(
-                                                'Ø ${e.key} мм — ${e.value} шт.',
-                                                style: const TextStyle(
-                                                    fontSize: 11))))
-                                        .toList(),
-                                  ),
-                                ]
-                              ],
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildLogsWorkspace() {
     return Padding(
       padding: const EdgeInsets.all(20),
@@ -3902,7 +2828,6 @@ if __name__ == '__main__':
               onPressed: _showAttachmentMenu),
           Expanded(
             child: TextField(
-              focusNode: _inputFocusNode,
               controller: _chatInputController,
               decoration: const InputDecoration(
                   hintText: 'Напиши сообщение...', border: InputBorder.none),
