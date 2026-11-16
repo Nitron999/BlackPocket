@@ -817,8 +817,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     );
   }
 
-  Future<void> _speak(String text, {bool force = false}) async {}
-
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
