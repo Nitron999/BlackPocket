@@ -1118,8 +1118,7 @@ def main():
 if __name__ == '__main__':
     main()
 ''';
-
-    await File(scriptPath).writeAsString(pyCode, encoding: utf8);
+await File(scriptPath).writeAsString(pyCode, encoding: utf8);
 
     setState(() {
       if (isPlaty) {
@@ -1156,10 +1155,6 @@ if __name__ == '__main__':
       await Share.shareXFiles([XFile(path)], text: 'Скрипт Major Express');
     }
   }
-
-  // =========================================================================
-  // СВЕДЕНИЕ НАКЛАДНЫХ (ПОСЫЛКА + СВОДКА ПП + СВОДКА ФИЛИАЛ)
-  // =========================================================================
 
   String _normalizePathInput(String raw) {
     var s = raw.trim();
@@ -1883,7 +1878,7 @@ if __name__ == '__main__':
     String? overrideLastUserText,
     File? imageFile,
   }) async {
-    final List> formatted = [
+    final List<Map<String, dynamic>> formatted = [
       {'role': 'system', 'content': systemInstruction}
     ];
     final startIdx = messages.length > 6 ? messages.length - 6 : 0;
