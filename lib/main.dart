@@ -241,7 +241,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   bool _isLoading = false;
   bool _sumatraFound = false;
 
-  // Модуль 1: Сведение накладных
   File? _posylkaFile;
   File? _svodkaPpFile;
   File? _svodkaFilialFile;
@@ -256,7 +255,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   int _lastFilialCount = 0;
   String _lastLogisticsAction = 'Файлы не выбраны';
 
-  // Модуль 2: Электроконнект (Major Express)
   final TextEditingController _majorFirmController = TextEditingController();
   final TextEditingController _majorDateController = TextEditingController();
   final TextEditingController _majorTimeController =
@@ -274,7 +272,6 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
   List<String> _electroFirms = [];
   String _lastMajorAction = 'Готов к оформлению';
 
-  // Модуль 3: Печатные платы (Major Express)
   final TextEditingController _platyFirmController = TextEditingController();
   final TextEditingController _platyDateController = TextEditingController();
   final TextEditingController _platyTimeController =
@@ -474,10 +471,10 @@ class _MainWorkspaceScreenState extends State<MainWorkspaceScreen> {
     'АО "НПО "ОРИОН"',
     'АО "НПО "РусБИТех"',
     'АО "НПО "РЯЗАНЬПРИБОР"',
-    'АО "NPP "Krasnoznamenets"',
+    'АО "НПП "КРАСНОЗНАМЁНЕЦ"',
     'АО "НПП "Пульсар"',
     'АО "НПП" РЕАКОНТ"',
-    'АО "НПП"Геофизика-Космос',
+    'АО "NPP "Geofizika-Kosmos"',
     'АО "НПФ "Микран"',
     'АО "НПЦ" "АСПЕКТ"',
     'АО "НТП "АВИАТЕСТ"',
