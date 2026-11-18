@@ -1118,7 +1118,8 @@ def main():
 if __name__ == '__main__':
     main()
 ''';
-await File(scriptPath).writeAsString(pyCode, encoding: utf8);
+
+    await File(scriptPath).writeAsString(pyCode, encoding: utf8);
 
     setState(() {
       if (isPlaty) {
@@ -1878,7 +1879,7 @@ await File(scriptPath).writeAsString(pyCode, encoding: utf8);
     String? overrideLastUserText,
     File? imageFile,
   }) async {
-    final List<Map<String, dynamic>> formatted = [
+    final List> formatted = [
       {'role': 'system', 'content': systemInstruction}
     ];
     final startIdx = messages.length > 6 ? messages.length - 6 : 0;
